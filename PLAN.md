@@ -64,7 +64,7 @@ Status key: [x] done, [-] in progress, [ ] open.
 - [ ] register pair checks (even-odd GPR pairs, floating-point extended
       pairs) derived from the POP prose; the table has no pair information
 - [ ] `-diag-format=json`, warning classes, `-Werror`
-- [ ] listing file (`-l`), symbol cross reference
+- [x] listing file (`-l`), symbol cross reference (DESIGN.md 15)
 - [ ] golden tests, fuzzing of the reader/expression parser
 - [ ] documentation of every directive in `docs/`
 - [ ] (macro language: covered by the preprocessor, see Phase 1)

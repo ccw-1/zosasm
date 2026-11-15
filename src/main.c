@@ -8,6 +8,7 @@
 #include "asm.h"
 #include "disasm.h"
 #include "goff.h"
+#include "listing.h"
 #include "pp.h"
 #include "version.h"
 #include "ebcdic.h"
@@ -15,7 +16,7 @@
 #include "zsym.h"
 
 static void usage(FILE *f) {
-    fprintf(f, "usage: zosasm [-o out.o] [-gz0|-gz1|-gz2] [-DNAME[=val]] [-Idir] [-E] [-reproducible] [-strict-registers] [-color] [-Werror] [-max-errors N] source.za\n"
+    fprintf(f, "usage: zosasm [-o out.o] [-gz0|-gz1|-gz2] [-DNAME[=val]] [-Idir] [-E] [-reproducible] [-strict-registers] [-l FILE [-ldata] [-lpage N] [-lbrief]] [-color] [-Werror] [-max-errors N] source.za\n"
                "       zosasm -dump file.o\n"
                "       zosasm [-o out.za] -disasm file.o\n"
                "       zosasm [-o dir] -unpack file.o\n"
@@ -34,6 +35,11 @@ static void usage(FILE *f) {
                "                  statements (default) | also the original source files\n"
                "  -strict-registers  in a register position accept only %%r1 (any case; %%f %%a %%c %%v too)\n"
                "                  or a name made with NAME EQU %%r1, not plain numbers or other symbols\n"
+               "  -l FILE         write an assembly listing to FILE (- = standard output), also when\n"
+               "                  the assembly has errors\n"
+               "  -ldata          listing: show all object bytes of a statement (default: 8)\n"
+               "  -lpage N        listing: N lines per page with a header (default 0: one page)\n"
+               "  -lbrief         listing: no tables at the end\n"
                "  -generic        with -disasm: ignore the ZSYM information\n"
                "  -color          colorize diagnostics\n"
                "  -max-errors N   stop after this many errors (default 50, 0 = no limit)\n"
@@ -226,8 +232,12 @@ int main(int argc, char **argv) {
     Module *mod;
     uint8_t *obj;
     FILE *f;
+    const char *listfile = NULL;
+    ListOptions lo;
+    PpEventVec events = {0};
 
     memset(&ppo, 0, sizeof ppo);
+    memset(&lo, 0, sizeof lo);
     for (i = 1; i < argc; i++) {
         const char *a = argv[i];
         if (a[0] == '-' && a[1] == '-') a++; /* accept --flag too */
@@ -252,6 +262,15 @@ int main(int argc, char **argv) {
             return 0;
         } else if (!strcmp(a, "-strict-registers")) {
             za_strict_registers = 1;
+        } else if (!strcmp(a, "-l") && i + 1 < argc) {
+            listfile = argv[++i];
+        } else if (!strcmp(a, "-ldata")) {
+            lo.data = 1;
+        } else if (!strcmp(a, "-lbrief")) {
+            lo.brief = 1;
+        } else if (!strcmp(a, "-lpage") && i + 1 < argc) {
+            lo.page = atoi(argv[++i]);
+            if (lo.page < 0) lo.page = 0;
         } else if (!strcmp(a, "-generic")) {
             generic = 1;
         } else if (!strcmp(a, "-gz0")) {
@@ -294,6 +313,7 @@ int main(int argc, char **argv) {
     rep = rep_new(max_err);
     rep_set_warn_error(rep, werror);
     rep_add_source(rep, in, text, n);
+    if (listfile) ppo.events = &events;
     pp_run(in, text, n, &ppo, rep, &lines);
     if (only_pp) {
         size_t k;
@@ -301,7 +321,23 @@ int main(int argc, char **argv) {
         rep_print(rep, stderr, color);
         return rep_error_count(rep) > 0;
     }
-    mod = rep_error_count(rep) > 0 ? NULL : asm_assemble(lines.v, lines.n, in, rep);
+    if (listfile) {
+        /* the listing is written whatever happened */
+        mod = asm_assemble_all(lines.v, lines.n, in, rep);
+        f = !strcmp(listfile, "-") ? stdout : fopen(listfile, "wb");
+        if (!f) {
+            fprintf(stderr, "zosasm: %s: %s\n", listfile, strerror(errno));
+            return 1;
+        }
+        listing_write(f, mod, &lines, &events, rep, &lo);
+        if (f != stdout && fclose(f) != 0) {
+            fprintf(stderr, "zosasm: %s: %s\n", listfile, strerror(errno));
+            return 1;
+        }
+        if (f == stdout) fflush(f);
+    } else {
+        mod = rep_error_count(rep) > 0 ? NULL : asm_assemble(lines.v, lines.n, in, rep);
+    }
     rep_print(rep, stderr, color);
     if (!mod || rep_error_count(rep) > 0) return 1;
     mod->zlevel = zlevel;

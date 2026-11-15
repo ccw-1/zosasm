@@ -22,8 +22,10 @@ typedef struct {
                          * produced nothing) */
 } PpEvent;
 
+typedef Vec(PpEvent) PpEventVec;
+
 typedef struct {
-    Vec(PpEvent) *events;           /* if not NULL: every source line is recorded here, in order */
+    PpEventVec *events;          /* if not NULL: every source line is recorded here, in order */
     Vec(const char *) include_dirs; /* -I */
     Vec(const char *) defines;      /* -D: "NAME", "NAME=value", "NAME(a,b)=text" */
     int reproducible;               /* -reproducible: no unstable built-ins (__DATE__ needs a fixed time) */

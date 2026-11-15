@@ -22,11 +22,12 @@ build/zosasm -o hello.o testdata/hello.za   # assemble
 build/zosasm -dump hello.o                  # print the GOFF structure
 build/zosasm -disasm hello.o -o back.za     # GOFF object -> zosasm source
 build/zosasm -E prog.za                     # show the preprocessed source
+build/zosasm -l prog.lst -o prog.o prog.za  # assemble and write a listing
 ```
 
 Options: `-o FILE`, `-DNAME[=VAL]`, `-Idir`, `-E`, `-dump FILE`,
-`-disasm FILE`, `-unpack FILE`, `-generic`, `-gz0`, `-gz1`, `-gz2`, `-reproducible`, `-version`,
-`-color`, `-max-errors N`, `-Werror`. Source files use the extension `.za`.
+`-disasm FILE`, `-unpack FILE`, `-generic`, `-gz0`, `-gz1`, `-gz2`, `-reproducible`, `-strict-registers`,
+`-l FILE`, `-ldata`, `-lpage N`, `-lbrief`, `-version`, `-color`, `-max-errors N`, `-Werror`. Source files use the extension `.za`.
 
 Assembly time helpers (DESIGN.md sections 8 and 12): `sizeof(x)`,
 `offsetof(S,f)`, `alignof(x)`, `countof(x)`, comparisons (`==  <  &&  !` ...),

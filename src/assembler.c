@@ -999,6 +999,7 @@ static void finish(Asm *a) {
             continue;
         }
         s->entry = 1;
+        asm_note_ref(a, s, e->sp);
     }
     if (a->end_entry) {
         Symbol *s = asm_lookup(a, a->end_entry);
@@ -1008,6 +1009,7 @@ static void finish(Asm *a) {
         } else {
             a->mod->entry = a->end_entry;
             a->mod->entry_def = a->end_span;
+            asm_note_ref(a, s, a->end_span);
         }
     }
     for (i = 0; i < a->xattrs.n; i++) {
@@ -1021,6 +1023,7 @@ static void finish(Asm *a) {
                       "name");
             continue;
         }
+        asm_note_ref(a, s, x->st->name_span);
         xa = xmalloc(sizeof *xa);
         *xa = x->attr;
         s->xattr = xa;

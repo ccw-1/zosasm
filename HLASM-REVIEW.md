@@ -17,7 +17,7 @@ Proposed verdict is in the last column; "?" marks a question for you.
 | `AINSERT` | Puts a record into the input stream, from a macro (queue front/back). | **Skip** (macro language is out; the preprocessor `#include`/`#define` covers it). |
 | `CCW`, `CCW0` | 8 byte format 0 channel command word: command code, 24 bit data address, flags, count; aligned on a doubleword; the symbol gets length 8. Used by EXCP/EXCPVR I/O code. | **Done** (DESIGN.md 13). |
 | `CCW1` | Same, format 1, 31 bit data address. | **Done** (DESIGN.md 13). |
-| `CEJECT n` | Conditional page eject in the listing. | **Skip**; accept as no-op like `EJECT` (no listing yet). |
+| `CEJECT n` | Conditional page eject in the listing. | **Skip**; accept as no-op like `EJECT` (the listing starts a page on `EJECT`; `CEJECT` has no effect). |
 | `CXD` | Reserves a fullword that the binder fills with the total length of all external dummy sections (the class `B_PRV`). | **Done** (DESIGN.md 4.4). |
 | `DXD` | Defines an *external dummy section*: a named piece of **pseudo-register** storage (size and alignment from a DS-like operand) that the binder merges by name over all modules and allocates at run time. Referenced through `Q(name)`. In GOFF it is a PR in class `B_PRV`. This is how reentrant static storage (LE, PL/I) is assigned. | **Done** (DESIGN.md 4.4). |
 | `EXITCTL` | Sets four parameters for user exits of the assembler. | **Skip**. |

@@ -32,7 +32,7 @@ printed here is that file, and the test suite assembles each of them.
 8. External dummy sections
 9. Built-in functions and ASSERT
 10. Floating point, UTF-16, CCW and address differences
-11. Diagnostics
+11. Diagnostics and the listing
 12. Looking inside an object: `-dump`, ZSYM, `-disasm`, `-unpack`
 13. Command reference
 14. Differences from HLASM and known limits
@@ -52,7 +52,8 @@ printed here is that file, and the test suite assembles each of them.
 | use external dummy sections (`DXD`, `CXD`, `Q`-type) | 8 | `xd.za` |
 | measure with `sizeof`, `offsetof`, `countof`; check with `ASSERT` | 9 | `builtins.za` |
 | floating point, UTF-16, `CCW`, `A(X-Y)` | 10 | `floats.za` |
-| understand an error or warning | 11 | |
+| understand an error or warning | 11.1 | |
+| get an assembly listing, control it with `PRINT`, `TITLE`, `EJECT` | 11.2 | |
 | dump, disassemble, keep and unpack sources | 12, 15.4 | |
 | every command line option | 13 | |
 | know what differs from HLASM, what is unverified | 14 | |
@@ -271,7 +272,7 @@ is followed by one of the keywords below; otherwise it is an ordinary label
 | `#define NAME text`, `#define NAME(a,b) text`, `#undef NAME` | object-like and function-like macros; `##` pastes |
 | `#if`, `#ifdef`, `#ifndef`, `#elif`, `#else`, `#endif` | conditional text; `#if` takes integers, `defined(X)`, `! && \|\| == != < > <= >= + - * / % ~` and parentheses |
 | `#error text`, `#warning text` | stop or warn |
-| `#pragma ...` | accepted (`title`, `eject`, `space`, `print`); no effect yet |
+| `#pragma ...` | listing control: `title`, `eject`, `space`, `print` (section 11.2) |
 
 Rules that differ from C:
 
@@ -948,7 +949,9 @@ subtract relocations should be verified with the binder.
 
 ---
 
-## 11. Diagnostics
+## 11. Diagnostics and the listing
+
+### 11.1 Messages
 
 Every message has a severity, a **stable code**, the source position and
 usually a help line:
@@ -981,6 +984,143 @@ Code ranges:
 
 Codes do not change from one version to the next, so you can search for them
 and use them in scripts.
+
+### 11.2 The listing: `-l`
+
+`-l FILE` writes an assembly listing to FILE (`-l -` is standard output). It
+is written also when the assembly has errors; then it is the best way to see
+them in context. Options: `-ldata` (all object bytes), `-lpage N` (pages of N
+lines), `-lbrief` (no tables at the end). The listing has no date or time, so
+the same source gives the same listing.
+
+<!-- listing: hello -->
+```
+zosasm 0.1.0  docs/examples/hello.za
+
+Loc     Object               Line   Source
+                                1   * A small routine with standard linkage: it saves the caller's registers,
+                                2   * uses register 12 as its base and adds one to a fullword whose address
+                                3   * is the first entry of the parameter list (register 1).
+                                4   HELLO    CSECT
+                                5   HELLO    AMODE 31
+                                6   HELLO    RMODE ANY
+000000  90ECD00C                7            STM   14,12,12(13)       save the caller's registers
+000004  18CF                    8            LR    12,15              entry point address -> base register
+                                9            USING HELLO,12           tell the assembler about it
+000006  58201000               10            L     2,0(,1)            first parameter is the address of a fullword
+00000A  58302000               11            L     3,0(,2)            fetch the fullword
+00000E  5A30C020               12            A     3,ONE              add one
+000012  50302000               13            ST    3,0(,2)            store it back
+000016  98ECD00C               14            LM    14,12,12(13)       restore the registers
+00001A  1BFF                   15            SR    15,15              return code 0
+00001C  07FE                   16            BR    14                 return
+000020  00000001               17   ONE      DC    F'1'
+                               18            END   HELLO
+
+18 source lines, 15 statements; 0 errors, 0 warnings
+```
+
+**Columns.** `Loc` is the offset in the class (the same number the symbol
+table and a debugger use; 6 hex digits, 8 when a class is longer than 16 MB),
+`Object` the bytes of the statement in groups of 4, then the line number and
+the source. Notes:
+
+* Alignment bytes are not shown: the location of `ONE` above is 20, the two
+  bytes before it are padding. Relocatable fields (`A(X)`, `V(X)`, a branch
+  target in a different section) show zeros, because the value is only known
+  to the binder or loader.
+* Only the first 8 bytes are shown, and `+` marks that there are more. With
+  `-ldata` (or `PRINT DATA`) the rest follows on further rows.
+* `DS`, `ORG` and dummy sections show a location but no bytes. `EQU` shows its
+  value in the `Loc` column when it is a plain number.
+* The literal pool of `LTORG` (or of `END`) is listed under that statement,
+  one row per literal with the literal as written as the source.
+* A line number with a character before it (`1` or `A`...) is a line of an
+  included file; the table `Source files` explains the characters.
+
+**Marks** before the source text:
+
+| mark | meaning |
+|---|---|
+| (blank) | an ordinary source line |
+| `#` | a preprocessor directive (`#include`, `#define`, `#if`, `#pragma`...) |
+| `-` | a line skipped by `#if`/`#ifdef`/`#else`, or by an `#include` guard |
+| `+` | the result of preprocessor expansion: the line as written is listed first, then each line it produced, with the object bytes |
+
+**Diagnostics** are printed after the line they belong to, as `** CODE
+severity: message` with the notes and help lines, so a listing shows what went
+wrong at that line. Messages without a line (for example "no control
+section") come after the last line.
+
+**Print control.** `TITLE 'text'` sets the second line of the page header (and
+starts a new page with `-lpage`), `EJECT` starts a new page, `SPACE n` leaves
+n blank lines, and `PRINT` takes a list of `ON`, `OFF`, `GEN`, `NOGEN`,
+`DATA`, `NODATA`:
+
+| operand | effect |
+|---|---|
+| `OFF`, `ON` | stop and resume the rows (a line with a diagnostic is shown anyway) |
+| `NOGEN`, `GEN` | hide or show the `+` rows of preprocessor expansion |
+| `DATA`, `NODATA` | all object bytes, or back to what `-ldata` says |
+
+The same controls exist as preprocessor lines, which can be used inside `#if`: `#pragma title "text"`, `#pragma eject`, `#pragma
+space 2`, `#pragma print off` (also `on`, `data`, `nodata`, `gen`, `nogen`).
+Without `-lpage` there are no pages, and the header is written once.
+
+**Tables** after the source (not with `-lbrief`): the source files, the
+sections with their classes, lengths and modes, the USING table (line, label,
+register, base, range, and the line that dropped it), and the symbol cross
+reference: for every symbol its kind, length, value, defining line and all the
+lines that use it. For a file other than the main one a reference is
+written `1:12`-style with the file character in front.
+
+<!-- listing: tables -->
+```
+Source files
+Id  File
+    docs/examples/using.za  (main)
+
+Sections
+Section  Kind    Class       Length  AMODE  RMODE
+USEDEMO  CSECT   B_TEXT      00007A  -      -
+REC      DSECT   B_TEXT      000010  -      -
+HDR      DSECT   B_TEXT      000004  -      -
+BODY     DSECT   B_TEXT      000010  -      -
+
+USING table
+Line      Label       Reg  Base                    Offset    Range              Dropped
+5                     r12  USEDEMO                 0                            27
+10        OLD         r2   REC                     0                            16
+11        NEW         r3   REC                     0                            16
+20                    r4   HDR                     0                            24
+21                    r4   BODY                    0         (dependent)        24
+27                    r12  USEDEMO                 0
+
+Symbol cross reference
+Symbol                    Kind     Length  Value     Section    Defined  References
+BODY                      section  0                 BODY       47       21
+BODY_TEXT                 label    16      0         BODY       48       23
+COUNT                     label    4       C         REC        40       13 14 15
+HDR                       section  0                 HDR        43       20 21
+HDRLEN                    equ      1       4                    46       21
+HDR_TYPE                  label    2       0         HDR        44       22
+MSG                       label    2       68        USEDEMO    34       19
+NAME                      label    10      0         REC        38       12
+REC                       section  0                 REC        37       10 11
+REC1                      label    10      4A        USEDEMO    32       8
+REC2                      label    10      58        USEDEMO    33       9
+RECLEN                    equ      1       10                   41
+USEDEMO                   section  0                 USEDEMO    2        5 27
+
+49 source lines, 38 statements; 0 errors, 0 warnings
+```
+
+The cross reference counts uses in operands, in `USING`, `ENTRY`, `END` and
+`XATTR`; a use inside a literal (`=A(X)`) is not counted.
+
+The location column shows class offsets, so two `CSECT`s may show the same
+numbers. This is not HLASM's listing format (no statement numbers, no ESD ids,
+no relocation dictionary), and no program should read it.
 
 ---
 
@@ -1100,6 +1240,10 @@ zosasm [-o dir] -unpack file.o
 | `-generic` | with `-disasm`: ignore ZSYM |
 | `-reproducible` | fail on anything that makes the object differ between runs |
 | `-strict-registers` | registers only as `%r1` or an `EQU %r1` name (section 6.1) |
+| `-l FILE` | write a listing to FILE (`-` = standard output), also after errors (section 11.2) |
+| `-ldata` | listing: all object bytes of a statement |
+| `-lpage N` | listing: N lines per page (default 0: one page) |
+| `-lbrief` | listing: no tables |
 | `-version` | print the version |
 | `-color` | colour the diagnostics |
 | `-max-errors N` | stop after N errors (default 50; 0 = no limit) |
@@ -1128,7 +1272,7 @@ Environment: `SOURCE_DATE_EPOCH` (seconds since 1970) fixes `__DATE__` and
 | `MNOTE` | `ASSERT`, `#error`, `#warning` |
 | `*PROCESS`, `ACONTROL`, `PUSH`/`POP` | `#pragma`, options on the command line |
 | `*-LABEL` length tricks | `sizeof`, `offsetof`, `alignof`, `countof` |
-| listing | none yet (`TITLE`, `EJECT`, `SPACE`, `PRINT`, `PUNCH`, `ICTL`, `ISEQ` are accepted and ignored) |
+| listing | `-l` (section 11.2), a different layout; `TITLE`, `EJECT`, `SPACE`, `PRINT` work in it; `PUNCH`, `ICTL`, `ISEQ` are accepted and ignored |
 | object deck / OBJ output | GOFF only |
 
 **Not implemented.** `ACONTROL`, `ADATA`, `AINSERT`, `CEJECT`, `EXITCTL`,

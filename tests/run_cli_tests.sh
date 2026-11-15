@@ -132,6 +132,37 @@ $X -disasm $T/strict.o >$T/strict.disasm 2>$T/err; check "-disasm of a strict ob
 [ ! -s $T/err ]; check "-disasm of a strict object: no warnings" $? 0
 $X -strict-registers -disasm $T/hello.o >/dev/null 2>$T/err; check "-disasm ignores -strict-registers" $? 0
 
+# the listing (-l)
+$X -l $T/hello.lst -o $T/hl.o docs/examples/hello.za 2>/dev/null; check "-l writes a listing" $? 0
+grep -q 'Symbol cross reference' $T/hello.lst; check "listing has the symbol table" $? 0
+grep -q '^000020  00000001 ' $T/hello.lst; check "listing shows the constant" $? 0
+printf 'T CSECT\n STM 14,12,12(13)\n LR 12,15\n L 2,0(,1)\n BR 14\n DC F%s\n' "'1'" > $T/nopad.za
+$X -l $T/nopad.lst -o $T/hl.o $T/nopad.za 2>/dev/null
+lb=$(grep -E '^[0-9A-F]{6}  [0-9A-F]' $T/nopad.lst | cut -c9-26 | tr -d ' \n')
+ob=$($X -dump $T/hl.o | grep '^TXT esd=2' | sed 's/^TXT esd=2 off=0 len=[0-9]* //' | tr -d ' \n')
+[ -n "$lb" ] && [ "$lb" = "$ob" ]; check "listing bytes are the object bytes" $? 0
+$X -l - -lbrief -o $T/hl2.o docs/examples/hello.za 2>/dev/null | grep -q 'Symbol cross reference'; [ $? = 1 ]; check "-lbrief has no tables" $? 0
+$X -l $T/hello2.lst -o $T/hl2.o docs/examples/hello.za 2>/dev/null; cmp -s $T/hello.lst $T/hello2.lst; check "the listing is reproducible" $? 0
+$X -l $T/bad.lst -o $T/bad3.o $T/bad.za 2>/dev/null; check "-l with errors: exit 1" $? 1
+grep -q '^\*\* ZA1011 error' $T/bad.lst; check "-l with errors: the diagnostic is in the listing" $? 0
+[ -e $T/bad3.o ] && { echo "FAIL cli: object written after errors with -l"; fail=1; }
+$X -l $T/prep.lst -Idocs/examples -o $T/pl.o docs/examples/prep.za 2>/dev/null; check "-l with includes" $? 0
+grep -q '^1 *docs/examples/macros.inc' $T/prep.lst; check "the include file has an id" $? 0
+grep -q ' + *XR    5,5' $T/prep.lst; check "expanded lines are marked" $? 0
+$X -l $T/pg.lst -lpage 10 -lbrief -o $T/pl.o docs/examples/prep.za -Idocs/examples 2>/dev/null
+[ "$(tr -cd '\f' < $T/pg.lst | wc -c)" -ge 2 ]; check "-lpage makes pages" $? 0
+printf 'K EQU 5\nZ DS F\n' > $T/inc/sym.inc
+printf 'T CSECT\n#include "sym.inc"\n LA 1,K\n LA 2,K\n END\n' > $T/symi.za
+$X -l - -I$T/inc -o $T/si.o $T/symi.za 2>/dev/null | grep -q '^K  *equ  *1  *5  *1:1  *3 4$'; check "cross reference of a symbol of an include file" $? 0
+# the listings printed in the guide (11.2); the first line has the version
+$X -l - -lbrief -o $T/g1.o docs/examples/hello.za 2>/dev/null | tail -n +2 > $T/g1.txt
+awk '/^<!-- listing: hello -->$/{f=1;next} f&&/^```/{if(inb){exit}else{inb=1;next}} inb{print}' docs/GUIDE.md | tail -n +2 > $T/g1.guide
+cmp -s $T/g1.txt $T/g1.guide; check "docs/GUIDE.md shows the hello.za listing" $? 0
+$X -l - -o $T/g2.o docs/examples/using.za 2>/dev/null | sed -n '/^Source files/,$p' > $T/g2.txt
+awk '/^<!-- listing: tables -->$/{f=1;next} f&&/^```/{if(inb){exit}else{inb=1;next}} inb{print}' docs/GUIDE.md > $T/g2.guide
+cmp -s $T/g2.txt $T/g2.guide; check "docs/GUIDE.md shows the using.za tables" $? 0
+$X -l $T/nodir/x.lst -o $T/hl.o docs/examples/hello.za 2>/dev/null; check "-l to an unwritable file" $? 1
+
 rm -rf $T
 [ $fail = 0 ] && echo "tests/run_cli_tests.sh: ok"
 exit $fail

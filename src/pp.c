@@ -868,8 +868,11 @@ static void do_pragma(Pp *pp, const char *rest, Span sp) {
         }
         if (arg[k]) rep_errorf(pp->rep, "ZA4061", sp, "#pragma space takes a number of lines");
     } else if (!strcmp(word, "print")) {
-        if (strcmp(arg, "on") && strcmp(arg, "off"))
-            diag_help(rep_errorf(pp->rep, "ZA4061", sp, "#pragma print needs \"on\" or \"off\""),
+        char *a = za_strlower(xstrdup(arg));
+        if (strcmp(a, "on") && strcmp(a, "off") && strcmp(a, "data") && strcmp(a, "nodata") &&
+            strcmp(a, "gen") && strcmp(a, "nogen"))
+            diag_help(rep_errorf(pp->rep, "ZA4061", sp,
+                                 "#pragma print needs on, off, data, nodata, gen or nogen"),
                       "for example: #pragma print off");
     } else {
         Diag *d = rep_warnf(pp->rep, "ZA4060", sp, "unknown #pragma \"%s\" is ignored", word);

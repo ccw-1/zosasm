@@ -35,9 +35,10 @@ In:
 * the GOFF-oriented directives: `CSECT`, `RSECT`, `START`, `DSECT`, `COM`,
   `LOCTR`, `CATTR`, `XATTR`, `AMODE`, `RMODE`, `ENTRY`, `EXTRN`, `WXTRN`,
   `DXD`, `CXD`, `END`,
-* listing-control statements accepted and ignored: `TITLE`, `EJECT`,
-  `SPACE`, `PRINT`, `PUNCH`, `ICTL`, `ISEQ` (real HLASM sources still
-  assemble; the preprocessor's `#pragma` is the intended form, see 8),
+* listing-control statements `TITLE`, `EJECT`, `SPACE`, `PRINT` (they act in
+  the listing, see 15), and `PUNCH`, `ICTL`, `ISEQ`, accepted and ignored
+  (real HLASM sources still assemble; the preprocessor's `#pragma` is the
+  intended form, see 8),
 * good diagnostics (see 6).
 
 Out (for now):
@@ -48,7 +49,7 @@ Out (for now):
   "use #include". The statement reader takes an array of source lines, so
   the preprocessor sits in front of it without the core knowing,
 * ESD-less OBJ/XOBJ output, `ADATA`, `SYSLIB` macro libraries, listings in
-  HLASM layout.
+  HLASM layout (the listing, section 15, has its own layout).
 
 ## 2. Source syntax
 
@@ -415,8 +416,8 @@ conflict).
   preprocessor adds a warning when a line ends in `,` and the next line
   starts in column 1.
 * `#pragma` replaces listing/assembler control: `title "text"`, `eject`,
-  `space n`, `print on|off`, later `arch z13`. Today they are validated
-  and have no effect (there is no listing yet). The HLASM spellings
+  `space n`, `print on|off|data|nodata|gen|nogen`, later `arch z13`. They
+  are validated here and act in the listing (section 15). The HLASM spellings
   (`TITLE`, `EJECT`, `SPACE`, `PRINT`, `PUNCH`, `ICTL`, `ISEQ`) stay
   accepted no-ops; no hint toward the pragma form is given, to keep real
   HLASM sources free of noise.
@@ -834,3 +835,43 @@ becomes `__`, so a hostile object cannot write outside the directory.
 resolved to which file in a search directory (the name stored is the path
 that was opened); `-I` directories are not stored (they are machine
 specific).
+
+## 15. The listing (`-l`, `src/listing.c`)
+
+**What.** `-l FILE` (`-` = stdout) writes the listing after assembling,
+also when there were errors (`main.c` then calls `asm_assemble_all`, which
+returns the module whatever happened, and does not write the object).
+`-ldata`, `-lpage N`, `-lbrief` (guide 11.2). There is no date or time in it,
+so a listing is reproducible.
+
+**Where the information comes from.** The listing is a view of data the
+assembler keeps for it, none of which changes the object:
+
+| need | source |
+|---|---|
+| lines, directives, skipped lines, expansion | `PpEvent` records of `pp_run` (`PpOptions.events`): one per source line (joined backslash lines are one), with the output lines (`first`, `n`) it produced |
+| statement of a line | `Stmt.li`/`nli`: index of its first line (and the number of continuation lines) in the line array given to `read_statements` |
+| location and bytes | `Module.zrecs` (the ZSYM records): class and offset of the final layout; `ZRec.pad` = alignment bytes before the first byte, which the row does not show; the bytes are `cls->data` |
+| literals | `Module.lits` (`LitRec`, written by `asm_close_pool` in pass 2); `owner` is the zrec of the LTORG or END that holds the pool |
+| USING table | `Module.usings`: a copy of each USING when it is made, the dropping line noted on DROP (`list_usings`) |
+| cross reference | `Symbol.refs`, filled in pass 2 by `asm_note_ref` (`sym_value`, attribute and built-in references, ENTRY, XATTR, END) |
+
+**Rows.** `listing_write` walks the events. A line that the preprocessor did
+not change is one row with its statement; a changed one is shown as written,
+then one `+` row per produced line. Rows of `#` directives and of lines
+skipped by `#if` have no statement. The statement of a line maps to its
+`ZRec` by a merge of `Module.stmts` and `Module.zrecs` (both in source order;
+a statement that errored in pass 1 has no record). A synthetic END record
+(the source had no END but literals were pooled) is listed after the last
+row. Diagnostics are put after the last row of the event of their line
+(`file:line` from the span); those without a line are listed at the end.
+
+**Print control.** `TITLE`, `EJECT`, `SPACE`, `PRINT` and the pragma forms are
+applied while walking: `PRINT OFF` hides rows (a row with a diagnostic is
+shown anyway), `NOGEN` hides `+` rows, `DATA` shows all bytes. A page header
+is written when the first line of the page is written, so a `TITLE` before it
+is in it. Table sections start a page with `-lpage`.
+
+**Not done.** Carets under the source for diagnostics; `CEJECT`; keeping a
+statement's diagnostics on the same page; a cross reference use inside a
+literal; a listing option for a different column layout.
