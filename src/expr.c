@@ -202,6 +202,25 @@ static Expr *parse_add(EP *p) {
     return l;
 }
 
+/* s[pos] is a double quote: the quoted symbol, decoded; NULL after an error */
+static char *quoted_symbol(EP *p) {
+    size_t start = p->pos;
+    long j = close_dquote(p->s, start);
+    const char *why = NULL;
+    char *nm;
+    if (j < 0 || (size_t)j >= p->len) {
+        ep_fail(p, "ZA0004", start, p->len - start, "the quoted symbol is not closed");
+        return NULL;
+    }
+    nm = sym_decode(p->s + start + 1, (size_t)j - start - 1, &why);
+    if (!nm) {
+        ep_fail(p, "ZA0004", start, (size_t)j + 1 - start, "invalid quoted symbol: %s", why);
+        return NULL;
+    }
+    p->pos = (size_t)j + 1;
+    return nm;
+}
+
 /* X'..', B'..', C'..' self-defining terms and attribute references
  * (L'SYM) after the leading word has been scanned; s[pos] is the quote. */
 static Expr *parse_quoted(EP *p, size_t start, const char *word) {
@@ -212,7 +231,8 @@ static Expr *parse_quoted(EP *p, size_t start, const char *word) {
     int64_t v = 0;
     Expr *e;
     if (wl == 1 && strchr("LTSIDOKN", u) && p->pos + 1 < p->len &&
-        (is_sym_start((unsigned char)p->s[p->pos + 1]) || p->s[p->pos + 1] == '*')) {
+        (is_sym_start((unsigned char)p->s[p->pos + 1]) || p->s[p->pos + 1] == '*' ||
+         p->s[p->pos + 1] == '"')) {
         p->pos++; /* the quote */
         if (p->s[p->pos] == '*') {
             p->pos++;
@@ -220,6 +240,13 @@ static Expr *parse_quoted(EP *p, size_t start, const char *word) {
             e->attr = u;
             e->loc = 1;
             e->name = "";
+            return e;
+        } else if (p->s[p->pos] == '"') {
+            char *nm = quoted_symbol(p);
+            if (!nm) return NULL;
+            e = mk(EX_ATTR, ep_span(p, start));
+            e->attr = u;
+            e->name = nm;
             return e;
         } else {
             size_t ns = p->pos;
@@ -330,6 +357,13 @@ static Expr *parse_primary(EP *p) {
                            (int)(p->pos - start), p->s + start);
         e = mk(EX_NUM, ep_span(p, start));
         e->num = n;
+        return e;
+    }
+    if (c == '"') {
+        char *nm = quoted_symbol(p);
+        if (!nm) return NULL;
+        e = mk(EX_SYM, ep_span(p, start));
+        e->name = nm;
         return e;
     }
     if (is_sym_start(c)) {

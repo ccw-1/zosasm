@@ -34,7 +34,7 @@ In:
   expressions, `DC`/`DS`/`EQU`/`ORG`/`LTORG`/`CNOP`, literals, `USING`/`DROP`,
 * the GOFF-oriented directives: `CSECT`, `RSECT`, `START`, `DSECT`, `COM`,
   `LOCTR`, `CATTR`, `XATTR`, `AMODE`, `RMODE`, `ENTRY`, `EXTRN`, `WXTRN`,
-  `ALIAS`, `DXD`, `CXD`, `END`,
+  `DXD`, `CXD`, `END`,
 * listing-control statements accepted and ignored: `TITLE`, `EJECT`,
   `SPACE`, `PRINT`, `PUNCH`, `ICTL`, `ISEQ` (real HLASM sources still
   assemble; the preprocessor's `#pragma` is the intended form, see 8),
@@ -60,6 +60,7 @@ Differences from HLASM:
 | continuation = non-blank in column 72 | continuation = operand field ends in `,` (see below) |
 | names fold to upper case | **symbols are case sensitive**; mnemonics, directives, register names and attribute letters are not. `-fold` may be added later |
 | registers are numbers or EQU'd names (`LGR R1,R2` needs `R1 EQU 1`, unless predefined) | all three forms work: `LGR 1,2`, `LGR R1,R2` (`R0`-`R15`, `F0`.., `A0`.., `C0`.., `V0`.. are predefined unless the program defines the symbol) and the GNU style `LGR %r1,%r2` (`%r` general, `%f` floating point, `%a` access, `%c` control, `%v` vector; also in `D(%r1,%r2)` and `USING`/`DROP`). The register class is checked (`%f1` where a general register is needed is ZA2055) |
+| symbols are 1-63 characters of `A-Z 0-9 @ # $ _`; `ALIAS` gives an external name other characters or up to 256 | symbols have **no length limit** (ESD names up to 32767 bytes) and any name can be written as a **quoted symbol**, see below; there is no `ALIAS` |
 | `MNOTE`, `&SYSPARM`, ... | not supported |
 | fixed 8-char name field in the listing | n/a |
 
@@ -79,6 +80,19 @@ Statement layout, one per line:
 * **Continuation**: if the operand field ends with `,` the next line
   continues it; its leading blanks are skipped. A remark may follow the
   comma. There is no length limit, so continuation is rarely needed.
+* **Quoted symbols.** A symbol is plain (`A-Z a-z 0-9 @ # $ _`, not starting
+  with a digit) or written between double quotes: `"a.b"`, `"ext sym"`,
+  `"C++::f"`. Inside the quotes any character may be used, `\"` is a quote,
+  `\\` a backslash and `\xHH` the source character U+00HH (so any EBCDIC
+  byte of an ESD name can be written; `\x00` and raw control characters
+  cannot). `"ABC"` and `ABC` are the same symbol. A quoted symbol is allowed
+  wherever a symbol is: name field (the name may hold blanks; `:` may follow),
+  expressions, `L'"x"` and the other attribute references, `ENTRY`, `EXTRN`,
+  `WXTRN`, `V()`, `END`, `PART()`. It replaces HLASM's `ALIAS` (an unquoted
+  symbol cannot hold `.`, `-`, blanks...); the name is used as written, so
+  the ESD of `"a.b"` is `a.b`. `-disasm` writes such names this way.
+  The preprocessor leaves a quoted symbol alone. Errors: `ZA0004` (bad
+  escape, empty, not closed), `ZA1021` (not a valid symbol).
 * Source is UTF-8 or Latin-1. Character constants are converted to
   **IBM-1047** unless a `CA'...'` (ASCII) type is used. See `internal/ebcdic`.
 
@@ -364,10 +378,9 @@ labels are `L%05X`, or `L<class>_%05X` for classes other than the first.
 **Limits.**
 
 * Objects from other producers are best effort. The clang object
-  `dev/src/debug/goff/testdata/hello.goff` fails cleanly: names such as
-  `hello.c50332088#hello#C` or `.&ppa2` cannot be written as source
-  symbols, and it uses RLD action SUB, reference type 7, several SDs and
-  ED/PR combinations.
+  `dev/src/debug/goff/testdata/hello.goff` still fails cleanly: its names
+  (`hello.c50332088#hello#C`, `.&ppa2`) are written as quoted symbols, but it
+  uses RLD action SUB, reference type 7, several SDs and ED/PR combinations.
 * Warnings mean the object could not have been written by the assembler;
   then only valid source and equal text bytes are guaranteed, not a fixed
   point.

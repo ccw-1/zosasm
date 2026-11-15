@@ -100,6 +100,10 @@ static long parse_args(const char *s, size_t i, StrVec *args) {
             long q = close_quote(s, j);
             if (q < 0) return -1;
             j = (size_t)q;
+        } else if (c == '"') {
+            long q = close_dquote(s, j);
+            if (q < 0) return -1;
+            j = (size_t)q;
         } else if (c == '(') {
             depth++;
         } else if (c == ')') {
@@ -139,6 +143,10 @@ static char *substitute(const Macro *m, char **raw, char **exp) {
         if (c == '\'' && !is_attr_quote(b, i)) {
             long q = close_quote(b, i);
             size_t e = q < 0 ? n : (size_t)q + 1;
+            buf_write(&out, b + i, e - i);
+            i = e;
+        } else if (c == '"' && close_dquote(b, i) >= 0) {
+            size_t e = (size_t)close_dquote(b, i) + 1;
             buf_write(&out, b + i, e - i);
             i = e;
         } else if (c == '\'') {
@@ -186,6 +194,10 @@ static char *expand(Pp *pp, const char *s, const Active *act) {
                 buf_write(&out, s + i, e - i);
                 i = e;
             }
+        } else if (c == '"' && close_dquote(s, i) >= 0) {
+            size_t e = (size_t)close_dquote(s, i) + 1;
+            buf_write(&out, s + i, e - i);
+            i = e;
         } else if (za_isdigit(c)) {
             size_t j = ident_end(s, i);
             buf_write(&out, s + i, j - i);
@@ -290,6 +302,10 @@ static char *convert_breaks(const char *b) {
         if (b[i] == '\'' && !is_attr_quote(b, i)) {
             long q = close_quote(b, i);
             size_t e = q < 0 ? n : (size_t)q + 1;
+            buf_write(&out, b + i, e - i);
+            i = e;
+        } else if (b[i] == '"' && close_dquote(b, i) >= 0) {
+            size_t e = (size_t)close_dquote(b, i) + 1;
             buf_write(&out, b + i, e - i);
             i = e;
         } else if (b[i] == '\\' && b[i + 1] == 'n') {

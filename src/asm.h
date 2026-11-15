@@ -196,6 +196,7 @@ struct Stmt {
     const char *file;
     int line; /* first physical line */
     char *name;
+    int name_quoted; /* written as "...": name is the decoded text */
     Span name_span;
     char *op; /* as written */
     Span op_span;
@@ -236,6 +237,21 @@ long match_paren(const char *s, size_t i);
 int scan_operand_end(const char *s, size_t start, size_t *end);
 /* index of the quote closing the one at s[i], or -1 */
 long close_quote(const char *s, size_t i);
+/* quoted symbols: "any characters", with \" \\ and \xHH escapes (a source
+ * character U+0001 - U+00FF). close_dquote: index of the '"' closing the one
+ * at s[i], or -1. */
+long close_dquote(const char *s, size_t i);
+/* the text of a quoted symbol: s[0..n) are the characters between the quotes;
+ * NULL and *err when they are not valid */
+char *sym_decode(const char *s, size_t n, const char **err);
+/* a symbol written as an operand: plain or quoted, no blanks around; the
+ * name, or NULL and *err */
+char *sym_text(const char *tok, const char **err);
+/* the source form of an EBCDIC name: the plain symbol, else "quoted"; NULL
+ * if it holds a NUL (not expressible) */
+char *sym_source(const unsigned char *ebcdic, size_t n);
+/* a name field is a valid symbol name (decoded when quoted) */
+int asm_valid_stmt_name(const Stmt *st);
 
 /* ---- expressions ----------------------------------------------------- */
 

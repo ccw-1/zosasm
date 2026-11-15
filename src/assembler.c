@@ -160,6 +160,12 @@ int asm_valid_name(const char *n) {
     return len > 0 && len <= 32767 && is_symbol_like(n);
 }
 
+int asm_valid_stmt_name(const Stmt *st) {
+    size_t len = strlen(st->name);
+    if (st->name_quoted) return len > 0 && len <= 32767;
+    return asm_valid_name(st->name);
+}
+
 int asm_need_section(Asm *a, Stmt *st) {
     char *up;
     if (a->cur) return 1;
@@ -182,11 +188,11 @@ void asm_define_label(Asm *a, Stmt *st, int64_t length, char typ) {
     Symbol *s;
     if (!st->name[0] || a->pass != 1) return;
     if (!asm_need_section(a, st)) return;
-    if (!asm_valid_name(st->name)) {
+    if (!asm_valid_stmt_name(st)) {
         diag_help(rep_errorf(a->rep, "ZA1021", st->name_span, "\"%s\" is not a valid symbol name",
                              st->name),
                   "symbols start with a letter or one of @ # $ _ and continue with letters, digits "
-                  "or those characters");
+                  "or those characters; any other name is written in double quotes");
         st->bad = 1;
         return;
     }

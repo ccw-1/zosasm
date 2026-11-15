@@ -66,7 +66,7 @@ void dir_section(Asm *a, Stmt *st) {
             st->bad = 1;
             return;
         }
-        if (st->name[0] && !asm_valid_name(st->name)) {
+        if (st->name[0] && !asm_valid_stmt_name(st)) {
             rep_errorf(a->rep, "ZA1021", st->name_span, "\"%s\" is not a valid section name",
                        st->name);
             st->bad = 1;
@@ -307,14 +307,17 @@ static void apply_cattr(Asm *a, Stmt *st, Class *cl, const AttrArg *at) {
     } else if (!strcmp(k, "PART")) {
         int created;
         Symbol *s;
+        const char *why;
         if (!want_args(a, st, at, 1, "PART(name)")) return;
-        if (!asm_valid_name(at->args.v[0])) {
-            rep_errorf(a->rep, "ZA1021", at->asp.v[0], "\"%s\" is not a valid part name",
-                       at->args.v[0]);
+        why = NULL;
+        cl->part = sym_text(at->args.v[0], &why);
+        if (!cl->part) {
+            diag_help(rep_errorf(a->rep, "ZA1021", at->asp.v[0], "\"%s\" is not a valid part name",
+                                 at->args.v[0]),
+                      "%s", why);
             st->bad = 1;
             return;
         }
-        cl->part = xstrdup(at->args.v[0]);
         s = asm_define(a, st, cl->part, at->asp.v[0], &created);
         if (created) {
             s->kind = SYM_SECT;
@@ -519,13 +522,15 @@ void dir_entry(Asm *a, Stmt *st) {
     for (i = 0; i < ops.n; i++) {
         Operand o = ops.v[i];
         EntryRef r;
-        if (!asm_valid_name(o.text)) {
-            rep_errorf(a->rep, "ZA1021", asm_op_span(st, o), "\"%s\" is not a valid symbol name",
-                       o.text);
+        const char *why = NULL;
+        r.name = sym_text(o.text, &why);
+        if (!r.name) {
+            diag_help(rep_errorf(a->rep, "ZA1021", asm_op_span(st, o),
+                                 "\"%s\" is not a valid symbol name", o.text),
+                      "%s", why);
             st->bad = 1;
             continue;
         }
-        r.name = o.text;
         r.sp = asm_op_span(st, o);
         vec_push(&a->entries, r);
     }
@@ -541,18 +546,21 @@ void dir_extrn(Asm *a, Stmt *st) {
         Operand o = ops.v[i];
         Symbol *old;
         int created;
-        if (!asm_valid_name(o.text)) {
-            rep_errorf(a->rep, "ZA1021", asm_op_span(st, o), "\"%s\" is not a valid symbol name",
-                       o.text);
+        const char *why = NULL;
+        char *nm = sym_text(o.text, &why);
+        if (!nm) {
+            diag_help(rep_errorf(a->rep, "ZA1021", asm_op_span(st, o),
+                                 "\"%s\" is not a valid symbol name", o.text),
+                      "%s", why);
             st->bad = 1;
             continue;
         }
-        old = asm_lookup(a, o.text);
+        old = asm_lookup(a, nm);
         if (old && old->kind == SYM_EXT) {
             if (old->weak && !weak) old->weak = 0; /* a strong declaration wins */
             continue;
         }
-        old = asm_define(a, st, o.text, asm_op_span(st, o), &created);
+        old = asm_define(a, st, nm, asm_op_span(st, o), &created);
         if (created) {
             old->kind = SYM_EXT;
             old->weak = weak;
@@ -582,7 +590,7 @@ void dir_equ(Asm *a, Stmt *st) {
     if (ops.n > 1 && ops.v[1].text[0]) {
         if (!asm_abs_expr(a, st, ops.v[1], "the EQU length attribute", &length)) return;
     }
-    if (!asm_valid_name(st->name)) {
+    if (!asm_valid_stmt_name(st)) {
         rep_errorf(a->rep, "ZA1021", st->name_span, "\"%s\" is not a valid symbol name", st->name);
         st->bad = 1;
         return;
@@ -677,8 +685,15 @@ void dir_end(Asm *a, Stmt *st) {
     if (a->pass == 1) {
         OperandVec ops = {0};
         if (asm_ops(a, st, 0, 1, &ops) && ops.n == 1 && ops.v[0].text[0]) {
-            a->end_entry = ops.v[0].text;
+            const char *why = NULL;
+            a->end_entry = sym_text(ops.v[0].text, &why);
             a->end_span = asm_op_span(st, ops.v[0]);
+            if (!a->end_entry) {
+                diag_help(rep_errorf(a->rep, "ZA1021", a->end_span,
+                                     "\"%s\" is not a valid symbol name", ops.v[0].text),
+                          "%s", why);
+                st->bad = 1;
+            }
         }
     }
     a->ended = 1;

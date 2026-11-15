@@ -546,13 +546,16 @@ static int dc_v(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
     split_operands(&items, sp->nom);
     for (k = 0; k < items.n; k++) {
         Operand it = items.v[k];
-        char *name = str_trim(it.text);
+        char *raw = str_trim(it.text), *name;
+        const char *why = NULL;
         int tl = (int)strlen(it.text);
         Symbol *s;
         DcVal v;
-        if (!asm_valid_name(name)) {
-            dc_err(a, st, "ZA1021", sp->nom_off + it.off, tl, "\"%s\" is not a valid symbol name",
-                   name);
+        name = sym_text(raw, &why);
+        if (!name) {
+            diag_help(dc_err(a, st, "ZA1021", sp->nom_off + it.off, tl,
+                             "\"%s\" is not a valid symbol name", raw),
+                      "%s", why);
             good = 0;
             continue;
         }

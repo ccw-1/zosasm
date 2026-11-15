@@ -302,6 +302,11 @@ static AddrOp split_addr(Operand o) {
         case '\'':
             if (!is_attr_quote(t, i)) in_q = 1;
             break;
+        case '"': {
+            long j = close_dquote(t, i);
+            if (j >= 0) i = (size_t)j;
+            break;
+        }
         case '(':
             if (depth == 0) cand = (long)i;
             depth++;

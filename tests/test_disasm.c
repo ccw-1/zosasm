@@ -165,6 +165,23 @@ static const char *const programs[] = {
     "LAST     DS    0X\n"
     "         DC    A(LAST)\n"
     "         END\n",
+
+    /* names that are no symbols: sections, entries, parts, externals */
+    "\"sec.1\"  CSECT\n"
+    "\"sec.1\"  AMODE 31\n"
+    "         ENTRY \"ent-a\"\n"
+    "         EXTRN \"ext b\"\n"
+    "         WXTRN \"weak\\x22q\\\\\"\n"
+    "\"ent-a\"  DS    0H\n"
+    "         BRASL 14,\"ext b\"\n"
+    "         BRASL 14,\"sec.2\"\n"
+    "         BR    14\n"
+    "TAB      DC    A(\"ext b\"),V(\"ext b\"),A(\"weak\\x22q\\\\\"),A(\"ent-a\")\n"
+    "\"sec.2\"  CSECT\n"
+    "         DC    A(\"sec.1\"),AD(\"sec.1\"+12)\n"
+    "\"P-1\"    CATTR ALIGN(3)\n"
+    "         DC    F'1'\n"
+    "         END   \"ent-a\"\n",
 };
 
 static void test_programs(void) {

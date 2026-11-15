@@ -85,6 +85,11 @@ static void test_no_expansion(void) {
     expect("number suffix", "#define E 1\n DC F'1E5',1E\n", " DC F'1E5',1E", "");
     expect("op field with blanks in parens", "#define S(a,b) STM a,b,0(13)\n S(1, 2)\n",
            " STM 1,2,0(13)", "");
+    expect("quoted symbol", "#define N 10\n LHI 1,\"N\"\n\"N\" EQU 1\n", " LHI 1,\"N\"|\"N\" EQU 1", "");
+    expect("quoted symbol in a macro body", "#define M DC A(\"a b\"),N\n#define N 3\nM\n",
+           "DC A(\"a b\"),3", "");
+    expect("quoted symbol with a quote", "#define N 1\n DC A(\"x\\\"N\")\n", " DC A(\"x\\\"N\")", "");
+    expect("quoted symbol as macro argument", "#define F(a) [a]\n X F(\"a,b\")\n", " X [\"a,b\"]", "");
     expect("quote inside macro body", "#define M DC C'a b'\nM\n", "DC C'a b'", "");
     expect("__LINE__", "\n X __LINE__\n", "| X 2", "");
     expect("__FILE__", " X __FILE__\n", " X t.za", "");

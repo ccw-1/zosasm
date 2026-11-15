@@ -139,11 +139,14 @@ static int failf(Ctx *x, const char *fmt, ...) {
     return 0;
 }
 
-/* a symbol or class name as source text; NULL when it cannot be written */
+/* a symbol or class name as source text: the plain symbol, else a quoted
+ * symbol ("a.b", with \xHH for unusual characters); NULL when it cannot be
+ * written (a NUL character) */
 static char *src_name(Ctx *x, const GoffESD *e, const char *what) {
-    char *s = ebcdic_decode(e->name, e->name_len);
-    if (!asm_valid_name(s)) {
-        failf(x, "the %s name \"%s\" cannot be written as a source symbol", what, s);
+    char *s = sym_source(e->name, e->name_len);
+    if (!s) {
+        char *t = ebcdic_decode(e->name, e->name_len);
+        failf(x, "the %s name \"%s\" cannot be written as a source symbol", what, t);
         return NULL;
     }
     return s;
@@ -1035,8 +1038,8 @@ char *disasm_module(const GoffModule *m, FILE *warn, int *nwarn, char *err, size
             warnf(&x, "the entry point of the object is not in a class and is ignored");
         }
     } else if (m->end.kind == GOFF_ENTRY_BYNAME) {
-        char *nm = ebcdic_decode(m->end.name, m->end.name_len);
-        for (i = 0; i < x.ers.n; i++)
+        char *nm = sym_source(m->end.name, m->end.name_len);
+        for (i = 0; nm && i < x.ers.n; i++)
             if (!strcmp(x.ers.v[i]->name, nm)) x.end_er = x.ers.v[i];
         if (!x.end_er) warnf(&x, "the entry point %s is not an external symbol and is ignored", nm);
     }

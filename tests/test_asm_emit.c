@@ -146,6 +146,30 @@ static void test_entry_external(void) {
     CHECK_STR(nm, "FOO");
 }
 
+static void test_quoted_names(void) {
+    static const unsigned char dotted[] = {0x81, 0x4B, 0x82}; /* a.b */
+    GoffModule *g = emit_src("\"a.b\" CSECT\n"
+                             " ENTRY \"e\\x2D1\"\n"
+                             " EXTRN \"ext sym\",\"w\\xE9\"\n"
+                             "\"e\\x2D1\" DS 0H\n"
+                             " DC A(\"ext sym\",\"w\\xE9\")\n"
+                             " END \"ext sym\"\n");
+    char *nm;
+    const GoffESD *e;
+    size_t i;
+    if (!g) return;
+    e = find_esd(g, GOFF_SD, "a.b");
+    CHECK(e != NULL);
+    if (e) CHECK(e->name_len == sizeof dotted && !memcmp(e->name, dotted, sizeof dotted));
+    CHECK(find_esd(g, GOFF_LD, "e-1") != NULL);
+    CHECK(find_esd(g, GOFF_ER, "ext sym") != NULL);
+    CHECK(find_esd(g, GOFF_ER, "w\xE9") != NULL);
+    CHECK(g->end.kind == GOFF_ENTRY_BYNAME);
+    nm = ebcdic_decode(g->end.name, g->end.name_len);
+    CHECK_STR(nm, "ext sym");
+    for (i = 0; i < g->esds.n; i++) CHECK(g->esds.v[i]->name_len > 0);
+}
+
 static void test_samples(void) {
     static const char *const files[] = {"testdata/hello.za", "../hlasm-dwarf/dwemb.asm"};
     size_t i;
@@ -239,6 +263,7 @@ int main(void) {
     test_structure();
     test_dsect_not_emitted();
     test_entry_external();
+    test_quoted_names();
     test_samples();
     test_literal_ltorg();
     test_literal_pool_at_end();

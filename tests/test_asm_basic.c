@@ -80,6 +80,8 @@ static void test_split_operands(void) {
         {",,", {"", "", ""}, 3},
         {"L'A,=C'x''y'", {"L'A", "=C'x''y'"}, 2},
         {"A(1,2),AL2(3)", {"A(1,2)", "AL2(3)"}, 2},
+        {"\"a,b\",\"c)\"", {"\"a,b\"", "\"c)\""}, 2},
+        {"A(\"x,\\\"y\"),2", {"A(\"x,\\\"y\")", "2"}, 2},
     };
     size_t c;
     int i;
@@ -89,6 +91,67 @@ static void test_split_operands(void) {
         CHECK_MSG((int)ops.n == cases[c].n, "%s: %d operands", cases[c].in, (int)ops.n);
         if ((int)ops.n != cases[c].n) continue;
         for (i = 0; i < cases[c].n; i++) CHECK_STR(ops.v[i].text, cases[c].want[i]);
+    }
+}
+
+static void test_quoted_symbols(void) {
+    static const struct {
+        const char *tok, *want; /* want NULL: invalid */
+    } cases[] = {
+        {"ABC", "ABC"},
+        {"\"ABC\"", "ABC"},
+        {"\"a.b\"", "a.b"},
+        {"\"a b\"", "a b"},
+        {"\"q\\\"q\"", "q\"q"},
+        {"\"b\\\\s\"", "b\\s"},
+        {"\"\\x41\\x2E\"", "A."},
+        {"\"\\xE9\"", "\xC3\xA9"}, /* U+00E9 as UTF-8 */
+        {"\"\"", NULL},
+        {"\"abc", NULL},
+        {"\"abc\"x", NULL},
+        {"\"a\\q\"", NULL},
+        {"\"\\x4\"", NULL},
+        {"\"\\x00\"", NULL},
+        {"\"a\tb\"", NULL},
+        {"a.b", NULL},
+        {"1ab", NULL},
+        {"", NULL},
+    };
+    static const unsigned char eb[] = {0x81, 0x4B, 0x82}; /* a.b */
+    static const unsigned char eb2[] = {0x81, 0x40, 0x82}; /* a b */
+    static const unsigned char eb3[] = {0xC1, 0x7F, 0xE0, 0xC2}; /* A"\B */
+    static const unsigned char eb4[] = {0xC1, 0x00};
+    size_t c;
+    char *g;
+    for (c = 0; c < sizeof cases / sizeof cases[0]; c++) {
+        const char *why = NULL;
+        char *got = sym_text(cases[c].tok, &why);
+        if (cases[c].want) {
+            CHECK_MSG(got && !strcmp(got, cases[c].want), "%s: got \"%s\"", cases[c].tok,
+                      got ? got : "(null)");
+        } else {
+            CHECK_MSG(!got && why, "%s: should be invalid", cases[c].tok);
+        }
+    }
+    g = sym_source(eb, sizeof eb);
+    CHECK_STR(g, "\"a.b\"");
+    g = sym_source(eb2, sizeof eb2);
+    CHECK_STR(g, "\"a b\"");
+    g = sym_source(eb3, sizeof eb3);
+    CHECK_STR(g, "\"A\\\"\\\\B\"");
+    g = sym_source((const unsigned char *)"\xC1\xC2", 2);
+    CHECK_STR(g, "AB");
+    CHECK(sym_source(eb4, sizeof eb4) == NULL);
+    CHECK(sym_source(eb4, 0) == NULL);
+    {
+        const unsigned char hi[] = {0xC1, 0x51}; /* a byte that is no ASCII */
+        g = sym_source(hi, sizeof hi);
+        CHECK(g && g[0] == '"');
+        if (g) {
+            const char *why = NULL;
+            char *back = sym_text(g, &why);
+            CHECK(back != NULL);
+        }
     }
 }
 
@@ -273,6 +336,19 @@ static void test_diag_codes(void) {
         {"GNU register class", "T CSECT\n LGR %f1,2\n", "ZA2055"},
         {"GNU register name", "T CSECT\n LGR %r1,%x2\n", "ZA2054"},
         {"GNU register range", "T CSECT\n LR %r16,1\n", "ZA2041"},
+        {"quoted symbol name", "\"a.b\" CSECT\n BR 14\n", ""},
+        {"quoted equals plain", "T CSECT\nA DS F\n\"A\" DS F\n", "ZA1020"},
+        {"quoted symbol use", "T CSECT\n USING *,12\n\"a b\" DS F\n L 1,\"a b\"\n", ""},
+        {"quoted attribute", "T CSECT\n\"a b\" DS FL3\n DC AL1(L'\"a b\")\n", ""},
+        {"bad escape in a name", "\"a\\q\" CSECT\n", "ZA0004"},
+        {"empty quoted name", "\"\" CSECT\n", "ZA0004"},
+        {"quoted name not closed", "\"abc CSECT\n", "ZA0004"},
+        {"bad escape in an operand", "T CSECT\n LA 1,\"a\\q\"\n", "ZA0004"},
+        {"unterminated quoted operand", "T CSECT\n LA 1,\"abc\n", "ZA0002"},
+        {"bad symbol in ENTRY", "T CSECT\n ENTRY a.b\n", "ZA1021"},
+        {"quoted ENTRY", "T CSECT\n ENTRY \"a.b\"\n\"a.b\" DS 0H\n", ""},
+        {"quoted EXTRN", "T CSECT\n EXTRN \"a.b\",\"c d\"\n DC A(\"a.b\"),V(\"c d\")\n", ""},
+        {"unquoted odd name", "T CSECT\na.b DS F\n", "ZA1021"},
         {"ok", "T CSECT\n BR 14\n", ""},
     };
     size_t c;
@@ -301,6 +377,7 @@ int main(void) {
     test_read_statements();
     test_read_errors();
     test_split_operands();
+    test_quoted_symbols();
     test_dc();
     test_gnu_registers();
     test_diag_codes();

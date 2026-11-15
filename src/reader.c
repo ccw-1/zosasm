@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "asm.h"
+#include "ebcdic.h"
 
 int is_blank(int c) { return c == ' ' || c == '\t'; }
 
@@ -24,6 +25,112 @@ int is_symbol_like(const char *s) {
     return 1;
 }
 
+long close_dquote(const char *s, size_t i) {
+    for (i++; s[i]; i++) {
+        if (s[i] == '\\') {
+            if (!s[i + 1]) return -1;
+            i++;
+        } else if (s[i] == '"') {
+            return (long)i;
+        }
+    }
+    return -1;
+}
+
+static int hexdig(int c) { return za_isdigit(c) ? c - '0' : za_toupper(c) - 'A' + 10; }
+
+char *sym_decode(const char *s, size_t n, const char **err) {
+    Buf b = {0};
+    size_t i;
+    if (n == 0) {
+        *err = "a quoted symbol cannot be empty";
+        return NULL;
+    }
+    for (i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)s[i];
+        if (c == '\\') {
+            if (i + 1 < n && (s[i + 1] == '"' || s[i + 1] == '\\')) {
+                buf_putc(&b, s[++i]);
+            } else if (i + 3 < n && s[i + 1] == 'x' && za_isxdigit((unsigned char)s[i + 2]) &&
+                       za_isxdigit((unsigned char)s[i + 3])) {
+                int v = hexdig((unsigned char)s[i + 2]) * 16 + hexdig((unsigned char)s[i + 3]);
+                if (v == 0) {
+                    *err = "\\x00 cannot be part of a name";
+                    return NULL;
+                }
+                if (v < 0x80) {
+                    buf_putc(&b, v);
+                } else {
+                    buf_putc(&b, 0xC0 | (v >> 6));
+                    buf_putc(&b, 0x80 | (v & 0x3F));
+                }
+                i += 3;
+            } else {
+                *err = "unknown escape; use \\\", \\\\ or \\xHH";
+                return NULL;
+            }
+        } else if (c < 0x20 || c == 0x7F) {
+            *err = "control characters must be written \\xHH";
+            return NULL;
+        } else {
+            buf_putc(&b, c);
+        }
+    }
+    if (b.len > 32767) {
+        *err = "the name is longer than 32767 bytes";
+        return NULL;
+    }
+    return xstrdup(buf_cstr(&b));
+}
+
+char *sym_text(const char *tok, const char **err) {
+    size_t n = strlen(tok);
+    if (tok[0] == '"') {
+        long j = close_dquote(tok, 0);
+        if (j < 0) {
+            *err = "the quoted symbol is not closed";
+            return NULL;
+        }
+        if ((size_t)j != n - 1) {
+            *err = "unexpected text after the closing quote";
+            return NULL;
+        }
+        return sym_decode(tok + 1, n - 2, err);
+    }
+    if (n == 0 || n > 32767 || !is_symbol_like(tok)) {
+        *err = "symbols start with a letter or one of @ # $ _ and continue with letters, digits "
+               "or those characters; any other name is written in double quotes";
+        return NULL;
+    }
+    return xstrdup(tok);
+}
+
+char *sym_source(const unsigned char *eb, size_t n) {
+    Buf b = {0}, q = {0};
+    size_t i;
+    if (n == 0) return NULL;
+    for (i = 0; i < n; i++) {
+        unsigned char c = ZA_A(eb[i]);
+        if (c == 0) return NULL;
+        buf_putc(&b, c);
+    }
+    if (n <= 32767 && is_symbol_like(buf_cstr(&b))) return xstrdup(buf_cstr(&b));
+    buf_putc(&q, '"');
+    for (i = 0; i < n; i++) {
+        unsigned char c = b.p[i];
+        if (c == '"' || c == '\\') {
+            buf_putc(&q, '\\');
+            buf_putc(&q, c);
+        } else if (c >= 0x20 && c < 0x7F) {
+            buf_putc(&q, c);
+        } else {
+            buf_printf(&q, "\\x%02X", c);
+        }
+    }
+    buf_putc(&q, '"');
+    return xstrdup(buf_cstr(&q));
+}
+
 int is_attr_quote(const char *s, size_t i) {
     int c, n;
     if (i == 0) return 0;
@@ -34,7 +141,7 @@ int is_attr_quote(const char *s, size_t i) {
         if (is_sym_char(pc) || pc == '\'') return 0;
     }
     n = (unsigned char)s[i + 1];
-    return n != 0 && (is_sym_start(n) || n == '*');
+    return n != 0 && (is_sym_start(n) || n == '*' || n == '"');
 }
 
 long match_paren(const char *s, size_t i) {
@@ -54,6 +161,12 @@ long match_paren(const char *s, size_t i) {
         case '\'':
             if (!is_attr_quote(s, i)) in_q = 1;
             break;
+        case '"': {
+            long j = close_dquote(s, i);
+            if (j < 0) return -1;
+            i = (size_t)j;
+            break;
+        }
         case '(':
             depth++;
             break;
@@ -160,6 +273,15 @@ int scan_operand_end(const char *s, size_t start, size_t *end) {
             if (is_attr_quote(s, i)) continue;
             in_q = 1;
             break;
+        case '"': {
+            long j = close_dquote(s, i);
+            if (j < 0) {
+                *end = strlen(s);
+                return 0;
+            }
+            i = (size_t)j;
+            break;
+        }
         case '(':
             depth++;
             break;
@@ -206,11 +328,30 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
         if (!is_blank((unsigned char)line[0])) {
             size_t nl;
             q = p;
+            if (line[q] == '"') { /* quoted symbol: may hold blanks */
+                long j = close_dquote(line, q);
+                if (j >= 0) q = (size_t)j + 1;
+            }
             while (line[q] && !is_blank((unsigned char)line[q])) q++;
             nl = q - p;
             st->name_span = span_make(file, ln, (int)p + 1, (int)nl);
             if (nl > 0 && line[q - 1] == ':') nl--;
-            st->name = xstrndup(line + p, nl);
+            if (line[p] == '"') {
+                const char *why = NULL;
+                char *t = xstrndup(line + p, nl);
+                st->name = sym_text(t, &why);
+                if (!st->name) {
+                    diag_help(rep_errorf(rep, "ZA0004", st->name_span, "invalid quoted symbol: %s", why),
+                              "write \"name\" with \\\" for a quote, \\\\ for a backslash and \\xHH for "
+                              "other characters");
+                    st->name = xstrdup("");
+                    st->bad = 1;
+                }
+                st->name_quoted = 1;
+                free(t);
+            } else {
+                st->name = xstrndup(line + p, nl);
+            }
             p = q;
         }
         while (line[p] && is_blank((unsigned char)line[p])) p++;
@@ -299,6 +440,11 @@ void split_operands(OperandVec *out, const char *s) {
         case '\'':
             if (!is_attr_quote(s, i)) in_q = 1;
             break;
+        case '"': {
+            long j = close_dquote(s, i);
+            if (j >= 0) i = (size_t)j;
+            break;
+        }
         case '(':
             depth++;
             break;

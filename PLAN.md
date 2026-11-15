@@ -38,7 +38,8 @@ Status key: [x] done, [-] in progress, [ ] open.
       DEFLOAD, FILL, PART, PRIORITY, MERGE/CAT binding
 - [ ] `XATTR`: LINKAGE(OS|XPLINK), SCOPE(SECTION|MODULE|LIBRARY|EXPORT|IMPORT),
       REFERENCE(CODE|DATA), DATAREFERENCE, PSECT, DEFLOAD, ...
-- [ ] `ALIAS`, `COM`, `DXD`/`CXD`, deferred lengths (LEN record),
+- [x] quoted symbols `"any name"` replace HLASM `ALIAS` (DESIGN.md 2; `-disasm` uses them)
+- [ ] `COM` details, `DXD`/`CXD`, deferred lengths (LEN record),
       XPLINK call descriptors, `B_IDRL` ident record
 - [ ] END with entry point by name / ESDID+offset
 
