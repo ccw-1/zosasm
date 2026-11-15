@@ -5,6 +5,7 @@
 #include "asm.h"
 #include "ebcdic.h"
 #include "goff.h"
+#include "zsrc.h"
 #include "zsym.h"
 
 /* GOFF name of an unnamed control section */
@@ -309,9 +310,9 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
     GoffEnd end;
     size_t si, ci, i, k;
     const uint8_t *out;
-    uint8_t *copy, *zdata;
-    size_t zlen = 0;
-    uint32_t zesd = 0;
+    uint8_t *copy, *adata[2];
+    size_t alen[2] = {0, 0};
+    uint32_t aesd[2] = {0, 0};
 
     for (si = 0; si < m->sections.n; si++)
         if (m->sections.v[si]->kind != K_DSECT) vec_push(&secs, m->sections.v[si]);
@@ -419,23 +420,25 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
         }
     }
 
-    /* ZSYM: the symbolic information, a class without load text (ZSYM.md) */
-    zdata = zsym_build(m, &zlen);
-    if (zdata) {
+    /* ZSYM and the original sources: classes without load text (ZSYM.md) */
+    adata[0] = zsym_build(m, &alen[0]);
+    adata[1] = zsrc_build(m, &alen[1]);
+    for (k = 0; k < 2; k++) {
         GoffESD ed;
+        if (!adata[k]) continue;
         memset(&ed, 0, sizeof ed);
         ed.type = GOFF_ED;
         ed.parent = secs.v[0]->esd;
-        set_name(&ed, ZSYM_CLASS);
+        set_name(&ed, k ? ZSRC_CLASS : ZSYM_CLASS);
         ed.name_space = GOFF_NS_NORMAL;
-        ed.length = (uint32_t)zlen;
+        ed.length = (uint32_t)alen[k];
         ed.attr.amode = secs.v[0]->amode;
         ed.attr.rmode = secs.v[0]->rmode;
         ed.attr.text_style = GOFF_STYLE_UNSTRUCTURED;
         ed.attr.bind_algorithm = GOFF_BIND_CAT;
         ed.attr.loading = GOFF_NOLOAD;
         TRY(goff_write_esd(w, &ed));
-        zesd = ed.id;
+        aesd[k] = ed.id;
     }
 
     /* text */
@@ -445,7 +448,8 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
             if (c->len == 0) continue;
             TRY(goff_write_text(w, class_target(c), 0, GOFF_STYLE_BYTE, c->data, (size_t)c->len));
         }
-    if (zdata) TRY(goff_write_text(w, zesd, 0, GOFF_STYLE_UNSTRUCTURED, zdata, zlen));
+    for (k = 0; k < 2; k++)
+        if (adata[k]) TRY(goff_write_text(w, aesd[k], 0, GOFF_STYLE_UNSTRUCTURED, adata[k], alen[k]));
 
     /* relocations, in offset order per class */
     for (si = 0; si < secs.n; si++)

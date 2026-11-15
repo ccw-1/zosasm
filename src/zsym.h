@@ -110,6 +110,9 @@ typedef struct {
 /* The chunks for the module (ZSYM.md); NULL when m->zlevel is 0. */
 uint8_t *zsym_build(Module *m, size_t *len);
 
+/* one chunk (framing of both streams); the payload is not copied */
+void zsym_put_chunk(Buf *out, int kind, Buf *payload);
+
 /* ---- reader -------------------------------------------------------------- */
 
 /* Parse a stream of chunks. Never fails on content: damaged chunks are
@@ -117,6 +120,8 @@ uint8_t *zsym_build(Module *m, size_t *len);
 Zsym *zsym_parse(const uint8_t *b, size_t n);
 /* the concatenated text of the class C_ADATAE9C1, or NULL when absent */
 uint8_t *zsym_extract(const GoffModule *m, size_t *len);
+/* the same for any annotation class (C_ADATAE9C2: zsrc.h) */
+uint8_t *zsym_extract_class(const GoffModule *m, const char *cls, size_t *len);
 void zsym_dump(const Zsym *z, FILE *f);
 /* text of a template; symbols are written by their name in b */
 char *zsym_render(const ZBlock *b, const ZTmpl *t);

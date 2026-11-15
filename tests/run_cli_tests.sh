@@ -3,6 +3,7 @@
 X=build/zosasm
 T=build/cli_tmp
 fail=0
+P=$(pwd)
 mkdir -p $T
 check() { if [ "$2" != "$3" ]; then echo "FAIL cli: $1 (got '$2', want '$3')"; fail=1; fi; }
 
@@ -81,6 +82,24 @@ cmp -s $T/hello0.o $T/backz.o; check "ZSYM source gives the object back" $? 0
 head -c 200 $T/hello.o > $T/trunc.o
 $X -disasm $T/trunc.o 2>/dev/null; check "-disasm bad object" $? 1
 $X -disasm $T/missing.o 2>/dev/null; check "-disasm missing file" $? 1
+
+# tier 2: the original sources in the object
+mkdir -p $T/src/inc
+printf '#include "inc/regs.inc"\nT1 CSECT\n LR R1,R2\n DC A(N)\n END\n' > $T/src/main.za
+printf '#define N 3\nR1 EQU 1\nR2 EQU 2\n' > $T/src/inc/regs.inc
+(cd $T/src && $P/$X -gz2 -DFOO=2 -o m2.o main.za 2>/dev/null); check "-gz2 exit" $? 0
+$X -dump $T/src/m2.o | grep -q "^ZSRC: 1 block"; check "-gz2 has ZSRC" $? 0
+$X -dump $T/src/m2.o | grep -q "define FOO=2"; check "-gz2 keeps the -D options" $? 0
+$X -dump $T/src/m2.o | grep -q "file 1: inc/regs.inc"; check "-gz2 keeps the included file" $? 0
+(cd $T/src && $P/$X -o m1.o main.za 2>/dev/null); $X -dump $T/src/m1.o | grep -q "ZSRC"; check "default has no ZSRC" $? 1
+$X -unpack $T/src/m2.o -o $T/unp >$T/list; check "-unpack exit" $? 0
+cmp -s $T/src/main.za $T/unp/main.za; check "-unpack main file" $? 0
+cmp -s $T/src/inc/regs.inc $T/unp/inc/regs.inc; check "-unpack included file" $? 0
+(cd $T/unp && $P/$X -gz2 -DFOO=2 -o m2.o main.za 2>/dev/null); check "unpacked sources assemble" $? 0
+cmp -s $T/src/m2.o $T/unp/m2.o; check "unpacked sources give the object back" $? 0
+$X -unpack $T/src/m1.o -o $T/unp1 2>/dev/null; check "-unpack without sources" $? 1
+$X -disasm $T/src/m2.o 2>$T/err | grep -q "DC    A(3)"; check "-disasm of a -gz2 object" $? 0
+[ ! -s $T/err ]; check "-disasm of a -gz2 object without warnings" $? 0
 
 rm -rf $T
 [ $fail = 0 ] && echo "tests/run_cli_tests.sh: ok"

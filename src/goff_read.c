@@ -320,16 +320,18 @@ static int same_reloc(const GoffReloc *a, const GoffReloc *b) {
            a->amode_sens == b->amode_sens;
 }
 
-int goff_equal(const GoffModule *a, uint32_t skip_a, const GoffModule *b) {
+int goff_equal(const GoffModule *a, uint32_t skip_a, uint32_t nskip, const GoffModule *b) {
     size_t i, j;
-    if (a->esds.n - (skip_a ? 1 : 0) != b->esds.n) return 0;
+    if (!skip_a) nskip = 0;
+#define SKIPPED(ID) (nskip && (ID) >= skip_a && (ID) - skip_a < nskip)
+    if (a->esds.n - nskip != b->esds.n) return 0;
     for (i = 0, j = 0; i < a->esds.n; i++) {
-        if (a->esds.v[i]->id == skip_a && skip_a) continue;
+        if (SKIPPED(a->esds.v[i]->id)) continue;
         if (!same_esd(a->esds.v[i], b->esds.v[j++])) return 0;
     }
     for (i = 0, j = 0; i < a->texts.n; i++) {
         const GoffText *x = &a->texts.v[i], *y;
-        if (skip_a && x->esdid == skip_a) continue;
+        if (SKIPPED(x->esdid)) continue;
         if (j >= b->texts.n) return 0;
         y = &b->texts.v[j++];
         if (x->esdid != y->esdid || x->offset != y->offset || x->style != y->style || x->encoding != y->encoding ||
@@ -344,4 +346,5 @@ int goff_equal(const GoffModule *a, uint32_t skip_a, const GoffModule *b) {
     return a->end.kind == b->end.kind && a->end.amode == b->end.amode && a->end.esdid == b->end.esdid &&
            a->end.offset == b->end.offset && a->end.name_len == b->end.name_len &&
            (!a->end.name_len || memcmp(a->end.name, b->end.name, a->end.name_len) == 0);
+#undef SKIPPED
 }

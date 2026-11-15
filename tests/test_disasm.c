@@ -294,8 +294,8 @@ static void smart_trip(const char *name, const char *src) {
     }
     g2 = parse_obj(o2, n2);
     if (!g2) return;
-    if (!goff_equal(g1, zsym_esd(g1), g2)) printf("--- %s: the ZSYM source gives another object:\n%s\n", name, t1);
-    CHECK_MSG(goff_equal(g1, zsym_esd(g1), g2), "%s: object differs", name);
+    if (!goff_equal(g1, zsym_esd(g1), 1, g2)) printf("--- %s: the ZSYM source gives another object:\n%s\n", name, t1);
+    CHECK_MSG(goff_equal(g1, zsym_esd(g1), 1, g2), "%s: object differs", name);
     /* its own ZSYM gives the same source back */
     zlevel = 1;
     o3 = assemble("zsym source", t1, &n3);

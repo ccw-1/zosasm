@@ -25,7 +25,7 @@ build/zosasm -E prog.za                     # show the preprocessed source
 ```
 
 Options: `-o FILE`, `-DNAME[=VAL]`, `-Idir`, `-E`, `-dump FILE`,
-`-disasm FILE`, `-generic`, `-gz0`, `-gz1`, `-reproducible`, `-version`,
+`-disasm FILE`, `-unpack FILE`, `-generic`, `-gz0`, `-gz1`, `-gz2`, `-reproducible`, `-version`,
 `-color`, `-max-errors N`, `-Werror`. Source files use the extension `.za`.
 
 Assembly time helpers (DESIGN.md sections 8 and 12): `sizeof(x)`,
@@ -38,7 +38,9 @@ stringify operator `#(x)`.
 By default the object carries ZSYM (`-gz1`): symbols, EQUs and the operands
 of every statement in a NOLOAD class `C_ADATAE9C1` that the loader ignores
 (DESIGN.md section 11). `-gz0` leaves it out; the object is then exactly the
-code, data and relocations.
+code, data and relocations. `-gz2` also keeps the original source files (main file and
+`#include`s, compressed) in a second NOLOAD class `C_ADATAE9C2`; `zosasm -unpack
+file.o -o dir` writes them back (DESIGN.md section 14).
 
 `-disasm` of an object with ZSYM gives the original statements back (names,
 EQUs, USING, DSECTs, literals), a section whose bytes were changed after

@@ -177,6 +177,13 @@ typedef struct {
 
 typedef Vec(ZRec) ZRecVec;
 
+/* the original text of a source file, kept in the object at -gz2 (zsrc.h) */
+typedef struct {
+    char *name;
+    char *text;
+    size_t len;
+} ZSrcIn;
+
 typedef struct {
     char *name;
     SectionVec sections;
@@ -185,7 +192,10 @@ typedef struct {
     char *entry; /* END operand, or NULL */
     Span entry_def;
     ZRecVec zrecs; /* the statements, in source order (ZSYM.md) */
-    int zlevel;    /* ZSYM level written by module_emit: 0 none, 1 symbols and statements */
+    int zlevel;    /* ZSYM level written by module_emit: 0 none, 1 symbols and statements,
+                    * 2 also the original sources (zsrc) */
+    Vec(ZSrcIn) zsrc;    /* at level 2: the main file first, then the included files */
+    Vec(char *) zdefs;   /* at level 2: the -D options given ("NAME" or "NAME=value") */
 } Module;
 
 Symbol *module_symbol(const Module *m, const char *name);

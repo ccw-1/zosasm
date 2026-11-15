@@ -48,7 +48,7 @@ Status key: [x] done, [-] in progress, [ ] open.
 
 - [x] ZSYM Z1: symbolic information in a NOLOAD ADATA class, `-gz0/-gz1`, `-dump` (DESIGN.md 11)
 - [x] ZSYM Z2: smart `-disasm` from the ZSYM statements, per-section fallback, `-generic` (DESIGN.md 11)
-- [ ] ZSYM tier 2 `-gz2`: original source text (ZSYM.md)
+- [x] ZSYM tier 2 `-gz2`: original source files in `C_ADATAE9C2`, LZ4 block compression, `-unpack` (DESIGN.md 14)
 - [x] labeled and dependent USING, USING ranges, qualified symbols (DESIGN.md 4.3)
 - [x] `sizeof`/`offsetof`/`alignof`/`countof`, comparisons, `ASSERT`, preprocessor
       built-ins, `#(x)` stringify, `-reproducible` (DESIGN.md 12, 8)

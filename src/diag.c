@@ -66,6 +66,14 @@ void rep_add_source(Reporter *r, const char *name, const char *text, size_t len)
         if (text[i] == '\n') s->starts[n++] = i + 1;
 }
 
+int rep_get_source(const Reporter *r, size_t i, const char **name, const char **text, size_t *len) {
+    if (i >= r->sources.n) return 0;
+    *name = r->sources.v[i]->name;
+    *text = r->sources.v[i]->text;
+    *len = r->sources.v[i]->len;
+    return 1;
+}
+
 void rep_add_expansion(Reporter *r, const char *file, int line, const char *expanded,
                        const char *macro, Span def) {
     char *key = xasprintf("%s:%d", file ? file : "", line);

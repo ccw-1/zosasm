@@ -535,7 +535,7 @@ class; the output is then exactly the same as for an object without ZSYM.
 object), NOLOAD, text style unstructured, bind CAT, length = size of the
 chunks. The text records hold the chunks at running offsets. The module
 library default is `Module.zlevel = 0` (no class); `zosasm` sets 1
-(`-gz1`, default) or 0 (`-gz0`). `-gz2` (original sources) is reserved.
+(`-gz1`, default), 0 (`-gz0`) or 2 (`-gz2`, adds the original sources: section 14).
 
 **Chunks.** `'Z' 'S' version:u8 kind:u8 length:u32BE payload crc32:u32BE`
 (crc over everything before it, IEEE polynomial). Kinds: 1 MODULE (producer,
@@ -613,7 +613,7 @@ ZSYM class falls back to generic; editing the source (`F1 DS F` -> `F1 DS
 **Known gaps.** `ORG` that moves back and rewrites bytes makes the crc of
 the earlier statement fail (that section falls back to the generic
 converter). Comments, remarks and the original spelling of a symbol's case
-are not kept (tier 2, `-gz2`). The file/line of a statement come from the
+are not kept in ZSYM (tier 2, `-gz2`, keeps the whole text: section 14). The file/line of a statement come from the
 preprocessed input. Nothing here is checked against an
 IBM tool; the class name and attributes follow the ADATA description in the
 GOFF documentation.
@@ -786,3 +786,51 @@ differently: the reader takes additions first, whatever the order.
 **Not done.** Bit-length modifiers (`L.n`), `QY`, `S`/`SY`, `G`, the `CU`
 code page options, and the exponent modifier warning for values that are not
 exactly representable.
+
+## 14. Original sources, `-gz2` (tier 2)
+
+**What and why.** ZSYM (section 11) keeps the *statements*; it cannot keep
+what the preprocessor removed (comments, `#define`, `#if`, macro spelling,
+blank lines, `__LINE__` as a name). At `-gz2` the object also holds the
+files the assembler read, byte for byte: the main file and every
+`#include`, and the `-D` options. `zosasm -dump` lists them, `zosasm -unpack
+file.o -o dir` writes them below `dir` (default `.`) with their relative
+names, and assembling the main file there with the same options gives the
+same object (tested). `-disasm` does not use the text (it still works from
+ZSYM); that is future work.
+
+**Class.** `C_ADATAE9C2`, an ED like the ZSYM class (NOLOAD, unstructured,
+bind CAT, under the first SD), written after `C_ADATAE9C1` (both are the
+last ESDs). `goff_equal` takes the number of skipped ESDs so `-disasm`
+compares an object without either class. Like the first class, it does not
+change a byte of the loaded image.
+
+**Chunks** (`src/zsrc.c`, shared framing and integer coding in `src/zio.h`):
+the same `'Z' 'S' version kind length payload crc32` framing as ZSYM, own
+kinds: 1 HEAD (producer, level, the `-D` strings, number of files), 2 FILE
+(name, length, crc32 of the original bytes, method, data), 3 END (number
+of files). Method 0 is stored, 1 is an LZ4 block. A file is compressed only
+when it is at least 64 bytes and the result is smaller. The reader checks
+chunk crc, decompressed length and the crc of the original, and never
+reads or writes outside its buffers (fuzzed in `tests/test_zsrc.c`); a
+damaged block is reported incomplete and unpacked files are only those that
+verified. The binder concatenates classes of several modules, so a reader
+finds several blocks; `-unpack` writes the later ones under `dir/2/`,
+`dir/3/` and so on.
+
+**Compression** (`src/lz.c`): the LZ4 block format, written under the
+reference encoder's end rules, so any LZ4 block decoder reads it (no
+external library; the decoder was tested with hand made blocks and random
+damage, not against another implementation: none is installed here). One
+hash table of 2^14 entries, matches within 64 KB. Source text compresses 3
+to 5 times.
+
+**Unpack names.** The name stored is the file name as read (relative to
+the working directory, or as given for the main file). Names are made
+harmless before writing: leading `/` and `.` components are dropped, `..`
+becomes `__`, so a hostile object cannot write outside the directory.
+
+**Not done.** `-disasm` from the stored sources; recording which `#include`
+resolved to which file in a search directory (the name stored is the path
+that was opened); `-I` directories are not stored (they are machine
+specific).

@@ -44,6 +44,9 @@ Reporter *rep_new(int max_errors);
 void rep_set_warn_error(Reporter *r, int on);
 /* Register the text of a file so excerpts can be printed (text is copied). */
 void rep_add_source(Reporter *r, const char *name, const char *text, size_t len);
+/* The registered sources in registration order (the first is the main file);
+ * returns 0 past the end. text is not NUL-terminated at len. */
+int rep_get_source(const Reporter *r, size_t i, const char **name, const char **text, size_t *len);
 
 /* The source line (file, line) was produced by macro expansion. Diagnostics
  * on it show the expanded text, followed by a note that names the macro

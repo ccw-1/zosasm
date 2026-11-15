@@ -238,9 +238,9 @@ static void test_same_object(void) {
     CHECK(esd_id(z0.g, ZSYM_CLASS) == 0);
     CHECK(z1.z != NULL);
     CHECK(z1.g->esds.n == z0.g->esds.n + 1);
-    CHECK(goff_equal(z1.g, esd_id(z1.g, ZSYM_CLASS), z0.g));
-    CHECK(!goff_equal(z1.g, 0, z0.g));
-    CHECK(goff_equal(z0.g, 0, z0.g));
+    CHECK(goff_equal(z1.g, esd_id(z1.g, ZSYM_CLASS), 1, z0.g));
+    CHECK(!goff_equal(z1.g, 0, 0, z0.g));
+    CHECK(goff_equal(z0.g, 0, 0, z0.g));
     /* the module library default is no ZSYM */
     {
         Reporter *rep = rep_new(0);
@@ -467,7 +467,7 @@ static void test_smart_degrade(void) {
     CHECK(t && !strstr(t, "USING S2,12") && !strstr(t, "LA    2,FIELD2"));
     CHECK(t && strstr(t, "FIELD2")); /* the label survives in the generic text */
     g2 = t ? reassemble(t, 0, NULL) : NULL;
-    CHECK(g2 && goff_equal(b.g, esd_id(b.g, ZSYM_CLASS), g2));
+    CHECK(g2 && goff_equal(b.g, esd_id(b.g, ZSYM_CLASS), 1, g2));
 
     /* a patched byte in S1 degrades S1 only */
     tx->data[8] ^= 0x01;
@@ -477,7 +477,7 @@ static void test_smart_degrade(void) {
     t = disasm_ex(b.g, 0, NULL, &nw, &smart, err, sizeof err);
     CHECK(t && smart && nw == 1 && strstr(t, "LA    2,FIELD2") && !strstr(t, "LA    2,FIELD1"));
     g2 = t ? reassemble(t, 0, NULL) : NULL;
-    CHECK(g2 && goff_equal(b.g, esd_id(b.g, ZSYM_CLASS), g2));
+    CHECK(g2 && goff_equal(b.g, esd_id(b.g, ZSYM_CLASS), 1, g2));
 }
 
 static void test_smart_pool(void) {
@@ -496,7 +496,7 @@ static void test_smart_pool(void) {
     t = disasm_ex(b.g, 0, NULL, &nw, &smart, err, sizeof err);
     CHECK(t && smart && nw == 1 && !strstr(t, "=F'5'"));
     g2 = t ? reassemble(t, 0, NULL) : NULL;
-    CHECK(g2 && goff_equal(b.g, esd_id(b.g, ZSYM_CLASS), g2));
+    CHECK(g2 && goff_equal(b.g, esd_id(b.g, ZSYM_CLASS), 1, g2));
     /* a byte nobody wrote (the padding behind the code) */
     tx->data[11] = 5;
     tx->data[7] = 1;

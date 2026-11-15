@@ -4,6 +4,7 @@
 
 #include "ebcdic.h"
 #include "isa.h"
+#include "zio.h"
 #include "zsym.h"
 
 #define BATCH 256 /* symbols or statements per chunk */
@@ -69,32 +70,7 @@ char *zsym_render(const ZBlock *b, const ZTmpl *t) {
 
 /* ---- encoding -------------------------------------------------------------- */
 
-static void put_uv(Buf *b, uint64_t v) {
-    while (v >= 0x80) {
-        buf_putc(b, (int)(v & 0x7F) | 0x80);
-        v >>= 7;
-    }
-    buf_putc(b, (int)v);
-}
-
-static void put_sv(Buf *b, int64_t v) {
-    put_uv(b, v < 0 ? ((~(uint64_t)v) << 1) | 1 : (uint64_t)v << 1);
-}
-
-static void put_str(Buf *b, const char *s) {
-    size_t n = strlen(s);
-    put_uv(b, n);
-    buf_write(b, s, n);
-}
-
-static void put_u32(Buf *b, uint32_t v) {
-    buf_putc(b, (int)(v >> 24 & 0xFF));
-    buf_putc(b, (int)(v >> 16 & 0xFF));
-    buf_putc(b, (int)(v >> 8 & 0xFF));
-    buf_putc(b, (int)(v & 0xFF));
-}
-
-static void put_chunk(Buf *out, int kind, Buf *payload) {
+void zsym_put_chunk(Buf *out, int kind, Buf *payload) {
     size_t start = out->len;
     buf_putc(out, 'Z');
     buf_putc(out, 'S');
@@ -369,7 +345,7 @@ uint8_t *zsym_build(Module *m, size_t *len) {
     }
     put_uv(&p, m->sym_order.n);
     put_uv(&p, m->zrecs.n);
-    put_chunk(&out, ZK_MODULE, &p);
+    zsym_put_chunk(&out, ZK_MODULE, &p);
 
     /* SYMS */
     for (from = 0; from < m->sym_order.n; from += BATCH) {
@@ -377,7 +353,7 @@ uint8_t *zsym_build(Module *m, size_t *len) {
         p.len = 0;
         put_uv(&p, to - from);
         for (i = from; i < to; i++) put_sym(&p, m->sym_order.v[i]);
-        put_chunk(&out, ZK_SYMS, &p);
+        zsym_put_chunk(&out, ZK_SYMS, &p);
     }
 
     /* STMTS */
@@ -430,14 +406,14 @@ uint8_t *zsym_build(Module *m, size_t *len) {
             put_str(&p, st->op ? st->op : "");
             put_tmpl(&p, &ops);
         }
-        put_chunk(&out, ZK_STMTS, &p);
+        zsym_put_chunk(&out, ZK_STMTS, &p);
     }
 
     /* END */
     p.len = 0;
     put_uv(&p, m->sym_order.n);
     put_uv(&p, m->zrecs.n);
-    put_chunk(&out, ZK_END, &p);
+    zsym_put_chunk(&out, ZK_END, &p);
 
     res = xmalloc(out.len + 1);
     memcpy(res, out.p, out.len);
@@ -446,59 +422,6 @@ uint8_t *zsym_build(Module *m, size_t *len) {
 }
 
 /* ---- the reader ---------------------------------------------------------------- */
-
-typedef struct {
-    const uint8_t *p, *end;
-    int bad;
-} Rd;
-
-static uint64_t get_uv(Rd *r) {
-    uint64_t v = 0;
-    int sh = 0;
-    for (;;) {
-        uint8_t c;
-        if (r->p >= r->end || sh > 63) {
-            r->bad = 1;
-            return 0;
-        }
-        c = *r->p++;
-        v |= (uint64_t)(c & 0x7F) << sh;
-        if (!(c & 0x80)) return v;
-        sh += 7;
-    }
-}
-
-static int64_t get_sv(Rd *r) {
-    uint64_t u = get_uv(r);
-    return (int64_t)((u >> 1) ^ (~(u & 1) + 1));
-}
-
-static int get_u8(Rd *r) {
-    if (r->p >= r->end) {
-        r->bad = 1;
-        return 0;
-    }
-    return *r->p++;
-}
-
-static uint32_t get_u32(Rd *r) {
-    uint32_t v = 0;
-    int i;
-    for (i = 0; i < 4; i++) v = v << 8 | (uint32_t)get_u8(r);
-    return v;
-}
-
-static char *get_str(Rd *r) {
-    uint64_t n = get_uv(r);
-    char *s;
-    if (r->bad || n > (uint64_t)(r->end - r->p)) {
-        r->bad = 1;
-        return xstrdup("");
-    }
-    s = xstrndup((const char *)r->p, (size_t)n);
-    r->p += n;
-    return s;
-}
 
 /* an element count: every element takes at least one byte */
 static size_t get_count(Rd *r) {
@@ -594,60 +517,48 @@ static void parse_stmts(Rd *r, ZBlock *b) {
     }
 }
 
-static uint32_t be32(const uint8_t *p) {
-    return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3];
-}
-
 Zsym *zsym_parse(const uint8_t *b, size_t n) {
     Zsym *z = xcalloc(sizeof *z);
     ZBlock *cur = NULL;
     size_t i = 0;
     int in_junk = 0;
     while (i < n) {
-        int ok = 0;
-        if (b[i] == 'Z' && i + 1 < n && b[i + 1] == 'S' && n - i >= 12) {
-            uint32_t len = be32(b + i + 4);
-            if (len <= n - i - 12 && zsym_crc(b + i, n - i, NULL, 0, (int64_t)len + 8) == be32(b + i + 8 + len)) {
-                Rd r;
-                int ver = b[i + 2], kind = b[i + 3];
-                r.p = b + i + 8;
-                r.end = r.p + len;
-                r.bad = 0;
-                ok = 1;
-                in_junk = 0;
-                if (ver != ZSYM_VERSION) {
+        Rd r;
+        int ver, kind;
+        size_t used = chunk_at(b, n, i, &ver, &kind, &r);
+        if (used) {
+            in_junk = 0;
+            if (ver != ZSYM_VERSION) {
+                z->bad_chunks++;
+                if (cur) cur->damaged = 1;
+            } else if (kind == ZK_MODULE) {
+                cur = xcalloc(sizeof *cur);
+                vec_push(&z->blocks, cur);
+                parse_module(&r, cur);
+                if (r.bad) cur->damaged = 1;
+            } else if (kind == ZK_SYMS || kind == ZK_STMTS) {
+                if (!cur) {
                     z->bad_chunks++;
-                    if (cur) cur->damaged = 1;
-                } else if (kind == ZK_MODULE) {
-                    cur = xcalloc(sizeof *cur);
-                    vec_push(&z->blocks, cur);
-                    parse_module(&r, cur);
+                } else {
+                    if (kind == ZK_SYMS)
+                        parse_syms(&r, cur);
+                    else
+                        parse_stmts(&r, cur);
                     if (r.bad) cur->damaged = 1;
-                } else if (kind == ZK_SYMS || kind == ZK_STMTS) {
-                    if (!cur) {
-                        z->bad_chunks++;
-                    } else {
-                        if (kind == ZK_SYMS)
-                            parse_syms(&r, cur);
-                        else
-                            parse_stmts(&r, cur);
-                        if (r.bad) cur->damaged = 1;
-                    }
-                } else if (kind == ZK_END) {
-                    if (!cur) {
-                        z->bad_chunks++;
-                    } else {
-                        uint64_t ns = get_uv(&r), nst = get_uv(&r);
-                        cur->complete = !r.bad && !cur->damaged && ns == cur->syms.n && nst == cur->stmts.n &&
-                                        ns == cur->want_syms && nst == cur->want_stmts;
-                        if (r.bad) cur->damaged = 1;
-                        cur = NULL;
-                    }
                 }
-                i += 12 + (size_t)len;
+            } else if (kind == ZK_END) {
+                if (!cur) {
+                    z->bad_chunks++;
+                } else {
+                    uint64_t ns = get_uv(&r), nst = get_uv(&r);
+                    cur->complete = !r.bad && !cur->damaged && ns == cur->syms.n && nst == cur->stmts.n &&
+                                    ns == cur->want_syms && nst == cur->want_stmts;
+                    if (r.bad) cur->damaged = 1;
+                    cur = NULL;
+                }
             }
-        }
-        if (!ok) {
+            i += used;
+        } else {
             if (b[i] != 0 && !in_junk) {
                 z->bad_chunks++;
                 if (cur) cur->damaged = 1;
@@ -659,7 +570,7 @@ Zsym *zsym_parse(const uint8_t *b, size_t n) {
     return z;
 }
 
-uint8_t *zsym_extract(const GoffModule *m, size_t *len) {
+uint8_t *zsym_extract_class(const GoffModule *m, const char *cls, size_t *len) {
     size_t i, total = 0;
     uint8_t *res;
     int found = 0;
@@ -670,7 +581,7 @@ uint8_t *zsym_extract(const GoffModule *m, size_t *len) {
         size_t t;
         if (e->type != GOFF_ED) continue;
         nm = ebcdic_decode(e->name, e->name_len);
-        if (strcmp(nm, ZSYM_CLASS) != 0) {
+        if (strcmp(nm, cls) != 0) {
             free(nm);
             continue;
         }
@@ -693,6 +604,8 @@ uint8_t *zsym_extract(const GoffModule *m, size_t *len) {
     (void)found;
     return NULL;
 }
+
+uint8_t *zsym_extract(const GoffModule *m, size_t *len) { return zsym_extract_class(m, ZSYM_CLASS, len); }
 
 static const char *const stmt_names[] = {"other", "insn", "dc", "ds", "equ", "using", "drop",
                                          "org",   "ltorg", "section", "extern", "dxd", "end"};

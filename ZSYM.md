@@ -1,7 +1,7 @@
 # ZSYM: symbolic information in the object (design; Z1 and Z2 implemented)
 
 Status: **Z1 and Z2 implemented** (writer, reader, `-gz0/-gz1`, `-dump`, smart
-`-disasm`, `-generic`; DESIGN.md section 11), tier 2 (`-gz2`) is a proposal. Where this text and
+`-disasm`, `-generic`; DESIGN.md section 11), tier 2 (`-gz2`) stores the original files (DESIGN.md section 14). Where this text and
 DESIGN.md 11 differ, DESIGN.md 11 is what the code does (operand templates
 instead of RPN, scopes instead of section/class names).
 zosasm has no compatibility duty towards HLASM, so this design is free to
@@ -222,7 +222,7 @@ assembly time, recorded as `CALL` nodes, written back as such by `-disasm`.
 | Z1 | collector in the assembler (statement/symbol records with final offsets, crc), `src/zsym.c` writer, ED/TXT emission in `emit.c`, `-gz` options, `-dump` prints the blocks |
 | Z2 | reader (GOFF reader gets the class), smart `-disasm`, original names, DSECT/EQU/USING output, tests of section 5, fuzzing |
 | Z3 | `sizeof/offsetof/alignof/countof`, `ASSERT`, extra preprocessor built-ins, `-reproducible` (**done**, DESIGN.md 12) |
-| Z4 | tier 2 (original source, pp history, compression) |
+| Z4 | tier 2: the original files and the `-D` options, LZ4 block compression, `-unpack` (**done**, DESIGN.md 14; the include structure is the `#include` text of the stored files, `-disasm` does not use it yet) |
 | Z5 | DWARF bridge: DSECT as struct types, EQU as constants, line table, for LLDB (`frame variable (WORK*)$r2`); reading ZSYM from a program object through the binder API (needs a z/OS system; pok56 is unreachable now) |
 
 ## 9. Open questions
