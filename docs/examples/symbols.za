@@ -1,0 +1,21 @@
+* Registers, EQU, expressions and quoted symbols.
+SYMS     CSECT
+R0       EQU   0                  your own names for registers (optional:
+R1       EQU   1                  R0..R15 are predefined)
+BASE     EQU   12
+         USING SYMS,BASE
+         LGR   R1,R2              names,
+         LGR   1,2                numbers and
+         LGR   %r1,%r2            GNU style all mean the same
+         LA    R1,TABLE+4*2       expression: byte offset 8
+         LA    R2,END_TABLE-TABLE the table length (a relocatable difference)
+         LHI   R3,X'FF'+B'101'    hex and binary self-defining terms
+         LHI   R4,C'A'            EBCDIC code of A (193)
+TABLE    DC    10F'0'
+END_TABLE DS   0F
+"a.b"    DC    A(*)               any name can be quoted
+"ext sym" DS   0H
+         DC    A("a.b","ext sym")
+LEN      EQU   L'TABLE            length attribute of TABLE: 4
+         LA    1,LEN
+         END

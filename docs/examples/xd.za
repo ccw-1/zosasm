@@ -1,0 +1,23 @@
+* External dummy sections: pseudo registers that the binder allocates once
+* per program and merges by name across modules.
+XDDEMO   CSECT
+         USING XDDEMO,12
+WORK     DXD   CL100,F            100 bytes of workspace, word aligned
+STATE    DXD   2F
+* the offset of WORK in the pseudo register area, filled by the binder
+OFFWORK  DC    Q(WORK)
+OFFSTATE DC    Q(STATE)
+* the length of WORK
+LENWORK  DC    J(WORK)
+* total length of all pseudo registers of the program
+TOTAL    CXD
+* a DSECT used with Q or J becomes an external dummy section too
+SAVE     DSECT
+SAVEREGS DS    18F
+SAVELEN  EQU   *-SAVE
+XDDEMO   CSECT
+OFFSAVE  DC    Q(SAVE)
+* address of the PSECT of an external function
+         EXTRN FUNC
+         DC    R(FUNC)
+         END

@@ -1,0 +1,18 @@
+* A small routine with standard linkage: it saves the caller's registers,
+* uses register 12 as its base and adds one to a fullword whose address
+* is the first entry of the parameter list (register 1).
+HELLO    CSECT
+HELLO    AMODE 31
+HELLO    RMODE ANY
+         STM   14,12,12(13)       save the caller's registers
+         LR    12,15              entry point address -> base register
+         USING HELLO,12           tell the assembler about it
+         L     2,0(,1)            first parameter is the address of a fullword
+         L     3,0(,2)            fetch the fullword
+         A     3,ONE              add one
+         ST    3,0(,2)            store it back
+         LM    14,12,12(13)       restore the registers
+         SR    15,15              return code 0
+         BR    14                 return
+ONE      DC    F'1'
+         END   HELLO

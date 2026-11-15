@@ -1,0 +1,25 @@
+* sizeof, offsetof, alignof, countof and ASSERT: sizes without *-LABEL tricks.
+BUILTIN  CSECT
+         USING BUILTIN,12
+
+PARM     DSECT
+P_FLAGS  DS    X
+P_NAME   DS    CL15
+P_TABLE  DS    4F
+P_END    DS    0D
+PARMSIZE EQU   sizeof(PARM)       a closed DSECT may be measured at once (32)
+
+BUILTIN  CSECT
+         LA    1,sizeof(PARM)     in an operand
+         LHI   2,offsetof(PARM,P_TABLE)  16
+         LHI   3,countof(P_TABLE)        4
+         LHI   4,alignof(PARM)           8
+         LHI   5,sizeof(P_TABLE)>=16     comparisons give 1 or 0
+
+AREA     DS    CL(sizeof(PARM))   storage as big as the DSECT
+MAP      DC    A(sizeof(BUILTIN)) a CSECT's own size, known in pass 2
+
+* assembly time checks
+         ASSERT sizeof(PARM)<=256,'PARM must fit in 256 bytes'
+         ASSERT offsetof(PARM,P_TABLE)==16 && alignof(PARM)==8,'layout changed'
+         END

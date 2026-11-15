@@ -74,6 +74,8 @@ make test
 
 ## Documentation
 
+* `docs/GUIDE.md` - the **User's Guide**: the language, the tool and worked
+  examples (`docs/examples/`, all assembled by `make test`).
 * `DESIGN.md` - design, source syntax, GOFF mapping, instruction table
   (section 5), diagnostics, tests.
 * `PLAN.md` - status and open work.

@@ -1,0 +1,32 @@
+* Sections, classes, entry points and external references.
+MAIN     CSECT
+MAIN     AMODE 31
+MAIN     RMODE ANY
+         ENTRY ALTENT             a second entry point (an LD)
+         EXTRN PRINTF             a strong external reference (an ER)
+         WXTRN OPTION             a weak one: may stay unresolved
+         USING MAIN,12
+         L     15,=V(PRINTF)
+         BASR  14,15
+ALTENT   DS    0H
+         BR    14
+         LTORG                    literals go here, inside the range of USING
+PRINTF   XATTR LINKAGE(XPLINK),SCOPE(LIBRARY)   describe the ER
+
+* LOCTR: one section, several location counters, joined in order
+DATA     LOCTR
+COUNT    DC    F'0'
+MAIN     LOCTR                    back to the first counter
+         L     1,COUNT
+
+* A second class in the same section, with attributes
+D_INFO   CATTR ALIGN(3),NOLOAD
+INFO     DS    CL64
+
+* A read-only section and a common section
+CONST    RSECT
+CONST    AMODE 64
+         DC    CL8'CONSTANT'
+SHARED   COM
+         DS    CL100
+         END   MAIN

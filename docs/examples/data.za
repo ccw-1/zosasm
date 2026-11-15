@@ -1,0 +1,38 @@
+* Constants, storage and literals.
+DATA     CSECT
+         USING DATA,12
+* integers, addresses, characters
+I1       DC    F'-5'              fullword
+I2       DC    H'300,-2'          two halfwords
+I3       DC    FD'1234567890123'  doubleword
+ADDR     DC    A(I1)              4-byte address (relocated)
+ADDR3    DC    AL3(I1)            3-byte address
+SHORT    DC    Y(I2-I1)           2-byte difference: absolute
+TEXT     DC    CL8'Hello'         padded with blanks (EBCDIC)
+ATEXT    DC    CA'ASCII'          ASCII text
+HEX      DC    X'0102FF'          hexadecimal
+BITS     DC    B'10100101'
+PACKED   DC    P'-12345'          packed decimal
+ZONED    DC    Z'123'
+WIDE     DC    CU'Grüße'          UTF-16 big endian
+* duplication factor, length modifier, alignment
+ARR      DC    4XL2'00'           four times a 2-byte zero
+         DS    0D                 align to a doubleword
+BUF      DS    CL80               80 bytes, not initialised
+         DS    2F                 two fullwords
+* scale and exponent modifiers
+FIX      DC    FS8'35.92'         35.92 * 2**8, rounded
+FLT      DC    EE3'3.414'         3.414E3 in hexadecimal float
+* literals: the value is stored in a pool and the address is used
+         L     1,=F'100'
+         MVC   BUF(8),=CL8'LITERAL'
+         LTORG                    the pool is written here
+* ORG, EQU, CNOP
+         ORG   BUF+4              move the location counter back
+MARK     DS    X
+* ORG without operand: back to the highest location used so far
+         ORG
+LEN      EQU   *-DATA             length so far, absolute
+FLAG     EQU   X'80',1,C'F'       value, length attribute, type
+         CNOP  2,8                align to a halfword in a doubleword
+         END

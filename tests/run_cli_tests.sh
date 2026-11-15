@@ -101,6 +101,16 @@ $X -unpack $T/src/m1.o -o $T/unp1 2>/dev/null; check "-unpack without sources" $
 $X -disasm $T/src/m2.o 2>$T/err | grep -q "DC    A(3)"; check "-disasm of a -gz2 object" $? 0
 [ ! -s $T/err ]; check "-disasm of a -gz2 object without warnings" $? 0
 
+# the User's Guide: every example assembles (without warnings) and is printed in docs/GUIDE.md as it is
+for f in docs/examples/*; do
+  b=$(basename $f)
+  case $b in
+    *.za) $X -Werror -o $T/ex.o $f 2>$T/err; check "example $b assembles" $? 0 ;;
+  esac
+  awk -v m="<!-- example: $b -->" '$0==m{f=1;next} f&&/^```/{if(inb){exit}else{inb=1;next}} inb{print}' docs/GUIDE.md > $T/ex.txt
+  cmp -s $T/ex.txt $f; check "docs/GUIDE.md shows $b" $? 0
+done
+
 rm -rf $T
 [ $fail = 0 ] && echo "tests/run_cli_tests.sh: ok"
 exit $fail

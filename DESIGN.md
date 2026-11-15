@@ -822,8 +822,8 @@ finds several blocks; `-unpack` writes the later ones under `dir/2/`,
 reference encoder's end rules, so any LZ4 block decoder reads it (no
 external library; the decoder was tested with hand made blocks and random
 damage, not against another implementation: none is installed here). One
-hash table of 2^14 entries, matches within 64 KB. Source text compresses 3
-to 5 times.
+hash table of 2^14 entries, matches within 64 KB. Repetitive source text
+compresses three times or better (`tests/test_zsrc.c`).
 
 **Unpack names.** The name stored is the file name as read (relative to
 the working directory, or as given for the main file). Names are made

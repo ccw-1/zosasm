@@ -1,0 +1,48 @@
+* USING: ordinary, labeled, dependent and with a range.
+USEDEMO  CSECT
+         STM   14,12,12(13)
+         LR    12,15
+         USING USEDEMO,12         ordinary: register 12 holds USEDEMO
+
+* two records mapped by the same DSECT, each in its own register
+         LA    2,REC1
+         LA    3,REC2
+OLD      USING REC,2              labeled: fields are written OLD.NAME
+NEW      USING REC,3
+         MVC   NEW.NAME,OLD.NAME  copy the name from one record to the other
+         L     0,OLD.COUNT
+         A     0,NEW.COUNT
+         ST    0,NEW.COUNT
+         DROP  OLD,NEW            labeled USINGs end with DROP label
+
+* a header followed by a body: dependent USING needs no register of its own
+         LA    4,MSG
+         USING HDR,4
+         USING BODY,HDR+HDRLEN    the body starts after the header
+         CLC   HDR_TYPE,=C'AB'
+         MVC   BODY_TEXT,=CL16'payload'
+         DROP  4
+
+* a range: the first 256 bytes only
+         USING (USEDEMO,USEDEMO+256),12
+         LM    14,12,12(13)
+         BR    14
+         LTORG
+
+REC1     DC    CL10'Alice',F'1'
+REC2     DC    CL10'Bob',F'2'
+MSG      DC    CL2'AB',CL16' '
+
+REC      DSECT                    dummy section: only symbol values
+NAME     DS    CL10
+         DS    CL2
+COUNT    DS    F
+RECLEN   EQU   *-REC
+
+HDR      DSECT
+HDR_TYPE DS    CL2
+         DS    H
+HDRLEN   EQU   *-HDR              length of the header: 4
+BODY     DSECT
+BODY_TEXT DS   CL16
+         END

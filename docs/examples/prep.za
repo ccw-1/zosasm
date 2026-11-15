@@ -1,0 +1,20 @@
+* The preprocessor: #include, #define, #if, built-in names and stringify.
+#include "macros.inc"
+#include "macros.inc"            second include is harmless (guard)
+#define DEBUG 1
+PREP     CSECT
+         USING PREP,12
+         ZERO(5)                  expands to  XR 5,5
+SAVEAREA SAVE(0)                  expands to  DC 18F'0'
+         LHI   1,PAGE             expands to  LHI 1,4096
+#if DEBUG && (PAGE > 1000)
+         DC    STR(debug build)   expands to  DC C'debug build'
+#else
+         DC    STR(release build)
+#endif
+         DC    STR(__FILE__)      the file name as text
+LINE     DC    A(__LINE__)        the source line number
+N1       DC    A(__COUNTER__)     0, then 1, 2 ... one per use
+N2       DC    A(__COUNTER__)
+LEVEL    DC    A(__INCLUDE_LEVEL__) 0 in the main file
+         END
