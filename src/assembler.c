@@ -692,12 +692,29 @@ static void each(Asm *a) {
         asm_stmt(a, st);
         if (a->pass == 2) zsym_record(a, st, before, loc_before);
     }
+    a->pool_piece = NULL;
     asm_end_pool(a);
-    /* the literal pool written at END belongs to the END statement */
-    if (a->pass == 2 && a->ended && a->mod->zrecs.n && a->cur) {
-        ZRec *r = &a->mod->zrecs.v[a->mod->zrecs.n - 1];
-        int64_t end = a->cur->start + a->cur->loc;
-        if (r->cls == a->cur->cls && end - r->off > r->len) r->len = end - r->off;
+    /* the literal pool written at the end belongs to the END statement (a
+     * statement of its own when the source has none) */
+    if (a->pass == 2 && a->pool_piece && a->stmts.n) {
+        ZRec *r;
+        if (!a->ended || a->mod->zrecs.n == 0) {
+            Stmt *e = xcalloc(sizeof *e), *last = a->stmts.v[a->stmts.n - 1];
+            ZRec z;
+            e->file = last->file;
+            e->line = last->line;
+            e->op = xstrdup("END");
+            e->operands = xstrdup("");
+            e->name = xstrdup("");
+            z.st = e;
+            z.cls = NULL;
+            z.off = z.len = 0;
+            vec_push(&a->mod->zrecs, z);
+        }
+        r = &a->mod->zrecs.v[a->mod->zrecs.n - 1];
+        r->cls = a->pool_piece->cls;
+        r->off = a->pool_piece->start + a->pool_loc;
+        r->len = a->pool_piece->start + a->pool_piece->loc - r->off;
     }
 }
 

@@ -47,7 +47,8 @@ Status key: [x] done, [-] in progress, [ ] open.
 ## Phase 2b - proposals awaiting decisions
 
 - [x] ZSYM Z1: symbolic information in a NOLOAD ADATA class, `-gz0/-gz1`, `-dump` (DESIGN.md 11)
-- [ ] ZSYM Z2: smart `-disasm` from the ZSYM statements; tier 2 `-gz2` (ZSYM.md)
+- [x] ZSYM Z2: smart `-disasm` from the ZSYM statements, per-section fallback, `-generic` (DESIGN.md 11)
+- [ ] ZSYM tier 2 `-gz2`: original source text (ZSYM.md)
 - [x] labeled and dependent USING, USING ranges, qualified symbols (DESIGN.md 4.3)
 - [ ] HLASM feature review verdicts (HLASM-REVIEW.md): (DXD/CXD/Q/J/R done),
       scale/exponent, A(X-Y), R, CCW, `sizeof`, `ASSERT`

@@ -184,6 +184,8 @@ void asm_end_pool(Asm *a) {
     if (!first || !first->cur) return;
     a->sect = first;
     a->cur = first->cur;
+    a->pool_piece = a->cur;
+    a->pool_loc = a->cur->loc;
     asm_align(a, 8);
     asm_close_pool(a);
 }

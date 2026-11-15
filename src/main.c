@@ -24,6 +24,7 @@ static void usage(FILE *f) {
                "  -disasm FILE    convert a GOFF object back to source (stdout or -o)\n"
                "  -gz0|-gz1       symbolic object information (ZSYM) in the object: none | symbols and\n"
                "                  statements (default)\n"
+               "  -generic        with -disasm: ignore the ZSYM information\n"
                "  -color          colorize diagnostics\n"
                "  -max-errors N   stop after this many errors (default 50, 0 = no limit)\n"
                "  -Werror         treat warnings as errors\n");
@@ -55,19 +56,44 @@ static int do_dump(const char *path) {
     return 0;
 }
 
+/* Assemble the generated source (without ZSYM) and compare it with the
+ * object: 0 equal, 1 does not assemble, 2 differs. */
+static int check_text(const GoffModule *m, const char *orig, size_t n, uint32_t skip_z, const char *text,
+                      Reporter **rep_out, size_t *diff_at) {
+    size_t olen;
+    char err[256];
+    Reporter *rep = rep_new(50);
+    Module *mod = asm_assemble_text("(disassembly)", text, strlen(text), rep);
+    uint8_t *obj = mod ? module_emit(mod, &olen, err, sizeof err) : NULL; /* zlevel 0: no ZSYM */
+    *rep_out = rep;
+    *diff_at = 0;
+    if (!obj) return 1;
+    if (skip_z) {
+        const char *e2 = NULL;
+        GoffModule *m2 = goff_parse(obj, olen, &e2);
+        return m2 && goff_equal(m, skip_z, m2) ? 0 : 2;
+    }
+    if (olen != n || memcmp(obj, orig, n) != 0) {
+        size_t i = 0;
+        while (i < n && i < olen && obj[i] == (uint8_t)orig[i]) i++;
+        *diff_at = i;
+        return 2;
+    }
+    return 0;
+}
+
 /* Convert the object to source, then assemble that source again and say
- * whether it gives the same object. */
-static int do_disasm(const char *path, const char *out) {
-    size_t n, olen, tlen;
+ * whether it gives the same object. An object with ZSYM is converted from it;
+ * if that source does not give the object back, the generic converter
+ * is used instead. */
+static int do_disasm(const char *path, const char *out, int generic) {
+    size_t n, tlen, k, at;
     const char *perr = NULL;
     GoffModule *m;
     char *b = read_file(path, &n), *text, err[256];
-    int nwarn = 0;
-    size_t k;
+    int nwarn = 0, smart = 0, rc;
     uint32_t skip_z = 0;
     Reporter *rep;
-    Module *mod;
-    uint8_t *obj;
     FILE *f;
     if (!b) {
         fprintf(stderr, "zosasm: %s: %s\n", path, strerror(errno));
@@ -83,10 +109,22 @@ static int do_disasm(const char *path, const char *out) {
         char *nm = e->type == GOFF_ED ? ebcdic_decode(e->name, e->name_len) : NULL;
         if (nm && !strcmp(nm, ZSYM_CLASS)) skip_z = (uint32_t)k + 1;
     }
-    text = disasm_module(m, stderr, &nwarn, err, sizeof err);
+    text = disasm_ex(m, generic ? DISASM_GENERIC : 0, stderr, &nwarn, &smart, err, sizeof err);
     if (!text) {
         fprintf(stderr, "zosasm: %s: %s\n", path, err);
         return 1;
+    }
+    rc = check_text(m, b, n, skip_z, text, &rep, &at);
+    if (smart && rc) {
+        fprintf(stderr, "zosasm: warning: the source made from the ZSYM information %s; using the generic "
+                        "converter\n", rc == 1 ? "does not assemble" : "does not give the object back");
+        if (rc == 1) rep_print(rep, stderr, 0);
+        text = disasm_ex(m, DISASM_GENERIC, NULL, &nwarn, NULL, err, sizeof err);
+        if (!text) {
+            fprintf(stderr, "zosasm: %s: %s\n", path, err);
+            return 1;
+        }
+        rc = check_text(m, b, n, skip_z, text, &rep, &at);
     }
     tlen = strlen(text);
     f = out ? fopen(out, "wb") : stdout;
@@ -94,24 +132,16 @@ static int do_disasm(const char *path, const char *out) {
         fprintf(stderr, "zosasm: %s: %s\n", out ? out : "stdout", strerror(errno));
         return 1;
     }
-    rep = rep_new(50);
-    mod = asm_assemble_text("(disassembly)", text, tlen, rep);
-    obj = mod ? module_emit(mod, &olen, err, sizeof err) : NULL; /* no ZSYM: zlevel is 0 */
-    if (obj && skip_z) {
-        const char *e2 = NULL;
-        GoffModule *m2 = goff_parse(obj, olen, &e2);
-        if (!m2 || !goff_equal(m, skip_z, m2))
-            fprintf(stderr, "zosasm: warning: the generated source assembles to a different object\n");
-    } else if (!obj) {
+    if (rc == 1) {
         fprintf(stderr, "zosasm: warning: the generated source does not assemble\n");
         rep_print(rep, stderr, 0);
-    } else if (olen != n || memcmp(obj, b, n) != 0) {
-        size_t i = 0;
-        while (i < n && i < olen && obj[i] == (uint8_t)b[i]) i++;
+    } else if (rc == 2 && skip_z) {
+        fprintf(stderr, "zosasm: warning: the generated source assembles to a different object\n");
+    } else if (rc == 2) {
         fprintf(stderr,
                 "zosasm: warning: the generated source assembles to a different object (first "
                 "difference at byte %zu, record %zu)\n",
-                i, i / GOFF_RECORD_LEN + 1);
+                at, at / GOFF_RECORD_LEN + 1);
     }
     return 0;
 }
@@ -126,7 +156,7 @@ static char *default_output(const char *in) {
 
 int main(int argc, char **argv) {
     const char *out = NULL, *in = NULL, *disasm = NULL;
-    int color = 0, werror = 0, max_err = 50, i, only_pp = 0, zlevel = 1;
+    int color = 0, werror = 0, max_err = 50, i, only_pp = 0, zlevel = 1, generic = 0;
     PpOptions ppo;
     SrcVec lines = {0};
     size_t n, olen;
@@ -152,6 +182,8 @@ int main(int argc, char **argv) {
             vec_push(&ppo.include_dirs, a[2] ? a + 2 : argv[++i]);
         } else if (!strcmp(a, "-E")) {
             only_pp = 1;
+        } else if (!strcmp(a, "-generic")) {
+            generic = 1;
         } else if (!strcmp(a, "-gz0")) {
             zlevel = 0;
         } else if (!strcmp(a, "-gz1")) {
@@ -176,7 +208,7 @@ int main(int argc, char **argv) {
             return 2;
         }
     }
-    if (disasm) return do_disasm(disasm, out);
+    if (disasm) return do_disasm(disasm, out, generic);
     if (!in) {
         usage(stderr);
         return 2;

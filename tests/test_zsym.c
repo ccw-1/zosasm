@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "../src/asm.h"
+#include "../src/disasm.h"
 #include "../src/ebcdic.h"
 #include "../src/goff.h"
 #include "../src/zsym.h"
@@ -391,6 +392,178 @@ static void test_quote(void) {
     CHECK_STR(zsym_quote("a\"b"), "\"a\\\"b\"");
 }
 
+/* the text of the class with the given ESD id */
+static GoffText *text_of(GoffModule *g, uint32_t id) {
+    size_t i;
+    for (i = 0; i < g->texts.n; i++)
+        if (g->texts.v[i].esdid == id) return &g->texts.v[i];
+    return NULL;
+}
+
+static GoffModule *reassemble(const char *text, int zl, Module **mod_out) {
+    Reporter *rep = rep_new(0);
+    Module *m = asm_assemble_text("re.za", text, strlen(text), rep);
+    char err[256];
+    size_t n;
+    uint8_t *o;
+    const char *perr = NULL;
+    if (!m) {
+        printf("--- does not assemble:\n%s\n", text);
+        rep_print(rep, stdout, 0);
+        return NULL;
+    }
+    m->zlevel = zl;
+    if (mod_out) *mod_out = m;
+    o = module_emit(m, &n, err, sizeof err);
+    return o ? goff_parse(o, n, &perr) : NULL;
+}
+
+static const char *TWO = "S1       CSECT\n"
+                         "         USING S1,12\n"
+                         "         LR    12,15\n"
+                         "         LA    2,FIELD1\n"
+                         "         BR    14\n"
+                         "FIELD1   DC    F'1'\n"
+                         "S2       CSECT\n"
+                         "         USING S2,12\n"
+                         "         LR    12,15\n"
+                         "         LA    2,FIELD2\n"
+                         "         BR    14\n"
+                         "FIELD2   DC    F'2'\n"
+                         "         END\n";
+
+static void test_smart_degrade(void) {
+    Built b = build(TWO, 1);
+    char err[256], *t;
+    int nw = 0, smart = 0;
+    uint32_t id;
+    GoffText *tx;
+    GoffModule *g2;
+    if (!b.g) return;
+    /* untouched: all of it from ZSYM, without warnings */
+    t = disasm_ex(b.g, 0, NULL, &nw, &smart, err, sizeof err);
+    CHECK(t && smart && nw == 0);
+    CHECK(t && strstr(t, "LA    2,FIELD1") && strstr(t, "LA    2,FIELD2") && strstr(t, "USING S2,12"));
+    /* a patched byte in S2 degrades S2 only */
+    id = esd_id(b.g, "B_TEXT");
+    {
+        size_t i;
+        uint32_t s2 = 0;
+        for (i = 0; i < b.g->esds.n; i++) {
+            char *nm = ebcdic_decode(b.g->esds.v[i]->name, b.g->esds.v[i]->name_len);
+            if (b.g->esds.v[i]->type == GOFF_ED && !strcmp(nm, "B_TEXT") && (uint32_t)i + 1 > id) s2 = (uint32_t)i + 1;
+            free(nm);
+        }
+        CHECK(s2 > id);
+        tx = text_of(b.g, s2);
+        CHECK(tx && tx->len >= 12);
+        if (!tx || tx->len < 12) return;
+        tx->data[8] ^= 0x01; /* FIELD2 */
+    }
+    nw = 0;
+    t = disasm_ex(b.g, 0, NULL, &nw, &smart, err, sizeof err);
+    CHECK(t && smart && nw == 1);
+    CHECK(t && strstr(t, "LA    2,FIELD1") && strstr(t, "USING S1,12"));
+    CHECK(t && !strstr(t, "USING S2,12") && !strstr(t, "LA    2,FIELD2"));
+    CHECK(t && strstr(t, "FIELD2")); /* the label survives in the generic text */
+    g2 = t ? reassemble(t, 0, NULL) : NULL;
+    CHECK(g2 && goff_equal(b.g, esd_id(b.g, ZSYM_CLASS), g2));
+
+    /* a patched byte in S1 degrades S1 only */
+    tx->data[8] ^= 0x01;
+    tx = text_of(b.g, id);
+    tx->data[10] ^= 0x80;
+    nw = 0;
+    t = disasm_ex(b.g, 0, NULL, &nw, &smart, err, sizeof err);
+    CHECK(t && smart && nw == 1 && strstr(t, "LA    2,FIELD2") && !strstr(t, "LA    2,FIELD1"));
+    g2 = t ? reassemble(t, 0, NULL) : NULL;
+    CHECK(g2 && goff_equal(b.g, esd_id(b.g, ZSYM_CLASS), g2));
+}
+
+static void test_smart_pool(void) {
+    Built b = build("T CSECT\n USING T,12\n LR 12,15\n L 1,=F'5'\n END\n", 1);
+    char err[256], *t;
+    int nw = 0, smart = 0;
+    GoffText *tx;
+    GoffModule *g2;
+    if (!b.g) return;
+    t = disasm_ex(b.g, 0, NULL, &nw, &smart, err, sizeof err);
+    CHECK(t && smart && nw == 0 && strstr(t, "=F'5'"));
+    tx = text_of(b.g, esd_id(b.g, "B_TEXT"));
+    CHECK(tx && tx->len == 12);
+    if (!tx || tx->len != 12) return;
+    tx->data[11] = 7; /* the literal */
+    t = disasm_ex(b.g, 0, NULL, &nw, &smart, err, sizeof err);
+    CHECK(t && smart && nw == 1 && !strstr(t, "=F'5'"));
+    g2 = t ? reassemble(t, 0, NULL) : NULL;
+    CHECK(g2 && goff_equal(b.g, esd_id(b.g, ZSYM_CLASS), g2));
+    /* a byte nobody wrote (the padding behind the code) */
+    tx->data[11] = 5;
+    tx->data[7] = 1;
+    nw = 0;
+    t = disasm_ex(b.g, 0, NULL, &nw, &smart, err, sizeof err);
+    CHECK(t && smart && nw == 1);
+}
+
+static void test_smart_fallback(void) {
+    Built b = build(TWO, 1);
+    GoffText *z;
+    char err[256], *t, *g;
+    int nw = 0, smart = 0;
+    if (!b.g) return;
+    g = disasm_ex(b.g, DISASM_GENERIC, NULL, &nw, &smart, err, sizeof err);
+    CHECK(g && !smart && nw == 0);
+    z = text_of(b.g, esd_id(b.g, ZSYM_CLASS));
+    CHECK(z != NULL);
+    if (!z) return;
+    z->data[z->len / 2] ^= 0x04;
+    t = disasm_ex(b.g, 0, NULL, &nw, &smart, err, sizeof err);
+    CHECK(t && !smart && nw >= 1 && g && !strcmp(t, g));
+    /* an object without ZSYM: no information, no warning */
+    {
+        Built n = build(TWO, 0);
+        nw = 0;
+        t = disasm_ex(n.g, 0, NULL, &nw, &smart, err, sizeof err);
+        CHECK(t && !smart && nw == 0 && !strcmp(t, g));
+    }
+}
+
+/* the source can be edited: symbolic operands make the offsets follow */
+static void test_smart_edit(void) {
+    Built b = build(SRC, 1);
+    char err[256], *t, *p, *edited;
+    int nw = 0, smart = 0;
+    Module *m;
+    GoffModule *g2;
+    const ZBlock *z;
+    if (!b.g) return;
+    t = disasm_ex(b.g, 0, NULL, &nw, &smart, err, sizeof err);
+    CHECK(t && smart);
+    if (!t) return;
+    p = strstr(t, "F1       DS    F\n");
+    CHECK(p != NULL);
+    if (!p) return;
+    edited = xasprintf("%.*sF1       DS    2F\n%s", (int)(p - t), t, p + strlen("F1       DS    F\n"));
+    g2 = reassemble(edited, 1, &m);
+    CHECK(g2 != NULL);
+    if (g2) {
+        size_t zl;
+        uint8_t *zb = zsym_extract(g2, &zl);
+        Zsym *zs = zb ? zsym_parse(zb, zl) : NULL;
+        CHECK(zs && zs->blocks.n == 1);
+        if (zs && zs->blocks.n == 1) {
+            z = zs->blocks.v[0];
+            CHECK(sym_index(z, "F2") >= 0 && z->syms.v[sym_index(z, "F2")].val == 8);
+        }
+    }
+    /* the generic text would have fixed the offsets in numbers */
+    {
+        Module *mm = NULL;
+        GoffModule *gg = reassemble(t, 0, &mm);
+        CHECK(gg != NULL);
+    }
+}
+
 int main(void) {
     test_block();
     test_crc();
@@ -401,5 +574,9 @@ int main(void) {
     test_damage();
     test_fuzz();
     test_quote();
+    test_smart_degrade();
+    test_smart_pool();
+    test_smart_fallback();
+    test_smart_edit();
     TEST_MAIN_END();
 }

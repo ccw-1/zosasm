@@ -380,6 +380,8 @@ struct Asm {
     XdRefVec xdrefs;  /* names used by Q and J constants, resolved after pass 1 */
     size_t cur_idx;   /* index of the statement being assembled */
     int64_t star_len; /* L'* of the current statement, 0 = unknown */
+    Piece *pool_piece; /* the literal pool of END was written here, from pool_loc (ZSYM) */
+    int64_t pool_loc;
 };
 
 /* Assemble the lines; returns NULL when errors were reported. The caller

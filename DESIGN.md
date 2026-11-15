@@ -508,10 +508,9 @@ than the architecture level; zosasm does not copy that.
 
 ## 11. ZSYM: symbolic information in the object (`src/zsym.c`, ZSYM.md)
 
-**Status.** Writer and reader (Z1) are implemented; the smart `-disasm`
-that replays the statements (Z2) is not. The generic converter ignores the
-class, so `-disasm` of an object with ZSYM gives exactly the same source as
-without it.
+**Status.** Writer and reader (Z1) and the smart `-disasm` that replays
+the statements (Z2) are implemented. `-generic` makes `-disasm` ignore the
+class; the output is then exactly the same as for an object without ZSYM.
 
 **Class.** `C_ADATAE9C1` is an ED under the first SD (last ESD of the
 object), NOLOAD, text style unstructured, bind CAT, length = size of the
@@ -555,11 +554,47 @@ without ZSYM is identical apart from the class (`goff_equal`); crc masks
 match after the relocated bytes change; chunk damage is contained to its
 block; 4000 random mutations do not crash the reader (also under ASan).
 
-**Known gaps.** A literal pool written at END belongs to the END record
-only when the END statement is in the same class; the pool of a program
-that ends in a DSECT is not covered by any statement (Z2 must accept
-uncovered bytes only when they are the pool). `ORG` that moves back and
-rewrites bytes makes the crc of the earlier statement fail (Z2 falls back to
-the generic converter for that section). Nothing here is checked against an
+**Smart `-disasm`** (`smart_plan`/`smart_emit` in `src/disasm.c`).
+The statements of the single complete block are written back in source
+order: label, operation and operands rendered from the templates, so the
+output has the original names, EQUs, USINGs, DSECTs, literals (`=F'5'`) and
+symbolic operands (`FLD2(L'FLD)`), but no comments and no macro/`#include`
+structure (the preprocessed text is replayed). The object is first checked
+**per section**:
+
+* each class of the object belongs to one ZSYM scope and vice versa;
+* every statement range lies inside its class and its crc agrees with the
+  bytes (bytes covered by an RLD item are masked);
+* bytes no statement wrote (padding, class gaps) equal the fill byte.
+
+A section that fails any check is written by the generic converter at the
+place of its first statement and a warning names the statement; the
+labels ZSYM knows for that section are used as its generic label names, so
+the other sections still find them. The END record covers the literal pool of
+the first section (a synthetic END record exists when the source had none),
+and in a failing section the END is the generic one. A damaged, incomplete,
+inconsistent or multi-module (bound) block means the generic converter for
+the whole object, with a warning.
+
+`zosasm -disasm` then assembles the text (without ZSYM) and compares it with
+the object (`goff_equal`, ignoring the ZSYM class). If the ZSYM text does not
+give the object back (for instance because ESD attributes or relocations
+changed in a way the crc does not see), it warns and writes the generic
+text instead, so the result is always a source that assembles to the
+object, or a warning that says it does not.
+
+**Verified** (`tests/test_disasm.c`, `tests/test_zsym.c`): for every test
+program, ZSYM source assembles to the same object, assembling it with ZSYM
+and converting again gives the same text (fixed point), `-generic` equals the
+conversion of an object without ZSYM; a patched byte degrades only its
+section (code, data, literal pool, unwritten padding); a flipped bit in the
+ZSYM class falls back to generic; editing the source (`F1 DS F` -> `F1 DS
+2F`) moves the offsets of the fields after it (the point of keeping symbols).
+
+**Known gaps.** `ORG` that moves back and rewrites bytes makes the crc of
+the earlier statement fail (that section falls back to the generic
+converter). Comments, remarks and the original spelling of a symbol's case
+are not kept (tier 2, `-gz2`). The file/line of a statement come from the
+preprocessed input. Nothing here is checked against an
 IBM tool; the class name and attributes follow the ADATA description in the
 GOFF documentation.

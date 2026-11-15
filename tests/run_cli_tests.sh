@@ -60,7 +60,11 @@ cmp -s $T/hello0.o $T/back.o; check "-disasm round trip" $? 0
 $X -disasm $T/hello0.o 2>/dev/null | cmp -s - $T/back.za; check "-disasm to stdout" $? 0
 $X -disasm $T/hello.o -o $T/backz.za 2>$T/err; check "-disasm of an object with ZSYM" $? 0
 [ ! -s $T/err ]; check "-disasm with ZSYM without warnings" $? 0
-cmp -s $T/back.za $T/backz.za; check "ZSYM does not change the generic disassembly" $? 0
+$X -generic -disasm $T/hello.o -o $T/backg.za 2>$T/err; check "-generic exit" $? 0
+[ ! -s $T/err ]; check "-generic without warnings" $? 0
+cmp -s $T/back.za $T/backg.za; check "-generic ignores ZSYM" $? 0
+$X -disasm $T/hello.o 2>/dev/null | $X -gz0 -o $T/backz.o /dev/stdin 2>/dev/null; check "ZSYM source assembles" $? 0
+cmp -s $T/hello0.o $T/backz.o; check "ZSYM source gives the object back" $? 0
 head -c 200 $T/hello.o > $T/trunc.o
 $X -disasm $T/trunc.o 2>/dev/null; check "-disasm bad object" $? 1
 $X -disasm $T/missing.o 2>/dev/null; check "-disasm missing file" $? 1

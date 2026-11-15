@@ -63,6 +63,7 @@ typedef struct {
     const GoffESD *esd;
     int sect; /* the name of the section: written by CSECT */
     size_t seq;
+    int zs; /* a label of the ZSYM information: no ESD, not an ENTRY */
 } DName;
 
 typedef struct {
@@ -112,6 +113,16 @@ typedef struct {
     DClass *cls; /* L */
 } IdInfo;
 
+/* The replay of the ZSYM statements (section "Smart disassembly" of ZSYM.md):
+ * which sections of the object still match the information. */
+typedef struct {
+    ZBlock *b;
+    int *scope_sect;    /* per scope: index in Ctx.sects, -1 for a dummy section */
+    DClass **scope_cls; /* per scope: the class, NULL for a dummy section */
+    uint8_t *ok, *done; /* per section: replayed from ZSYM / generic text written */
+    int degraded;       /* some section is written by the generic converter */
+} Smart;
+
 typedef struct {
     const GoffModule *m;
     FILE *warn;
@@ -128,6 +139,7 @@ typedef struct {
     DClass *end_cls;
     int64_t end_off;
     DEr *end_er;
+    Smart *sm;
 } Ctx;
 
 static void warnf(Ctx *x, const char *fmt, ...) {
@@ -346,6 +358,7 @@ static void add_name(DClass *c, int64_t off, char *name, const GoffESD *e, int s
     n.name = name;
     n.esd = e;
     n.sect = sect;
+    n.zs = 0;
     n.seq = c->names.n;
     vec_push(&c->names, n);
     c->lab[off] |= 1 | 4;
@@ -1135,7 +1148,7 @@ static void emit_section(Ctx *x, DSect *s, size_t sect_idx) {
         DClass *c = s->classes.v[i];
         size_t k;
         for (k = 0; k < c->names.n; k++)
-            if (!c->names.v[k].sect) stmt(&x->out, NULL, "ENTRY", c->names.v[k].name);
+            if (!c->names.v[k].sect && !c->names.v[k].zs) stmt(&x->out, NULL, "ENTRY", c->names.v[k].name);
     }
     for (i = 0; i < s->prs.n; i++) emit_dxd(x, s->prs.v[i]);
     for (i = 0; i < x->ers.n; i++) {
@@ -1149,7 +1162,7 @@ static void emit_section(Ctx *x, DSect *s, size_t sect_idx) {
         DClass *c = s->classes.v[i];
         size_t k;
         for (k = 0; k < c->names.n; k++)
-            if (!c->names.v[k].sect)
+            if (!c->names.v[k].sect && !c->names.v[k].zs)
                 xattr_stmt(x, c->names.v[k].name, &c->names.v[k].esd->attr, GOFF_SCOPE_MODULE,
                            class_exec(c));
         if (c->pr) xattr_stmt(x, c->part, &c->pr->attr, GOFF_SCOPE_UNSPEC, class_exec(c));
@@ -1161,9 +1174,237 @@ static void emit_section(Ctx *x, DSect *s, size_t sect_idx) {
     }
 }
 
+/* ---- replay of the ZSYM statements -------------------------------------------- */
+
+static char *decoded_name(const GoffESD *e) { return ebcdic_decode(e->name, e->name_len); }
+
+/* a template whose symbol numbers are all valid */
+static int tmpl_valid(const ZBlock *b, const ZTmpl *t) {
+    size_t i;
+    for (i = 0; i < t->n; i++)
+        if (t->v[i].tag != 't' && t->v[i].id >= b->syms.n) return 0;
+    return 1;
+}
+
+static void smart_fail(Smart *sm, size_t sec, Ctx *x, const char *why, const char *file, uint32_t line) {
+    const char *name = x->sects.v[sec]->name ? x->sects.v[sec]->name : "(unnamed)";
+    if (!sm->ok[sec]) return;
+    sm->ok[sec] = 0;
+    sm->degraded = 1;
+    if (file)
+        warnf(x, "the ZSYM information does not match section %s (%s, statement %s:%u): the generic converter "
+                 "writes it",
+              name, why, file, (unsigned)line);
+    else
+        warnf(x, "the ZSYM information does not match section %s (%s): the generic converter writes it", name, why);
+}
+
+/* Decide how the object is converted: a Smart plan when it carries one
+ * usable block of ZSYM, else NULL (generic converter). */
+static Smart *smart_plan(Ctx *x) {
+    size_t zlen, i, k, nsec = x->sects.n;
+    uint8_t *zb = zsym_extract(x->m, &zlen);
+    Zsym *z;
+    ZBlock *b;
+    Smart *sm;
+    uint8_t **mask, **cov;
+    if (!zb) return NULL;
+    z = zsym_parse(zb, zlen);
+    if (z->blocks.n != 1 || z->bad_chunks || !z->blocks.v[0]->complete) {
+        warnf(x, z->blocks.n > 1 ? "the object holds ZSYM of several modules; the generic converter is used"
+                                 : "the ZSYM information is damaged or incomplete; the generic converter is used");
+        return NULL;
+    }
+    b = z->blocks.v[0];
+    for (i = 0; i < b->stmts.n; i++) {
+        const ZStmt *s = &b->stmts.v[i];
+        if (s->scope >= (int64_t)b->scopes.n || !s->op[0] || !tmpl_valid(b, &s->label) ||
+            !tmpl_valid(b, &s->operands) || s->len < 0 || s->off < 0) {
+            warnf(x, "the ZSYM information is inconsistent; the generic converter is used");
+            return NULL;
+        }
+    }
+    sm = xcalloc(sizeof *sm);
+    sm->b = b;
+    sm->scope_sect = xcalloc((b->scopes.n + 1) * sizeof *sm->scope_sect);
+    sm->scope_cls = xcalloc((b->scopes.n + 1) * sizeof *sm->scope_cls);
+    sm->ok = xcalloc(nsec + 1);
+    sm->done = xcalloc(nsec + 1);
+    memset(sm->ok, 1, nsec);
+    mask = xcalloc((x->classes.n + 1) * sizeof *mask);
+    cov = xcalloc((x->classes.n + 1) * sizeof *cov);
+
+    /* scopes -> sections and classes of the object */
+    {
+        size_t *mapped = xcalloc((nsec + 1) * sizeof *mapped);
+        for (i = 0; i < b->scopes.n; i++) {
+            const ZScope *sc = &b->scopes.v[i];
+            size_t si;
+            DClass *found = NULL;
+            sm->scope_sect[i] = -1;
+            if (sc->kind == K_DSECT) continue;
+            for (si = 0; si < nsec && !found; si++) {
+                DSect *ds = x->sects.v[si];
+                char *nm = decoded_name(ds->sd);
+                int same = !strcmp(!strcmp(nm, PRIV_NAME) ? "" : nm, sc->sect);
+                free(nm);
+                if (!same) continue;
+                for (k = 0; k < ds->classes.n; k++) {
+                    char *cn = decoded_name(ds->classes.v[k]->ed);
+                    int hit = !strcmp(cn, sc->cls);
+                    free(cn);
+                    if (hit) {
+                        found = ds->classes.v[k];
+                        sm->scope_sect[i] = (int)si;
+                        break;
+                    }
+                }
+            }
+            for (k = 0; found && k < i; k++)
+                if (sm->scope_cls[k] == found) found = NULL; /* two scopes, one class */
+            if (!found) {
+                warnf(x, "the ZSYM information names section %s class %s, which the object does not have; "
+                         "the generic converter is used",
+                      sc->sect[0] ? sc->sect : "(unnamed)", sc->cls);
+                return NULL;
+            }
+            sm->scope_cls[i] = found;
+            mapped[sm->scope_sect[i]]++;
+        }
+        for (i = 0; i < nsec; i++) {
+            size_t nc = 0;
+            for (k = 0; k < x->sects.v[i]->classes.n; k++) nc++;
+            if (nc != mapped[i]) smart_fail(sm, i, x, "the classes differ", NULL, 0);
+        }
+    }
+
+    /* the bytes the binder may change, and the bytes the statements cover */
+    for (i = 0; i < x->classes.n; i++) {
+        mask[i] = xcalloc(x->classes.v[i]->len + 1);
+        cov[i] = xcalloc(x->classes.v[i]->len + 1);
+    }
+    for (i = 0; i < x->m->relocs.n; i++) {
+        const GoffReloc *r = &x->m->relocs.v[i];
+        DClass *c = class_of(x, r->pid);
+        size_t kk;
+        if (!c) continue;
+        for (kk = 0; kk < r->length && r->offset + kk < c->len; kk++) mask[c->idx][r->offset + kk] = 1;
+    }
+    for (i = 0; i < b->stmts.n; i++) {
+        const ZStmt *s = &b->stmts.v[i];
+        DClass *c;
+        size_t sec;
+        const char *file = s->file < b->files.n ? b->files.v[s->file] : "?";
+        if (s->scope < 0 || !sm->scope_cls[s->scope]) continue;
+        c = sm->scope_cls[s->scope];
+        sec = (size_t)sm->scope_sect[s->scope];
+        if (!sm->ok[sec] || s->len == 0) continue;
+        if ((uint64_t)s->off + (uint64_t)s->len > c->len) {
+            smart_fail(sm, sec, x, "a statement lies outside its class", file, s->line);
+            continue;
+        }
+        if (zsym_crc(c->data, c->len, mask[c->idx], s->off, s->len) != s->crc) {
+            smart_fail(sm, sec, x, "the bytes of a statement differ", file, s->line);
+            continue;
+        }
+        memset(cov[c->idx] + s->off, 1, (size_t)s->len);
+    }
+    for (i = 0; i < x->classes.n; i++) {
+        DClass *c = x->classes.v[i];
+        const GoffESD *e = c->pr ? c->pr : c->ed;
+        size_t at, sec = 0;
+        for (k = 0; k < nsec; k++)
+            if (c->sect == x->sects.v[k]) sec = k;
+        if (!sm->ok[sec]) continue;
+        for (at = 0; at < c->len; at++)
+            if (!cov[i][at] && c->data[at] != (e->has_fill ? e->fill : 0)) {
+                smart_fail(sm, sec, x, "bytes no statement wrote differ from the fill", NULL, 0);
+                break;
+            }
+    }
+
+    /* the labels of the ZSYM information name the generic text of a section
+     * that no longer matches, so that the other sections still find them */
+    for (i = 0; i < b->syms.n; i++) {
+        const ZSym *sy = &b->syms.v[i];
+        DClass *c;
+        size_t kk;
+        int dup = 0;
+        char *q;
+        if (sy->kind != ZY_LABEL || sy->scope < 0 || sy->scope >= (int64_t)b->scopes.n) continue;
+        c = sm->scope_cls[sy->scope];
+        if (!c || sm->ok[sm->scope_sect[sy->scope]] || sy->val < 0 || (uint64_t)sy->val > c->len) continue;
+        q = zsym_quote(sy->name);
+        for (kk = 0; kk < c->names.n; kk++)
+            if (!strcmp(c->names.v[kk].name, q)) dup = 1;
+        if (dup) continue;
+        add_name(c, sy->val, q, NULL, 0);
+        c->names.v[c->names.n - 1].zs = 1;
+    }
+    return sm;
+}
+
+static void emit_end(Ctx *x) {
+    buf_putc(&x->out, '\n');
+    if (x->end_cls) {
+        char *l = label_ref(x, x->end_cls, x->end_off);
+        stmt(&x->out, NULL, "END", l);
+        free(l);
+    } else if (x->end_er) {
+        stmt(&x->out, NULL, "END", x->end_er->name);
+    } else {
+        stmt(&x->out, NULL, "END", NULL);
+    }
+}
+
+static void smart_flush(Ctx *x) {
+    Smart *sm = x->sm;
+    size_t i;
+    for (i = 0; i < x->sects.n; i++)
+        if (!sm->ok[i] && !sm->done[i]) {
+            sm->done[i] = 1;
+            emit_section(x, x->sects.v[i], 1);
+        }
+}
+
+/* the statements in source order; a section that no longer matches is
+ * written by the generic converter where its first statement was */
+static void smart_emit(Ctx *x) {
+    Smart *sm = x->sm;
+    const ZBlock *b = sm->b;
+    size_t i;
+    for (i = 0; i < b->stmts.n; i++) {
+        const ZStmt *s = &b->stmts.v[i];
+        int sec = s->scope >= 0 ? sm->scope_sect[s->scope] : -1;
+        int off = sec >= 0 && !sm->ok[sec];
+        char *l, *o;
+        if (s->kind == ZS_END) {
+            smart_flush(x);
+            if (off) {
+                emit_end(x);
+                return;
+            }
+        } else if (off) {
+            if (!sm->done[sec]) {
+                sm->done[sec] = 1;
+                emit_section(x, x->sects.v[sec], 1);
+            }
+            continue;
+        }
+        l = zsym_render(b, &s->label);
+        o = zsym_render(b, &s->operands);
+        stmt(&x->out, l, s->op, o);
+        free(l);
+        free(o);
+        if (s->kind == ZS_END) return;
+    }
+    smart_flush(x);
+    emit_end(x);
+}
+
 /* ---- the whole module ------------------------------------------------------------ */
 
-char *disasm_module(const GoffModule *m, FILE *warn, int *nwarn, char *err, size_t errsz) {
+char *disasm_ex(const GoffModule *m, int flags, FILE *warn, int *nwarn, int *smart, char *err, size_t errsz) {
     Ctx x;
     size_t i, k;
     memset(&x, 0, sizeof x);
@@ -1173,10 +1414,16 @@ char *disasm_module(const GoffModule *m, FILE *warn, int *nwarn, char *err, size
     x.errsz = errsz;
     x.by_id = xcalloc((m->esds.n + 2) * sizeof *x.by_id);
     x.end_off = -1;
+    if (smart) *smart = 0;
     if (!load_esds(&x) || !load_text(&x) || !load_labels(&x)) return NULL;
     if (x.sects.n == 0) {
         failf(&x, "the object has no section");
         return NULL;
+    }
+    if (!(flags & DISASM_GENERIC) && !x.failed) x.sm = smart_plan(&x);
+    if (x.sm && !x.sm->degraded) {
+        x.warn = NULL; /* the generic analysis is not used */
+        x.nwarn = 0;
     }
     for (i = 0; i < x.sects.n; i++)
         if (x.sects.v[i]->name) note_taken(&x, x.sects.v[i]->name);
@@ -1237,18 +1484,18 @@ char *disasm_module(const GoffModule *m, FILE *warn, int *nwarn, char *err, size
         }
     }
     if (x.end_er) x.end_er->used = 1;
-    for (i = 0; i < x.sects.n; i++) emit_section(&x, x.sects.v[i], i);
-    buf_putc(&x.out, '\n');
-    if (x.end_cls) {
-        char *l = label_ref(&x, x.end_cls, x.end_off);
-        stmt(&x.out, NULL, "END", l);
-        free(l);
-    } else if (x.end_er) {
-        stmt(&x.out, NULL, "END", x.end_er->name);
+    if (x.sm) {
+        smart_emit(&x);
+        if (smart) *smart = 1;
     } else {
-        stmt(&x.out, NULL, "END", NULL);
+        for (i = 0; i < x.sects.n; i++) emit_section(&x, x.sects.v[i], i);
+        emit_end(&x);
     }
     if (x.failed) return NULL;
     if (nwarn) *nwarn = x.nwarn;
     return xstrdup(buf_cstr(&x.out));
+}
+
+char *disasm_module(const GoffModule *m, FILE *warn, int *nwarn, char *err, size_t errsz) {
+    return disasm_ex(m, 0, warn, nwarn, NULL, err, errsz);
 }

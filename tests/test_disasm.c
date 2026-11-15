@@ -9,6 +9,8 @@
 #include "../src/goff.h"
 #include "testlib.h"
 
+static int zlevel; /* ZSYM level of the objects assemble() writes */
+
 /* assemble text; the object bytes, or NULL after printing the problem */
 static uint8_t *assemble(const char *what, const char *src, size_t *n) {
     Reporter *rep = rep_new(0);
@@ -20,6 +22,7 @@ static uint8_t *assemble(const char *what, const char *src, size_t *n) {
         rep_print(rep, stdout, 0);
         return NULL;
     }
+    m->zlevel = zlevel;
     obj = module_emit(m, n, err, sizeof err);
     if (!obj) printf("--- %s: emit: %s\n", what, err);
     return obj;
@@ -215,18 +218,91 @@ static const char *const programs[] = {
     "         END\n",
 };
 
+static uint32_t zsym_esd(const GoffModule *g) {
+    size_t i;
+    for (i = 0; i < g->esds.n; i++) {
+        char *nm = ebcdic_decode(g->esds.v[i]->name, g->esds.v[i]->name_len);
+        int hit = g->esds.v[i]->type == GOFF_ED && !strcmp(nm, "C_ADATAE9C1");
+        free(nm);
+        if (hit) return (uint32_t)i + 1;
+    }
+    return 0;
+}
+
+static GoffModule *parse_obj(const uint8_t *o, size_t n) {
+    const char *perr = NULL;
+    GoffModule *g = goff_parse(o, n, &perr);
+    if (!g) printf("parse: %s\n", perr);
+    return g;
+}
+
+/* source -> object with ZSYM -> source (from the ZSYM statements) -> the same
+ * object, and the second ZSYM source is the first one again */
+static void smart_trip(const char *name, const char *src) {
+    size_t n1, n2, n3;
+    uint8_t *o1, *o2, *o3;
+    GoffModule *g1, *g2, *g3, *g0;
+    char *t1, *t2, err[256], *gen1, *gen0;
+    int nw = 0, smart = 0;
+    uint8_t *o0;
+    size_t n0;
+    zlevel = 1;
+    o1 = assemble(name, src, &n1);
+    zlevel = 0;
+    o0 = assemble(name, src, &n0);
+    if (!o1 || !o0) {
+        CHECK_MSG(0, "%s: assembly", name);
+        return;
+    }
+    g1 = parse_obj(o1, n1);
+    g0 = parse_obj(o0, n0);
+    if (!g1 || !g0) return;
+    CHECK_MSG(zsym_esd(g1) != 0, "%s: no ZSYM class", name);
+    t1 = disasm_ex(g1, 0, stdout, &nw, &smart, err, sizeof err);
+    CHECK_MSG(t1 != NULL, "%s: smart disassembly: %s", name, err);
+    if (!t1) return;
+    CHECK_MSG(smart, "%s: ZSYM not used", name);
+    CHECK_MSG(nw == 0, "%s: %d warnings", name, nw);
+    /* without -generic ZSYM is only a better way to the same object */
+    o2 = assemble("zsym source", t1, &n2);
+    if (!o2) {
+        printf("%s\n", t1);
+        CHECK_MSG(0, "%s: the ZSYM source does not assemble", name);
+        return;
+    }
+    g2 = parse_obj(o2, n2);
+    if (!g2) return;
+    if (!goff_equal(g1, zsym_esd(g1), g2)) printf("--- %s: the ZSYM source gives another object:\n%s\n", name, t1);
+    CHECK_MSG(goff_equal(g1, zsym_esd(g1), g2), "%s: object differs", name);
+    /* its own ZSYM gives the same source back */
+    zlevel = 1;
+    o3 = assemble("zsym source", t1, &n3);
+    g3 = o3 ? parse_obj(o3, n3) : NULL;
+    t2 = g3 ? disasm_ex(g3, 0, NULL, &nw, &smart, err, sizeof err) : NULL;
+    CHECK_MSG(t2 && smart && !strcmp(t1, t2), "%s: the ZSYM source is not a fixed point", name);
+    zlevel = 0;
+    /* -generic ignores the information */
+    gen1 = disasm_ex(g1, DISASM_GENERIC, NULL, &nw, &smart, err, sizeof err);
+    gen0 = disasm_ex(g0, 0, NULL, &nw, &smart, err, sizeof err);
+    CHECK_MSG(gen1 && gen0 && !strcmp(gen1, gen0), "%s: -generic differs from an object without ZSYM", name);
+}
+
 static void test_programs(void) {
     size_t i;
     char name[32];
     for (i = 0; i < sizeof programs / sizeof programs[0]; i++) {
         snprintf(name, sizeof name, "program %d", (int)i);
         round_trip(name, programs[i]);
+        smart_trip(name, programs[i]);
     }
     {
         size_t n;
         char *text = read_file("testdata/hello.za", &n);
         CHECK(text != NULL);
-        if (text) round_trip("testdata/hello.za", text);
+        if (text) {
+            round_trip("testdata/hello.za", text);
+            smart_trip("testdata/hello.za", text);
+        }
     }
 }
 
