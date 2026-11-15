@@ -20,11 +20,18 @@ tables (`src/ebcdic_tab.c`) are generated files that are checked in.
 ```sh
 build/zosasm -o hello.o testdata/hello.za   # assemble
 build/zosasm -dump hello.o                  # print the GOFF structure
+build/zosasm -disasm hello.o -o back.za     # GOFF object -> zosasm source
 build/zosasm -E prog.za                     # show the preprocessed source
 ```
 
-Options: `-o FILE`, `-DNAME[=VAL]`, `-Idir`, `-E`, `-dump FILE`, `-color`,
+Options: `-o FILE`, `-DNAME[=VAL]`, `-Idir`, `-E`, `-dump FILE`,
+`-disasm FILE`, `-color`,
 `-max-errors N`, `-Werror`. Source files use the extension `.za`.
+
+`-disasm` turns a GOFF object back into source (no comments, labels are
+generated: `L0001C`). It assembles the result again and warns if the object
+differs from the input; for objects made by zosasm the round trip is exact
+(see DESIGN.md section 10).
 
 Registers can be written as numbers, as names (`R1`, equated or predefined)
 or GNU style: `lgr %r1,%r2`, `ler %f2,%f4`, `vl %v1,0(%r2)`.

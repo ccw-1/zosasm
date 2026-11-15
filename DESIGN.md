@@ -314,3 +314,77 @@ conflict).
   `N'` belong to the macro language and give `ZA1032`; `ZA1031` is a
   `X'*` that cannot be evaluated; `ZA1033` is an EQU type operand outside
   0-255. The third EQU operand sets the type attribute (it was ignored).
+
+## 10. Disassembler (`-disasm`, `src/disasm.c`)
+
+`disasm_module()` turns a parsed GOFF module (`goff_parse`) into zosasm
+source. The aim is a *reliable* round trip for objects the assembler wrote:
+source -> object -> source -> object gives the same object bytes and the
+second source equals the first one. `main.c` assembles the result again
+and warns if it does not assemble or the object differs (first differing
+byte and record).
+
+**Canonical object.** For the source to be free to place labels and
+statements, the object must not depend on statement order. `emit.c`
+therefore creates the ERs in order of first use in the offset-sorted
+relocations (class order, then offset) and sorts the ENTRY LDs of a section
+by (class, offset, definition order).
+
+**Model.** Per class: bytes, an `occ` array (1 = in an address constant,
+2 = in a relative-immediate relocation field), `rel_at`, `ins_at` and a
+label array (bit 1 fixed: LD or END; 2 derived: branch target; 4 named;
+8 target of an address constant).
+
+1. `load_esds`, `load_text`, `load_labels`, `load_relocs`: unsupported
+   relocations are ignored with a warning.
+2. `drop_split_adcons`: a label inside an address constant cannot be
+   written (the constant would have to be split); its relocation is dropped
+   and the bytes stay as data.
+3. `discover`: recursive descent from offset 0, the labels (bits 1 and 8)
+   and the END entry, using `isa_decode()` (`isa.c`), which finds the table
+   entry with the fewest operand bits that reproduces the bytes exactly, so
+   extended mnemonics (`br`, `be`, `brel`) are preferred. The scan stops
+   after an unconditional branch. Relative fields use relocations to ERs and
+   classes or turn into labels.
+4. `settle`: derived labels; an instruction that has a label inside it, or
+   whose target would lie inside an address constant, is written as data
+   instead (`bad[]` remembers it, and the decoding is repeated so that code
+   behind the instruction is still found).
+5. Emission: `CSECT`/`RSECT`/`COM`, `AMODE`, `RMODE`, `ENTRY`, `EXTRN`/
+   `WXTRN` (only ERs that something refers to), `XATTR`, then the class
+   bodies with `CATTR` for every class but the first `B_TEXT`.
+
+Instructions are written with GNU style registers (`%r1`), memory operands
+as `D(X,B)`, `D(L,B)` or `D(B)`. Data is `DC XL<n>'0'` for zero runs of 8
+or more bytes, `DC C'...'` for runs of 6 or more safe characters, else
+`DC X'...'` (16 bytes per statement), and `DC AL<n>(label)` / `VL<n>(er)`
+for address constants. Extra labels at one offset use `DS 0X`. Generated
+labels are `L%05X`, or `L<class>_%05X` for classes other than the first.
+
+**Limits.**
+
+* Objects from other producers are best effort. The clang object
+  `dev/src/debug/goff/testdata/hello.goff` fails cleanly: names such as
+  `hello.c50332088#hello#C` or `.&ppa2` cannot be written as source
+  symbols, and it uses RLD action SUB, reference type 7, several SDs and
+  ED/PR combinations.
+* Warnings mean the object could not have been written by the assembler;
+  then only valid source and equal text bytes are guaranteed, not a fixed
+  point.
+* A class can have 64 MiB at most.
+* `CATTR` cannot change the existing `B_TEXT`; `RSECT` stands for read-only.
+* Not implemented (reader, writer or both): `ADAEsdId` of an LD,
+  extended-attribute ESDID, SD tasking and binding scope, ER indirect bit,
+  action SUB relocation pairs (`A(X-Y)`), reference type 7, LEN records from
+  source, the amode-sensitive bit of V-constants.
+
+**GOFF study (LLVM `GOFFObjectWriter`/`GOFFObjectFile`, Go `GOFF-tool`).**
+ESD name space 2 is the pseudo-register space (`GOFF_NS_PSEUDO`, formerly
+misnamed); bits 5-7 of the ESD flags byte at offset 41 are
+`reserved_qwords`; RLD flag byte 0: `0x80` same R-id, `0x40` same P-id,
+`0x20` same offset, `0x02` 8-byte offset and `0x04` 8 bytes of extended
+attributes after the item (LLVM's reading; the IBM text calls `0x02` a
+2-byte offset, which contradicts the 28-byte maximum item size). The reader
+follows LLVM and the writer never emits either bit. LLVM sorts the RLD by
+(P, R, offset), writes an END record count of 0 and zero HDR fields other
+than the architecture level; zosasm does not copy that.

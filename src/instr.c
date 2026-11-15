@@ -6,57 +6,9 @@
 #include "asm.h"
 
 
-/* ---- slots: the HLASM operands of an instruction variant ------------------ */
-
-typedef enum { SK_REG, SK_IMM, SK_REL, SK_ADDR } SlotKind;
-
-/* One HLASM operand; it covers one or more table fields. */
-typedef struct {
-    SlotKind kind;
-    int field;    /* first field (the register, the immediate, or D) */
-    int mid;      /* SK_ADDR: X/L/R field index or -1 */
-    int base;     /* SK_ADDR: B field index or -1 */
-    char mid_kind; /* 'X' (index), 'L' (length) or 'R' (register) */
-} Slot;
-
-typedef struct {
-    Slot s[6];
-    int n;
-} Slots;
-
-static void slots_of(const IsaInst *in, Slots *out) {
-    size_t nops = isa_nops(in), i;
-    out->n = 0;
-    for (i = 0; i < nops; i++) {
-        unsigned f = isa_op(in, i)->flags;
-        Slot sl;
-        sl.mid = sl.base = -1;
-        sl.mid_kind = 0;
-        sl.field = (int)i;
-        if (f & F_DISP) {
-            size_t j = i + 1;
-            sl.kind = SK_ADDR;
-            if (j < nops && !(isa_op(in, j)->flags & F_BASE)) {
-                unsigned mf = isa_op(in, j)->flags;
-                sl.mid = (int)j;
-                sl.mid_kind = (mf & F_INDEX) ? 'X' : (mf & F_LENGTH) ? 'L' : 'R';
-                j++;
-            }
-            if (j < nops && (isa_op(in, j)->flags & F_BASE)) {
-                sl.base = (int)j;
-                j++;
-            }
-            i = j - 1;
-        } else if (f & F_PCREL) {
-            sl.kind = SK_REL;
-        } else if (f & (F_GPR | F_FPR | F_AR | F_CR | F_VR)) {
-            sl.kind = SK_REG;
-        } else {
-            sl.kind = SK_IMM;
-        }
-        out->s[out->n++] = sl;
-    }
-}
+typedef IsaSlot Slot;
+typedef IsaSlots Slots;
+#define slots_of isa_slots
 
 /* number of operands that must be written */
 static int min_slots(const IsaInst *in, int n) {

@@ -44,6 +44,8 @@ Status key: [x] done, [-] in progress, [ ] open.
 
 ## Phase 3 - quality
 
+- [x] GOFF -> source converter (`-disasm`, DESIGN.md 10)
+
 - [ ] register pair checks (even-odd GPR pairs, floating-point extended
       pairs) derived from the POP prose; the table has no pair information
 - [ ] `-diag-format=json`, warning classes, `-Werror`

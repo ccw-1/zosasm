@@ -124,6 +124,7 @@ const char *goff_write_esd(GoffWriter *w, GoffESD *e) {
     if (e->mangled) fl |= 0x40;
     if (e->renameable) fl |= 0x20;
     if (e->removable) fl |= 0x10;
+    fl |= e->reserved_qwords & 7;
     h[41 - 3] = fl;
     put32(h + 44 - 3, e->ada_id);
     put32(h + 48 - 3, e->priority);

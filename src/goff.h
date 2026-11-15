@@ -24,7 +24,7 @@ enum { GOFF_T_ESD = 0x0, GOFF_T_TXT = 0x1, GOFF_T_RLD = 0x2, GOFF_T_LEN = 0x3, G
 
 typedef enum { GOFF_SD = 0, GOFF_ED = 1, GOFF_LD = 2, GOFF_PR = 3, GOFF_ER = 4 } GoffESDType;
 
-enum { GOFF_NS_NORMAL = 1, GOFF_NS_PART = 2, GOFF_NS_PARTS3 = 3 };
+enum { GOFF_NS_NORMAL = 1, GOFF_NS_PSEUDO = 2, GOFF_NS_PARTS3 = 3 };
 enum { GOFF_AMODE_NONE = 0, GOFF_AMODE_24 = 1, GOFF_AMODE_31 = 2, GOFF_AMODE_ANY = 3, GOFF_AMODE_64 = 4, GOFF_AMODE_MIN = 0x10 };
 enum { GOFF_RMODE_NONE = 0, GOFF_RMODE_24 = 1, GOFF_RMODE_31 = 3, GOFF_RMODE_64 = 4 };
 enum { GOFF_STYLE_BYTE = 0, GOFF_STYLE_STRUCTURED = 1, GOFF_STYLE_UNSTRUCTURED = 2 };
@@ -73,6 +73,7 @@ typedef struct {
     int has_fill;
     uint8_t fill;
     int mangled, renameable, removable;
+    uint8_t reserved_qwords; /* 3 bits */
     uint32_t ada_id, priority;
     GoffBehavior attr;
     uint8_t *name;

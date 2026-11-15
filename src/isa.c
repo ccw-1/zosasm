@@ -130,3 +130,151 @@ int isa_encode(const IsaInst *in, const int64_t *vals, size_t nvals, uint8_t out
     for (i = 0; i < 6; i++) out[i] |= in->orv[i];
     return 0;
 }
+
+void isa_slots(const IsaInst *in, IsaSlots *out) {
+    size_t nops = isa_nops(in), i;
+    out->n = 0;
+    for (i = 0; i < nops; i++) {
+        unsigned f = isa_op(in, i)->flags;
+        IsaSlot sl;
+        sl.mid = sl.base = -1;
+        sl.mid_kind = 0;
+        sl.field = (int)i;
+        if (f & F_DISP) {
+            size_t j = i + 1;
+            sl.kind = SK_ADDR;
+            if (j < nops && !(isa_op(in, j)->flags & F_BASE)) {
+                unsigned mf = isa_op(in, j)->flags;
+                sl.mid = (int)j;
+                sl.mid_kind = (mf & F_INDEX) ? 'X' : (mf & F_LENGTH) ? 'L' : 'R';
+                j++;
+            }
+            if (j < nops && (isa_op(in, j)->flags & F_BASE)) {
+                sl.base = (int)j;
+                j++;
+            }
+            i = j - 1;
+        } else if (f & F_PCREL) {
+            sl.kind = SK_REL;
+        } else if (f & (F_GPR | F_FPR | F_AR | F_CR | F_VR)) {
+            sl.kind = SK_REG;
+        } else {
+            sl.kind = SK_IMM;
+        }
+        out->s[out->n++] = sl;
+    }
+}
+
+/* ---- decoding ----------------------------------------------------------- */
+
+static uint64_t get_bits(const uint8_t *b, int shift, int n) {
+    uint64_t v = 0;
+    int i;
+    for (i = 0; i < n; i++) {
+        int pos = shift + i;
+        v = v << 1 | (uint64_t)((b[pos / 8] >> (7 - pos % 8)) & 1);
+    }
+    return v;
+}
+
+static void set_mask(uint8_t *m, int shift, int n) {
+    int i;
+    for (i = 0; i < n; i++) {
+        int pos = shift + i;
+        m[pos / 8] |= (uint8_t)(0x80 >> (pos % 8));
+    }
+}
+
+/* the bits of an instruction that carry operands */
+static void operand_mask(const IsaInst *in, uint8_t m[6]) {
+    size_t i, n = isa_nops(in);
+    memset(m, 0, 6);
+    for (i = 0; i < n; i++) {
+        const IsaOperand *op = isa_op(in, i);
+        set_mask(m, op->shift, op->bits);
+        if (op->flags & F_VR) set_mask(m, 36, 4);
+    }
+}
+
+/* entries by first byte: built once */
+static const IsaInst **by_first[256];
+static size_t by_first_n[256];
+static uint8_t (*masks)[6];
+
+static void build_index(void) {
+    size_t i, c[256];
+    int k;
+    memset(c, 0, sizeof c);
+    masks = xmalloc(isa_inst_count * sizeof *masks);
+    for (i = 0; i < isa_inst_count; i++) {
+        const IsaInst *in = &isa_inst_tab[i];
+        by_first_n[in->opcode[0] | in->orv[0]]++;
+        operand_mask(in, masks[i]);
+    }
+    for (k = 0; k < 256; k++) by_first[k] = xmalloc((by_first_n[k] + 1) * sizeof **by_first);
+    for (i = 0; i < isa_inst_count; i++) {
+        const IsaInst *in = &isa_inst_tab[i];
+        int f = in->opcode[0] | in->orv[0];
+        by_first[f][c[f]++] = in;
+    }
+}
+
+static int popcount6(const uint8_t m[6]) {
+    int n = 0, i, j;
+    for (i = 0; i < 6; i++)
+        for (j = 0; j < 8; j++) n += (m[i] >> j) & 1;
+    return n;
+}
+
+const IsaInst *isa_decode(const uint8_t *b, size_t n, int64_t vals[6]) {
+    const IsaInst *best = NULL;
+    int best_bits = 0;
+    int64_t bv[6] = {0};
+    size_t i, len, k;
+    if (n < 2) return NULL;
+    len = b[0] < 0x40 ? 2 : b[0] < 0xC0 ? 4 : 6;
+    if (n < len) return NULL;
+    if (!masks) build_index();
+    for (k = 0; k < by_first_n[b[0]]; k++) {
+        const IsaInst *in = by_first[b[0]][k];
+        uint8_t m[6], fixed;
+        int ok = 1, bits;
+        int64_t v[6] = {0};
+        uint8_t re[6];
+        char err[80];
+        size_t nf = isa_nops(in), f;
+        if (in->length != len) continue;
+        operand_mask(in, m);
+        for (i = 0; i < len && ok; i++) {
+            fixed = (uint8_t)(in->opcode[i] | in->orv[i]);
+            if ((uint8_t)(b[i] & ~m[i]) != (uint8_t)(fixed & ~m[i])) ok = 0;
+        }
+        if (!ok) continue;
+        bits = popcount6(m);
+        if (best && bits >= best_bits) continue;
+        for (f = 0; f < nf; f++) {
+            const IsaOperand *op = isa_op(in, f);
+            uint64_t u = get_bits(b, op->shift, op->bits);
+            if ((op->flags & F_DISP) && (op->flags & F_SIGNED) && op->bits == 20)
+                u = get_bits(b, op->shift + 12, 8) << 12 | get_bits(b, op->shift, 12);
+            if ((op->flags & F_VR) && get_bits(b, 36, 4)) {
+                switch (op->shift) {
+                case 8: u |= (uint64_t)((get_bits(b, 36, 4) >> 3) & 1) << 4; break;
+                case 12: u |= (uint64_t)((get_bits(b, 36, 4) >> 2) & 1) << 4; break;
+                case 16: u |= (uint64_t)((get_bits(b, 36, 4) >> 1) & 1) << 4; break;
+                case 32: u |= (uint64_t)(get_bits(b, 36, 4) & 1) << 4; break;
+                }
+            }
+            if ((op->flags & (F_SIGNED | F_PCREL)) && op->bits < 64 && (u >> (op->bits - 1)) & 1)
+                v[f] = (int64_t)u - ((int64_t)1 << op->bits);
+            else
+                v[f] = (int64_t)u;
+        }
+        if (isa_encode(in, v, nf, re, err, sizeof err) != 0 || memcmp(re, b, len) != 0) continue;
+        best = in;
+        best_bits = bits;
+        memcpy(bv, v, sizeof bv);
+    }
+    if (best) memcpy(vals, bv, sizeof bv);
+    return best;
+}

@@ -62,4 +62,30 @@ int isa_encode(const IsaInst *in, const int64_t *vals, size_t nvals, uint8_t out
 /* Does v fit the operand? 0 = yes, else -1 with message. */
 int isa_check(const IsaOperand *op, int64_t v, char *err, size_t errsz);
 
+/* ---- slots: the assembler operands of an instruction variant ------------- */
+
+typedef enum { SK_REG, SK_IMM, SK_REL, SK_ADDR } SlotKind;
+
+/* One assembler operand; it covers one or more table fields. */
+typedef struct {
+    SlotKind kind;
+    int field;     /* first field (the register, the immediate, or D) */
+    int mid;       /* SK_ADDR: X/L/R field index or -1 */
+    int base;      /* SK_ADDR: B field index or -1 */
+    char mid_kind; /* 'X' (index), 'L' (length) or 'R' (register) */
+} IsaSlot;
+
+typedef struct {
+    IsaSlot s[6];
+    int n;
+} IsaSlots;
+
+void isa_slots(const IsaInst *in, IsaSlots *out);
+
+/* Decode the instruction at b (n bytes available). On success returns the
+ * table entry (the most specific one, so BCR 15,r is "br") and fills one
+ * value per operand field (signed fields sign extended); the entry encodes
+ * back to exactly the same bytes. Returns NULL for anything else. */
+const IsaInst *isa_decode(const uint8_t *b, size_t n, int64_t vals[6]);
+
 #endif

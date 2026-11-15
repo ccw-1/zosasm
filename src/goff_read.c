@@ -56,7 +56,10 @@ static const char *decode_rld(GoffModule *m, const uint8_t *d, size_t n) {
         r.cond_seq = (fl[5] & 0x10) != 0;
         r.bit_offset = fl[5] & 7;
         r.amode_sens = (fl[0] & 1) != 0;
-        if (fl[0] & 0x02) off_len = 2;
+        /* flag bits as written by IBM tools and LLVM: 0x02 = 8 byte offset,
+         * 0x04 = 8 bytes of extended attributes behind the item */
+        if (fl[0] & 0x02) off_len = 8;
+        if (fl[0] & 0x04) need += 8;
         r.rid = prev.rid;
         r.pid = prev.pid;
         r.offset = prev.offset;
@@ -77,9 +80,13 @@ static const char *decode_rld(GoffModule *m, const uint8_t *d, size_t n) {
         if (!(fl[0] & 0x20)) {
             size_t i;
             r.offset = 0;
-            for (i = 0; i < off_len; i++) r.offset = r.offset << 8 | d[i];
+            for (i = 0; i < off_len; i++) {
+                if (i + 4 < off_len && d[i]) return "RLD offset beyond 4 GB";
+                r.offset = r.offset << 8 | d[i];
+            }
             d += off_len;
         }
+        if (fl[0] & 0x04) d += 8;
         vec_push(&m->relocs, r);
         prev = r;
     }
@@ -113,6 +120,7 @@ static const char *decode(GoffModule *m, Logical *l) {
         e->mangled = (f[41] & 0x40) != 0;
         e->renameable = (f[41] & 0x20) != 0;
         e->removable = (f[41] & 0x10) != 0;
+        e->reserved_qwords = f[41] & 7;
         e->ada_id = get32(f + 44);
         e->priority = get32(f + 48);
         memcpy(ba, f + 60, 10);

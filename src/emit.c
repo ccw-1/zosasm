@@ -171,6 +171,34 @@ static int cmp_key(const void *x, const void *y) {
     return a->idx < b->idx ? -1 : a->idx > b->idx;
 }
 
+/* the relocations of c in offset order (idx = index in c->relocs) */
+static SortKey *sorted_relocs(const Class *c) {
+    SortKey *keys = xmalloc((c->relocs.n + 1) * sizeof *keys);
+    size_t k;
+    for (k = 0; k < c->relocs.n; k++) {
+        keys[k].off = c->relocs.v[k].off;
+        keys[k].idx = k;
+    }
+    qsort(keys, c->relocs.n, sizeof *keys, cmp_key);
+    return keys;
+}
+
+/* ENTRY symbols of a section in address order: class, offset, definition.
+ * The object does not depend on the order of the statements this way. */
+typedef struct {
+    Symbol *sym;
+    size_t cls;
+    int64_t off;
+    size_t idx;
+} EntryKey;
+
+static int cmp_entry(const void *x, const void *y) {
+    const EntryKey *a = x, *b = y;
+    if (a->cls != b->cls) return a->cls < b->cls ? -1 : 1;
+    if (a->off != b->off) return a->off < b->off ? -1 : 1;
+    return a->idx < b->idx ? -1 : a->idx > b->idx;
+}
+
 uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
     GoffWriter *w = goff_writer_new(1);
     SectionVec secs = {0};
@@ -208,7 +236,9 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
     for (si = 0; si < secs.n; si++)
         for (ci = 0; ci < secs.v[si]->classes.n; ci++) {
             Class *c = secs.v[si]->classes.v[ci];
-            for (k = 0; k < c->relocs.n; k++) NOTE(c->relocs.v[k].target, secs.v[si]);
+            SortKey *keys = sorted_relocs(c);
+            for (k = 0; k < c->relocs.n; k++) NOTE(c->relocs.v[keys[k].idx].target, secs.v[si]);
+            free(keys);
         }
     if (m->entry) {
         Symbol *e = module_symbol(m, m->entry);
@@ -237,21 +267,33 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
             sym = module_symbol(m, s->name);
             if (sym) sym->ld_esd = ld.id;
         }
-        for (i = 0; i < m->sym_order.n; i++) {
-            Symbol *sym = m->sym_order.v[i];
-            Class *c;
-            GoffESD ld;
-            int64_t off;
-            if (!sym->entry || sym->sect != s || !strcmp(sym->name, s->name)) continue;
-            if (sym->kind != SYM_LABEL && sym->kind != SYM_SECT) continue;
-            c = sym->piece->cls;
-            off = sym->piece->start;
-            if (sym->kind == SYM_LABEL) off += sym->off;
-            init_ld(&ld, s, sym->name, c);
-            ld.offset = (uint32_t)off;
-            apply_xattr(&ld.attr, sym->xattr);
-            TRY(goff_write_esd(w, &ld));
-            sym->ld_esd = ld.id;
+        {
+            EntryKey *ek = xmalloc((m->sym_order.n + 1) * sizeof *ek);
+            size_t nek = 0;
+            for (i = 0; i < m->sym_order.n; i++) {
+                Symbol *sym = m->sym_order.v[i];
+                size_t q;
+                if (!sym->entry || sym->sect != s || !strcmp(sym->name, s->name)) continue;
+                if (sym->kind != SYM_LABEL && sym->kind != SYM_SECT) continue;
+                ek[nek].sym = sym;
+                ek[nek].cls = 0;
+                for (q = 0; q < s->classes.n; q++)
+                    if (s->classes.v[q] == sym->piece->cls) ek[nek].cls = q;
+                ek[nek].off = sym->piece->start + (sym->kind == SYM_LABEL ? sym->off : 0);
+                ek[nek].idx = i;
+                nek++;
+            }
+            qsort(ek, nek, sizeof *ek, cmp_entry);
+            for (i = 0; i < nek; i++) {
+                Symbol *sym = ek[i].sym;
+                GoffESD ld;
+                init_ld(&ld, s, sym->name, sym->piece->cls);
+                ld.offset = (uint32_t)ek[i].off;
+                apply_xattr(&ld.attr, sym->xattr);
+                TRY(goff_write_esd(w, &ld));
+                sym->ld_esd = ld.id;
+            }
+            free(ek);
         }
         for (i = 0; i < er_order.n; i++) {
             Symbol *sym = er_order.v[i];
@@ -286,12 +328,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
     for (si = 0; si < secs.n; si++)
         for (ci = 0; ci < secs.v[si]->classes.n; ci++) {
             Class *c = secs.v[si]->classes.v[ci];
-            SortKey *keys = xmalloc((c->relocs.n + 1) * sizeof *keys);
-            for (k = 0; k < c->relocs.n; k++) {
-                keys[k].off = c->relocs.v[k].off;
-                keys[k].idx = k;
-            }
-            qsort(keys, c->relocs.n, sizeof *keys, cmp_key);
+            SortKey *keys = sorted_relocs(c);
             for (k = 0; k < c->relocs.n; k++) {
                 if (nrld == caprld) {
                     caprld = caprld ? caprld * 2 : 64;

@@ -44,6 +44,16 @@ printf 'T CSECT\n COPY X\n' > $T/pp5.za
 $X -o $T/pp5.o $T/pp5.za 2>$T/err; check "COPY rejected" $? 1
 grep -q ZA9001 $T/err; check "COPY code" $? 0
 
+# disassembler: object -> source -> the same object
+$X -disasm $T/hello.o -o $T/back.za 2>$T/err; check "-disasm exit" $? 0
+[ ! -s $T/err ]; check "-disasm without warnings" $? 0
+$X -o $T/back.o $T/back.za 2>/dev/null; check "-disasm output assembles" $? 0
+cmp -s $T/hello.o $T/back.o; check "-disasm round trip" $? 0
+$X -disasm $T/hello.o 2>/dev/null | cmp -s - $T/back.za; check "-disasm to stdout" $? 0
+head -c 200 $T/hello.o > $T/trunc.o
+$X -disasm $T/trunc.o 2>/dev/null; check "-disasm bad object" $? 1
+$X -disasm $T/missing.o 2>/dev/null; check "-disasm missing file" $? 1
+
 rm -rf $T
 [ $fail = 0 ] && echo "tests/run_cli_tests.sh: ok"
 exit $fail
