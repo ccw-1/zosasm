@@ -43,6 +43,12 @@ Status key: [x] done, [-] in progress, [ ] open.
       XPLINK call descriptors, `B_IDRL` ident record
 - [ ] END with entry point by name / ESDID+offset
 
+## Phase 2b - proposals awaiting decisions
+
+- [ ] ZSYM: symbolic information in a NOLOAD ADATA class, smart `-disasm` (ZSYM.md)
+- [ ] HLASM feature review verdicts (HLASM-REVIEW.md): DXD/CXD/Q/J, labeled and
+      dependent USING, scale/exponent, A(X-Y), R, CCW, `sizeof`, `ASSERT`
+
 ## Phase 3 - quality
 
 - [x] GOFF -> source converter (`-disasm`, DESIGN.md 10)
