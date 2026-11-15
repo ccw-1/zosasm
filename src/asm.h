@@ -36,7 +36,7 @@ typedef struct {
     int tasking;
 } ClassAttr;
 
-typedef enum { REL_ADDR, REL_V, REL_Q, REL_CXD, REL_RI, REL_LEN } RelocKind;
+typedef enum { REL_ADDR, REL_V, REL_Q, REL_CXD, REL_RI, REL_LEN, REL_R } RelocKind;
 
 typedef struct {
     int64_t off; /* offset in the class */
@@ -85,6 +85,9 @@ struct Section {
     uint8_t amode, rmode; /* GOFF_AMODE_* / GOFF_RMODE_*, 0 = unset */
     Piece *cur;           /* location counter to resume with */
     uint32_t esd;
+    int max_align;        /* strictest alignment of the data (bytes) */
+    int prv;              /* needs the pseudo register class B_PRV */
+    uint32_t prv_esd;     /* ED esdid of B_PRV */
 };
 
 typedef enum { B_NONE = 0, B_PIECE, B_CLASS, B_SYM } BaseKind;
@@ -121,12 +124,13 @@ int value_simple(const Value *v, Base *b);
 Value value_add(Value a, Value b, int sign);
 Value value_neg(Value v);
 
-typedef enum { SYM_LABEL, SYM_ABS, SYM_REL, SYM_EXT, SYM_SECT } SymKind;
+typedef enum { SYM_LABEL, SYM_ABS, SYM_REL, SYM_EXT, SYM_SECT, SYM_DXD } SymKind;
 
 typedef struct {
     int linkage; /* GOFF_LINKAGE_*, -1 = unset */
     int scope;   /* GOFF_SCOPE_*, -1 = unset */
     char *reference; /* "CODE", "DATA" or NULL */
+    int indirect;    /* REFERENCE(INDIRECT) = 1, REFERENCE(DIRECT) = 0, -1 = unset */
     char *psect;
     Span def;
 } XAttr;
@@ -149,6 +153,11 @@ struct Symbol {
     int used;
     uint32_t esd;    /* ER esdid */
     uint32_t ld_esd; /* LD esdid */
+    /* external dummy section (SYM_DXD, or a DSECT used in Q/J: xd) */
+    int64_t xd_len;
+    int xd_align;     /* bytes */
+    int xd;           /* the symbol is an external dummy section */
+    Section *xd_sect; /* its B_PRV is in this section */
 };
 
 typedef Vec(Section *) SectionVec;
@@ -314,6 +323,14 @@ typedef struct {
 typedef Vec(XattrStmt *) XattrVec;
 
 typedef struct {
+    char *name;
+    Span sp;
+    Section *sect; /* the section of the constant */
+} XdRef;
+
+typedef Vec(XdRef) XdRefVec;
+
+typedef struct {
     char *key;  /* operand text including '=' */
     char *name; /* generated label */
     Span sp;
@@ -347,6 +364,7 @@ struct Asm {
     StrMap secs;
     PoolVec pools;
     int pool_no;
+    XdRefVec xdrefs;  /* names used by Q and J constants, resolved after pass 1 */
     size_t cur_idx;   /* index of the statement being assembled */
     int64_t star_len; /* L'* of the current statement, 0 = unknown */
 };
@@ -396,6 +414,8 @@ void dir_equ(Asm *a, Stmt *st);
 void dir_org(Asm *a, Stmt *st);
 void dir_cnop(Asm *a, Stmt *st);
 void dir_end(Asm *a, Stmt *st);
+void dir_dxd(Asm *a, Stmt *st);
+void dir_cxd(Asm *a, Stmt *st);
 void dir_copy(Asm *a, Stmt *st);
 void dir_ignore(Asm *a, Stmt *st);
 size_t asm_directive_names(const char *const **names);

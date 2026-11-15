@@ -154,7 +154,7 @@ bytes + relocations. External symbols are ESD items of the module.
 | `AMODE n`, `RMODE n` | behavioral attributes of the section (SD/ED/LD) |
 | `ENTRY X` | LD `X` with module scope |
 | `EXTRN X`, `WXTRN X` | ER (strong / weak binding strength) |
-| `DXD`, `CXD`, `Q` constants | PR in `B_PRV`, RLD of type Q/CXD |
+| `DXD`, `CXD`, `Q`, `J`, `R` constants | ED `B_PRV` (merge) with a PR per external dummy section; RLD items, see 4.4 |
 | `LOCTR` | another piece of the same class; pieces are concatenated in order of first appearance, as in HLASM |
 | `DSECT`, `DS` of `DSECT` | no ESD (dummy section), only symbol values |
 | `COM` | SD/ED with the COMMON flag |
@@ -233,6 +233,57 @@ not a simple address), `ZA3063` (range item count), `ZA3064` (limit in
 another section), `ZA3065` (end/upper not greater), `ZA3066` (several
 operands of a dependent USING, address among registers), `ZA3067` (label is
 also a symbol), `ZA3068` (qualifier is not an active USING label).
+
+### 4.4 External dummy sections: DXD, CXD, Q, J, R
+
+```
+WORK     DXD   CL100,F        external dummy section: 104 bytes, word aligned
+         DC    Q(WORK)        offset of WORK in the pseudo register area (4 bytes; QD 8, QLn)
+         DC    J(WORK)        length of WORK (J, JD, JLn: 2, 3, 4 or 8 bytes)
+         CXD                  fullword: total length of the pseudo registers (4 byte aligned)
+         DC    R(ENT)         address in the PSECT of ENT (see XATTR PSECT); R, RD, RL3
+EXT      XATTR REFERENCE(DATA,INDIRECT)
+```
+
+* `DXD name operands` takes DS operands (length and alignment) and stores
+  nothing. The name is a symbol of length attribute 1; it is only valid in
+  `Q`, `J` and `XATTR`, otherwise `ZA2062`. Not allowed in a DSECT (`ZA2063`)
+  or without a name (`ZA2061`).
+* A DSECT named in `Q` or `J` becomes an external dummy section of the
+  section where it is first used (`resolve_xd`, between the passes); its
+  length and alignment are those of the DSECT. `J` also takes a class name
+  or a part name; `Q` also a part name (`ZA2060` for anything else).
+* `R(name)` names an external symbol, a section or an ENTRY label
+  (`ZA2060`); `CXD` and `R` use the labels the same way as `A`.
+* Lengths: `ZA2029`. `QY` is not supported yet.
+* `REFERENCE(CODE|DATA, DIRECT|INDIRECT)`: one value from each group, in
+  either order (`ZA3037` for a repeat or an unknown word). `INDIRECT` sets the
+  *indirect* bit of the behavioral attributes of the ESD.
+
+GOFF: a section that uses any of these gets an ED `B_PRV` (bind MERGE, data)
+with one PR per external dummy section (name space 2, length and alignment
+of the section). The RLD items (reference/referent types follow the tables
+of *Program Management: Advanced Facilities*, appendix C):
+
+| Constant | reference | referent | R-ID | store |
+|---|---|---|---|---|
+| `Q(x)` | offset (1) | label (0) | the PR | no |
+| `J(x)` DXD, DSECT, part | length (2) | part (3) | the PR | yes |
+| `J(x)` class | length (2) | class (2) | the ED | yes |
+| `CXD` | length (2) | class (2) | the `B_PRV` ED | yes |
+| `R(x)` | R-type (7) | label (0) | the ER or LD | yes |
+
+**Not verified against an IBM object.** The documentation lists the Q
+constant as `X'1200'` (reference *address*, referent *class*); zosasm writes
+*offset/label* because the R-ID is a PR. The encodings are in one function,
+`reloc_xd` in `emit.c`, and are read back by `xcon_reloc` in `disasm.c`.
+Compare with an object assembled by IBM `as` when a z/OS system is available.
+
+`-disasm` writes the pseudo registers as `DXD` statements (alignment as a
+`0H/0F/0D` item, then `XLn`; sizes over 32767 as `nXL32768`), the constants
+as `Q(...)`, `J(...)`, `R(...)` and `CXD`. A DSECT that was used in `Q` comes
+back as a `DXD` (the object is the same). A `B_PRV` class without PRs and
+without a CXD is dropped.
 
 ## 5. Instruction table
 

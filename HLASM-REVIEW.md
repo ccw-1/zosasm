@@ -18,8 +18,8 @@ Proposed verdict is in the last column; "?" marks a question for you.
 | `CCW`, `CCW0` | 8 byte format 0 channel command word: command code, 24 bit data address, flags, count; aligned on a doubleword; the symbol gets length 8. Used by EXCP/EXCPVR I/O code. | **Do**, small: data directive, address is an A-con (24 bit). Low priority. |
 | `CCW1` | Same, format 1, 31 bit data address. | **Do** with `CCW`. |
 | `CEJECT n` | Conditional page eject in the listing. | **Skip**; accept as no-op like `EJECT` (no listing yet). |
-| `CXD` | Reserves a fullword that the binder fills with the total length of all external dummy sections (the class `B_PRV`). | **Do**, with `DXD`, `Q`, `J` (below). |
-| `DXD` | Defines an *external dummy section*: a named piece of **pseudo-register** storage (size and alignment from a DS-like operand) that the binder merges by name over all modules and allocates at run time. Referenced through `Q(name)`. In GOFF it is a PR in class `B_PRV`. This is how reentrant static storage (LE, PL/I) is assigned. | **Do** (needed to write and to reverse objects that have `B_PRV`). |
+| `CXD` | Reserves a fullword that the binder fills with the total length of all external dummy sections (the class `B_PRV`). | **Done** (DESIGN.md 4.4). |
+| `DXD` | Defines an *external dummy section*: a named piece of **pseudo-register** storage (size and alignment from a DS-like operand) that the binder merges by name over all modules and allocates at run time. Referenced through `Q(name)`. In GOFF it is a PR in class `B_PRV`. This is how reentrant static storage (LE, PL/I) is assigned. | **Done** (DESIGN.md 4.4). |
 | `EXITCTL` | Sets four parameters for user exits of the assembler. | **Skip**. |
 | `MNOTE sev,'text'` | User defined message with severity, mostly from macros and conditional assembly. | **Redo**: `ASSERT expr,'text'` (ZSYM.md 7) fails the assembly when an assembly-time condition is false, and `#error`/`#warning` already exist. No `MNOTE`. |
 | `OPSYN` | Gives an operation code another name, or deletes it (used to rename or replace instructions in macro libraries). | **Skip**; `#define` on the operation field already renames. |
@@ -38,9 +38,9 @@ Proposed verdict is in the last column; "?" marks a question for you.
 | **Dependent `USING`** | `USING RECMAP,INREC` maps a DSECT onto an area that is itself covered by another USING; no new register, the address is computed from the base of the first USING. Ends with it. | **Done**. |
 | `USING` range, `USING (a,b),reg` | Limit of the covered area (default 4096), several bases. | **Done**. |
 | Scoped `USING` | (not in HLASM) | **?** `USING ... ENDUSING`-style block as an alternative to `PUSH`/`POP`. |
-| `Q`, `QY`, `QD` constants | Offset of an external dummy section / DSECT / PART in the pseudo-register area; the binder fills it (RLD type Q). | **Do** (with `DXD`). |
-| `J`, `JD` constants | Length of a DXD/class/DSECT, filled by the binder (GOFF LEN record). | **Do** (with `DXD`; LEN records are in PLAN.md). |
-| `R` constant | Address of the PSECT (private read/write area) of a symbol, for reentrant code (`V` is the entry address, `R` the data area). | **Do**; works together with `XATTR PSECT`. |
+| `Q`, `QY`, `QD` constants | Offset of an external dummy section / DSECT / PART in the pseudo-register area; the binder fills it (RLD type Q). | **Done** (`QY` not yet). |
+| `J`, `JD` constants | Length of a DXD/class/DSECT, filled by the binder (GOFF LEN record). | **Done** (as RLD length items; LEN records not needed). |
+| `R` constant | Address of the PSECT (private read/write area) of a symbol, for reentrant code (`V` is the entry address, `R` the data area). | **Done** (DESIGN.md 4.4); `XATTR PSECT` is parsed but not written yet. |
 | `S`, `SY` constants | A base-displacement value computed from a USING (2 or 3 bytes). | **Maybe**: little use outside old code. |
 | `CU` (UTF-16), `G` (DBCS) constants | Text in other encodings. | `CU` **Do** (cheap, ZA9002 now); `G` **Skip**. |
 | Scale `S`, exponent `E` modifiers | `FS8'35.92'`, `EE3'3.414'`, fixed/float scaling. | **Do** (ZA9002 now). |

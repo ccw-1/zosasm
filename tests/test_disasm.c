@@ -182,6 +182,37 @@ static const char *const programs[] = {
     "\"P-1\"    CATTR ALIGN(3)\n"
     "         DC    F'1'\n"
     "         END   \"ent-a\"\n",
+
+    /* external dummy sections: DXD, DSECT used in Q/J, CXD, R, REFERENCE(INDIRECT) */
+    "T        CSECT\n"
+    "         ENTRY LAB\n"
+    "LAB      DS    0H\n"
+    "         DC    Q(WORK),QD(WORK),J(WORK)\n"
+    "         CXD\n"
+    "         DC    R(LAB),R(EXT1),J(DSA),Q(DSA),RD(T),QL3(WORK),JL2(WORK)\n"
+    "         EXTRN EXT1\n"
+    "WORK     DXD   CL100,F\n"
+    "DSA      DSECT\n"
+    "         DS    CL20,D\n"
+    "EXT1     XATTR REFERENCE(DATA,INDIRECT)\n"
+    "         END\n",
+
+    /* classes and parts in J and Q; DXD of several sizes; only CXD */
+    "T        CSECT\n"
+    "BIG      DXD   0D,70000X\n"
+    "NONE     DXD   0H\n"
+    "ONE      DXD   X\n"
+    "NONEL    DXD   XL0\n"
+    "P1       CATTR PART(PT),ALIGN(3)\n"
+    "         DC    F'1'\n"
+    "         DC    J(PT),Q(BIG),J(C2),J(B_TEXT),JD(ONE)\n"
+    "C2       CATTR ALIGN(3)\n"
+    "         DC    F'2'\n"
+    "         END\n",
+
+    "T        CSECT\n"
+    "         CXD\n"
+    "         END\n",
 };
 
 static void test_programs(void) {

@@ -31,6 +31,7 @@ static void apply_xattr(GoffBehavior *b, const XAttr *x) {
         else if (!strcmp(x->reference, "DATA"))
             b->executable = GOFF_EXEC_DATA;
     }
+    if (x->indirect >= 0) b->indirect = x->indirect;
 }
 
 /* the ESD item that carries the text of the class */
@@ -110,6 +111,55 @@ static const char *emit_class(GoffWriter *w, const Module *m, Section *s, Class 
     return NULL;
 }
 
+/* the pseudo register class B_PRV of a section and its pseudo registers
+ * (DXD names and DSECTs used in Q and J constants) */
+static const char *emit_prv(GoffWriter *w, const Module *m, Section *s) {
+    GoffESD ed;
+    size_t i;
+    int64_t max = 0;
+    const char *e;
+    for (i = 0; i < m->sym_order.n; i++) {
+        Symbol *sym = m->sym_order.v[i];
+        if (sym->xd && sym->xd_sect == s && sym->xd_len > max) max = sym->xd_len;
+    }
+    memset(&ed, 0, sizeof ed);
+    ed.type = GOFF_ED;
+    ed.parent = s->esd;
+    set_name(&ed, "B_PRV");
+    ed.name_space = GOFF_NS_NORMAL;
+    ed.length = (uint32_t)max;
+    ed.attr.amode = s->amode;
+    ed.attr.rmode = s->rmode;
+    ed.attr.bind_algorithm = GOFF_BIND_MERGE;
+    ed.attr.executable = GOFF_EXEC_DATA;
+    ed.attr.loading = GOFF_LOAD_NOW;
+    ed.attr.alignment = GOFF_ALIGN_DBL;
+    if ((e = goff_write_esd(w, &ed)) != NULL) return e;
+    s->prv_esd = ed.id;
+    for (i = 0; i < m->sym_order.n; i++) {
+        Symbol *sym = m->sym_order.v[i];
+        GoffESD pr;
+        uint8_t lg = 0;
+        if (!sym->xd || sym->xd_sect != s) continue;
+        while (((int64_t)1 << lg) < sym->xd_align && lg < 12) lg++;
+        memset(&pr, 0, sizeof pr);
+        pr.type = GOFF_PR;
+        pr.parent = ed.id;
+        set_name(&pr, sym->name);
+        pr.name_space = GOFF_NS_PSEUDO;
+        pr.length = (uint32_t)sym->xd_len;
+        pr.attr.amode = s->amode;
+        pr.attr.bind_algorithm = GOFF_BIND_MERGE;
+        pr.attr.executable = GOFF_EXEC_DATA;
+        pr.attr.loading = GOFF_LOAD_NOW;
+        pr.attr.alignment = lg;
+        apply_xattr(&pr.attr, sym->xattr);
+        if ((e = goff_write_esd(w, &pr)) != NULL) return e;
+        sym->esd = pr.id;
+    }
+    return NULL;
+}
+
 static void init_ld(GoffESD *ld, Section *s, const char *name, const Class *c) {
     uint8_t exec = (uint8_t)c->attr.executable;
     if (!strcmp(c->name, DEFAULT_CLASS)) exec = GOFF_EXEC_CODE;
@@ -123,6 +173,50 @@ static void init_ld(GoffESD *ld, Section *s, const char *name, const Class *c) {
     ld->attr.scope = GOFF_SCOPE_MODULE;
 }
 
+/* Q, CXD, J and R constants.  These encodings follow the reference and
+ * referent types of the GOFF documentation but have not been checked against
+ * an IBM assembler object (DESIGN.md section 5.4); keep them in this function. */
+static int reloc_xd(const Class *c, const Reloc *r, GoffReloc *g, char *err, size_t errsz) {
+    const Symbol *t = r->target;
+    switch (r->kind) {
+    case REL_CXD:
+        g->reference = GOFF_REF_LENGTH;
+        g->referent = GOFF_REFERENT_CLASS;
+        g->rid = c->sect->prv_esd;
+        g->store = 1;
+        return 1;
+    case REL_Q:
+        g->reference = GOFF_REF_OFFSET;
+        g->referent = GOFF_REFERENT_LABEL;
+        g->rid = t ? t->esd : r->cls->pr;
+        return 1;
+    case REL_LEN:
+        g->reference = GOFF_REF_LENGTH;
+        g->store = 1;
+        if (t) {
+            g->referent = GOFF_REFERENT_PART;
+            g->rid = t->esd;
+        } else if (r->cls->part) {
+            g->referent = GOFF_REFERENT_PART;
+            g->rid = r->cls->pr;
+        } else {
+            g->referent = GOFF_REFERENT_CLASS;
+            g->rid = r->cls->esd;
+        }
+        return 1;
+    default: /* REL_R */
+        g->reference = GOFF_REF_RTYPE;
+        g->referent = GOFF_REFERENT_LABEL;
+        g->store = 1;
+        g->rid = t->kind == SYM_EXT ? t->esd : t->ld_esd;
+        if (!g->rid) {
+            snprintf(err, errsz, "R-type constant: \"%s\" has no label definition", t->name);
+            return 0;
+        }
+        return 1;
+    }
+}
+
 static int reloc_item(const Class *c, const Reloc *r, GoffReloc *g, char *err, size_t errsz) {
     memset(g, 0, sizeof *g);
     g->pid = class_target(c);
@@ -130,6 +224,11 @@ static int reloc_item(const Class *c, const Reloc *r, GoffReloc *g, char *err, s
     g->length = (uint8_t)r->len;
     g->action = GOFF_ACTION_ADD;
     switch (r->kind) {
+    case REL_Q:
+    case REL_CXD:
+    case REL_LEN:
+    case REL_R:
+        return reloc_xd(c, r, g, err, errsz);
     case REL_ADDR:
     case REL_V:
         g->reference = GOFF_REF_ADDRESS;
@@ -224,7 +323,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
         Symbol *sym_ = (SYM);                                     \
         int seen_ = 0;                                            \
         size_t q_;                                                \
-        if (sym_) {                                               \
+        if (sym_ && sym_->kind == SYM_EXT) {                      \
             for (q_ = 0; q_ < er_order.n; q_++)                   \
                 if (er_order.v[q_] == sym_) seen_ = 1;            \
             if (!seen_) {                                         \
@@ -256,6 +355,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
         TRY(goff_write_esd(w, &sd));
         s->esd = sd.id;
         for (ci = 0; ci < s->classes.n; ci++) TRY(emit_class(w, m, s, s->classes.v[ci]));
+        if (s->prv) TRY(emit_prv(w, m, s));
 
         /* label definitions: the section name and ENTRY symbols */
         if (s->name[0]) {

@@ -7,12 +7,15 @@
 #include "asm.h"
 #include "ebcdic.h"
 
-#define DC_TYPES "C X B F H A Y V P Z E D L"
+#define DC_TYPES "C X B F H A Y V Q J R P Z E D L"
 
 int64_t dc_alignment(const DcSpec *sp) {
     switch (sp->typ) {
     case 'F':
     case 'A':
+    case 'Q':
+    case 'J':
+    case 'R':
         return sp->ext == 'D' ? 8 : 4;
     case 'H':
     case 'Y':
@@ -31,6 +34,9 @@ int64_t dc_deflen(const DcSpec *sp) {
     switch (sp->typ) {
     case 'F':
     case 'A':
+    case 'Q':
+    case 'J':
+    case 'R':
         return sp->ext == 'D' ? 8 : 4;
     case 'H':
     case 'Y':
@@ -143,14 +149,8 @@ int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp) {
         case 'S':
             why = "S-type address";
             break;
-        case 'Q':
-            why = "Q-type";
-            break;
         case 'G':
             why = "graphic";
-            break;
-        case 'R':
-            why = "R-type";
             break;
         }
         if (why) {
@@ -160,7 +160,7 @@ int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp) {
             return 0;
         }
     }
-    if (!strchr("CXBFHAYVPZEDL", sp->typ)) {
+    if (!strchr("CXBFHAYVQJRPZEDL", sp->typ)) {
         diag_help(dc_err(a, st, "ZA2013", o.off + (int)i, 1, "unknown constant type \"%c\"", s[i]),
                   "valid types: %s", DC_TYPES);
         return 0;
@@ -175,9 +175,15 @@ int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp) {
         } else if (sp->typ == 'C' && c == 'U') {
             dc_err(a, st, "ZA9002", o.off + (int)i, 1, "CU (UTF-16) constants are not supported yet");
             return 0;
-        } else if ((sp->typ == 'F' || sp->typ == 'A') && c == 'D') {
+        } else if ((sp->typ == 'F' || sp->typ == 'A' || sp->typ == 'Q' || sp->typ == 'J' ||
+                    sp->typ == 'R') &&
+                   c == 'D') {
             sp->ext = 'D';
             i++;
+        } else if (sp->typ == 'Q' && c == 'Y') {
+            dc_err(a, st, "ZA9002", o.off + (int)i - 1, 2,
+                   "QY (long displacement) offset constants are not supported yet");
+            return 0;
         } else if (fp && (c == 'B' || c == 'H')) {
             sp->ext = c;
             i++;
@@ -248,7 +254,7 @@ int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp) {
     }
     /* A/Y/V take parentheses, everything else quotes */
     if (sp->has_nom) {
-        int addr = sp->typ == 'A' || sp->typ == 'Y' || sp->typ == 'V';
+        int addr = strchr("AYVQJR", sp->typ) != NULL;
         if (addr && sp->quoted) {
             diag_help(dc_err(a, st, "ZA2015", sp->nom_off - 1, (int)strlen(sp->nom) + 2,
                              "%c-type values are written in parentheses", sp->typ),
@@ -587,6 +593,110 @@ static int dc_v(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
     return good;
 }
 
+/* the class named name (a class name or a part name) */
+static Class *find_class(Asm *a, const char *name) {
+    size_t i, k;
+    Section *cur = a->sect;
+    for (i = 0; i <= a->mod->sections.n; i++) {
+        Section *sec = i == 0 ? cur : a->mod->sections.v[i - 1];
+        if (!sec || sec->kind == K_DSECT) continue;
+        for (k = 0; k < sec->classes.n; k++) {
+            Class *c = sec->classes.v[k];
+            if (c->part ? !strcmp(c->part, name) : !strcmp(c->name, name)) return c;
+        }
+    }
+    return NULL;
+}
+
+/* Q (offset), J (length) and R (PSECT address) constants */
+static int dc_xd(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, DcVec *out) {
+    int n = (int)dc_deflen(sp), good = 1;
+    int big = sp->ext == 'D';
+    OperandVec items = {0};
+    size_t k;
+    if (sp->has_len) n = (int)sp->length;
+    if (sp->typ == 'Q' ? (n < 1 || n > (big ? 8 : 4))
+                       : sp->typ == 'J' ? !(n == 2 || n == 3 || n == 4 || n == 8)
+                                        : !(n == 3 || n == 4 || (big && n == 8))) {
+        diag_help(dc_err(a, st, "ZA2029", sp->off, sp->n,
+                         "a %c%s-type constant cannot be %d byte(s) long", sp->typ,
+                         big ? "D" : "", n),
+                  sp->typ == 'Q'   ? "Q is 1 to 4 bytes, QD 1 to 8"
+                  : sp->typ == 'J' ? "J and JD are 2 to 4 bytes or 8"
+                                   : "R is 3 or 4 bytes, RD 3, 4 or 8");
+        return 0;
+    }
+    split_operands(&items, sp->nom);
+    for (k = 0; k < items.n; k++) {
+        Operand it = items.v[k];
+        char *raw = str_trim(it.text), *name;
+        const char *why = NULL;
+        int tl = (int)strlen(it.text), off = sp->nom_off + it.off;
+        Symbol *s;
+        DcVal v;
+        name = sym_text(raw, &why);
+        if (!name) {
+            diag_help(dc_err(a, st, "ZA1021", off, tl, "\"%s\" is not a valid symbol name", raw),
+                      "%s", why);
+            good = 0;
+            continue;
+        }
+        memset(&v, 0, sizeof v);
+        v.b = zeros((size_t)n);
+        v.n = (size_t)n;
+        if (is_ds) {
+            vec_push(out, v);
+            continue;
+        }
+        if (a->pass == 1) {
+            if (sp->typ != 'R') {
+                XdRef r;
+                r.name = name;
+                r.sp = stmt_operand_span(st, off, tl);
+                r.sect = a->sect;
+                vec_push(&a->xdrefs, r);
+            }
+            vec_push(out, v);
+            continue;
+        }
+        s = asm_lookup(a, name);
+        v.has_rel = 1;
+        if (sp->typ == 'R') {
+            v.kind = REL_R;
+            if (!s || (s->kind != SYM_EXT && s->kind != SYM_SECT && s->kind != SYM_LABEL) ||
+                (s->kind == SYM_SECT && s->sect->kind == K_DSECT) ||
+                (s->kind == SYM_LABEL && !s->entry)) {
+                diag_help(dc_err(a, st, "ZA2060", off, tl,
+                                 "R-type constant names \"%s\", which is not an external symbol, "
+                                 "a section or an ENTRY label",
+                                 name),
+                          "R(SYMBOL) holds the PSECT address of SYMBOL (see XATTR PSECT)");
+                good = 0;
+            }
+            v.target = s;
+        } else {
+            v.kind = sp->typ == 'Q' ? REL_Q : REL_LEN;
+            if (s && (s->kind == SYM_DXD || s->xd)) {
+                v.target = s;
+            } else if (s && s->kind == SYM_SECT && s->piece && s->piece->cls->part &&
+                       !strcmp(s->piece->cls->part, name)) {
+                v.cls = s->piece->cls;
+            } else if (sp->typ == 'J' && (v.cls = find_class(a, name)) != NULL) {
+                /* the length of a class */
+            } else {
+                diag_help(dc_err(a, st, "ZA2060", off, tl,
+                                 "%c-type constant names \"%s\", which is not %s", sp->typ, name,
+                                 sp->typ == 'Q' ? "an external dummy section or part"
+                                                : "an external dummy section, part or class"),
+                          "define it with DXD, or name a DSECT or a part (CATTR ...,PART(name))");
+                good = 0;
+            }
+        }
+        vec_push(out, v);
+    }
+    return good;
+}
+
 static int dc_decimal(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
     OperandVec items = {0};
     size_t k, m;
@@ -701,6 +811,11 @@ static int dc_values(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, DcVec *vals)
     case 'V':
         ok = dc_v(a, st, sp, vals);
         break;
+    case 'Q':
+    case 'J':
+    case 'R':
+        ok = dc_xd(a, st, sp, is_ds, vals);
+        break;
     case 'P':
     case 'Z':
         ok = dc_decimal(a, st, sp, vals);
@@ -768,4 +883,73 @@ void dir_dc(Asm *a, Stmt *st) {
             }
         }
     }
+}
+
+/* DXD: an external dummy section, a pseudo register of the class B_PRV; its
+ * length and alignment are those of the DS operands (nothing is stored) */
+void dir_dxd(Asm *a, Stmt *st) {
+    OperandVec ops = {0};
+    int64_t loc = 0;
+    int64_t align = 1;
+    size_t k;
+    Symbol *s;
+    int created;
+    if (!asm_need_section(a, st)) return;
+    if (!st->name[0]) {
+        if (a->pass == 1) {
+            diag_help(rep_errorf(a->rep, "ZA2061", st->op_span, "DXD needs a name"),
+                      "write the name in column 1, for example `WORK     DXD   CL100`");
+            st->bad = 1;
+        }
+        return;
+    }
+    if (a->sect->kind == K_DSECT) {
+        if (a->pass == 1) {
+            rep_errorf(a->rep, "ZA2063", st->op_span, "DXD is not allowed in a DSECT");
+            st->bad = 1;
+        }
+        return;
+    }
+    if (!asm_ops(a, st, 1, -1, &ops)) return;
+    for (k = 0; k < ops.n; k++) {
+        DcSpec sp;
+        DcVec vals = {0};
+        int64_t total = 0, al;
+        size_t j;
+        if (!dc_parse(a, st, ops.v[k], &sp) || !dc_values(a, st, &sp, 1, &vals)) continue;
+        al = sp.has_len ? 1 : dc_alignment(&sp);
+        if (al > 1) loc += (al - loc % al) % al;
+        if (al > align) align = al;
+        for (j = 0; j < vals.n; j++) total += (int64_t)vals.v[j].n;
+        loc += total * sp.dup;
+    }
+    if (a->pass != 1 || st->bad) return;
+    if (!asm_valid_stmt_name(st)) {
+        rep_errorf(a->rep, "ZA1021", st->name_span, "\"%s\" is not a valid symbol name", st->name);
+        st->bad = 1;
+        return;
+    }
+    s = asm_define(a, st, st->name, st->name_span, &created);
+    if (!created) return;
+    s->kind = SYM_DXD;
+    s->len = 1;
+    s->xd = 1;
+    s->xd_len = loc;
+    s->xd_align = (int)align;
+    s->xd_sect = a->sect;
+    s->sect = a->sect;
+    a->sect->prv = 1;
+}
+
+/* CXD: a fullword for the total length of the external dummy sections */
+void dir_cxd(Asm *a, Stmt *st) {
+    OperandVec ops = {0};
+    static const uint8_t zero[4];
+    if (!asm_need_section(a, st)) return;
+    if (!asm_ops(a, st, 0, 0, &ops)) return;
+    asm_align(a, 4);
+    asm_define_label(a, st, 4, 'F');
+    asm_reloc(a, 4, NULL, NULL, REL_CXD);
+    asm_put(a, zero, 4);
+    if (a->pass == 1) a->sect->prv = 1;
 }

@@ -39,7 +39,8 @@ Status key: [x] done, [-] in progress, [ ] open.
 - [ ] `XATTR`: LINKAGE(OS|XPLINK), SCOPE(SECTION|MODULE|LIBRARY|EXPORT|IMPORT),
       REFERENCE(CODE|DATA), DATAREFERENCE, PSECT, DEFLOAD, ...
 - [x] quoted symbols `"any name"` replace HLASM `ALIAS` (DESIGN.md 2; `-disasm` uses them)
-- [ ] `COM` details, `DXD`/`CXD`, deferred lengths (LEN record),
+- [x] `DXD`/`CXD`, `Q`/`J`/`R` constants, `REFERENCE(...,INDIRECT)` (DESIGN.md 4.4; RLD encodings unverified)
+- [ ] `COM` details, deferred lengths (LEN record), `QY`, XATTR `ATTRIBUTES`/`PSECT` output,
       XPLINK call descriptors, `B_IDRL` ident record
 - [ ] END with entry point by name / ESDID+offset
 
@@ -47,7 +48,7 @@ Status key: [x] done, [-] in progress, [ ] open.
 
 - [ ] ZSYM: symbolic information in a NOLOAD ADATA class, smart `-disasm` (ZSYM.md)
 - [x] labeled and dependent USING, USING ranges, qualified symbols (DESIGN.md 4.3)
-- [ ] HLASM feature review verdicts (HLASM-REVIEW.md): DXD/CXD/Q/J,
+- [ ] HLASM feature review verdicts (HLASM-REVIEW.md): (DXD/CXD/Q/J/R done),
       scale/exponent, A(X-Y), R, CCW, `sizeof`, `ASSERT`
 
 ## Phase 3 - quality

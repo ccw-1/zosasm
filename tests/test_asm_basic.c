@@ -320,7 +320,7 @@ static void test_diag_codes(void) {
         {"missing nominal", "T CSECT\n DC F\n", "ZA2018"},
         {"unterminated quote", "T CSECT\n DC C'AB\n", "ZA0002"},
         {"unknown dc type", "T CSECT\n DC K'1'\n", "ZA2013"},
-        {"unsupported dc type", "T CSECT\n DC Q(1)\n", "ZA9002"},
+        {"unsupported dc type", "T CSECT\n DC S(1)\n", "ZA9002"},
         {"literal without base", "T CSECT\n L 1,=F'1'\n", "ZA2030"},
         {"label with no op", "T CSECT\nFOO\n", "ZA0001"},
         {"odd branch", "T CSECT\n J *+3\n", "ZA2045"},

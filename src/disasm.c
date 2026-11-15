@@ -21,6 +21,7 @@
 
 #define PRIV_NAME "$PRIV000000"
 #define DEFAULT_CLASS "B_TEXT"
+#define PRV_CLASS "B_PRV"
 #define MAX_CLASS_LEN 0x4000000u /* 64 MiB: a limit of the converter */
 
 typedef struct DSect DSect;
@@ -35,8 +36,17 @@ typedef struct {
 } DEr;
 
 typedef struct {
+    const GoffESD *esd;
+    char *name;
+    int64_t len;
+    int align; /* bytes */
+} DPr;
+
+typedef struct {
     int64_t off;
     int len;
+    char xk;      /* Q, J, R or X (CXD) constant, else 0 */
+    char *xname;  /* Q, J, R: the name written in the constant */
     int ri;       /* relative-immediate field, else A/V constant */
     DEr *er;      /* external target, or */
     DClass *cls;  /* class target */
@@ -89,11 +99,13 @@ struct DSect {
     const GoffESD *sd;
     const GoffESD *ld;
     int common;
+    Vec(DPr *) prs; /* pseudo registers of the class B_PRV (DXD) */
     Vec(DClass *) classes;
 };
 
 typedef struct {
-    char kind; /* S section, C class (ED or PR), L label, E external */
+    char kind; /* S section, C class (ED or PR), L label, E external,
+                  V class B_PRV (p = section), P pseudo register (p = DPr) */
     void *p;
     int64_t off; /* L */
     DClass *cls; /* L */
@@ -181,11 +193,19 @@ static int load_esds(Ctx *x) {
             break;
         }
         case GOFF_ED: {
-            DClass *c = xcalloc(sizeof *c);
+            DClass *c;
             DSect *s;
+            char *nm;
             if (e->parent == 0 || e->parent > m->esds.n || x->by_id[e->parent].kind != 'S')
                 return failf(x, "ESD %u: element without a section", id);
             s = x->by_id[e->parent].p;
+            nm = ebcdic_decode(e->name, e->name_len);
+            if (!strcmp(nm, PRV_CLASS)) {
+                x->by_id[id].kind = 'V';
+                x->by_id[id].p = s;
+                break;
+            }
+            c = xcalloc(sizeof *c);
             c->idx = x->classes.n;
             c->sect = s;
             c->ed = e;
@@ -198,7 +218,21 @@ static int load_esds(Ctx *x) {
             break;
         }
         case GOFF_PR: {
-            DClass *c = class_of(x, e->parent);
+            DClass *c;
+            if (e->parent && e->parent <= m->esds.n && x->by_id[e->parent].kind == 'V') {
+                DPr *p = xcalloc(sizeof *p);
+                DSect *s = x->by_id[e->parent].p;
+                p->esd = e;
+                p->name = src_name(x, e, "pseudo register");
+                if (!p->name) return 0;
+                p->len = e->length;
+                p->align = 1 << (e->attr.alignment > 12 ? 12 : e->attr.alignment);
+                vec_push(&s->prs, p);
+                x->by_id[id].kind = 'P';
+                x->by_id[id].p = p;
+                break;
+            }
+            c = class_of(x, e->parent);
             if (!c || c->pr) return failf(x, "ESD %u: part without a class", id);
             c->pr = e;
             c->part = src_name(x, e, "part");
@@ -343,6 +377,63 @@ static int load_labels(Ctx *x) {
 
 static void note_taken(Ctx *x, const char *name) { strmap_put(&x->taken, name, (void *)x); }
 
+/* Q, CXD, J and R constants (the encodings of reloc_xd in emit.c).  Returns
+ * 1 and fills d when r is one of them, else 0. */
+static int xcon_reloc(Ctx *x, const GoffReloc *r, DRel *d) {
+    const GoffModule *m = x->m;
+    const IdInfo *t = r->rid && r->rid <= m->esds.n ? &x->by_id[r->rid] : NULL;
+    const GoffESD *te = t ? m->esds.v[r->rid - 1] : NULL;
+    int n = r->length;
+    char k = 0;
+    char *name = NULL;
+    DEr *er = NULL;
+    if (!t || r->reference == GOFF_REF_ADDRESS || r->reference == GOFF_REF_RELIMM) return 0;
+    if (r->reference == GOFF_REF_OFFSET && r->referent == GOFF_REFERENT_LABEL && !r->store &&
+        n >= 1 && n <= 8) {
+        if (t->kind == 'P') {
+            k = 'Q';
+            name = ((DPr *)t->p)->name;
+        } else if (t->kind == 'C' && te->type == GOFF_PR) {
+            k = 'Q';
+            name = ((DClass *)t->p)->part;
+        }
+    } else if (r->reference == GOFF_REF_LENGTH && r->store && (n == 2 || n == 3 || n == 4 || n == 8)) {
+        if (r->referent == GOFF_REFERENT_PART && t->kind == 'P') {
+            k = 'J';
+            name = ((DPr *)t->p)->name;
+        } else if (r->referent == GOFF_REFERENT_PART && t->kind == 'C' && te->type == GOFF_PR) {
+            k = 'J';
+            name = ((DClass *)t->p)->part;
+        } else if (r->referent == GOFF_REFERENT_CLASS && t->kind == 'C' && te->type == GOFF_ED &&
+                   !((DClass *)t->p)->part) {
+            k = 'J';
+            name = ((DClass *)t->p)->name;
+        } else if (r->referent == GOFF_REFERENT_CLASS && t->kind == 'V' && n == 4 &&
+                   r->offset % 4 == 0) {
+            k = 'X';
+        }
+    } else if (r->reference == GOFF_REF_RTYPE && r->referent == GOFF_REFERENT_LABEL && r->store &&
+               (n == 3 || n == 4 || n == 8)) {
+        if (t->kind == 'E') {
+            k = 'R';
+            er = t->p;
+            name = er->name;
+        } else if (t->kind == 'L') {
+            k = 'R';
+            name = src_name(x, te, "label");
+            if (!name) return 0;
+        }
+    }
+    if (!k) return 0;
+    memset(d, 0, sizeof *d);
+    d->er = er;
+    d->off = r->offset;
+    d->len = n;
+    d->xk = k;
+    d->xname = name;
+    return 1;
+}
+
 static int load_relocs(Ctx *x) {
     const GoffModule *m = x->m;
     size_t i, b;
@@ -351,10 +442,27 @@ static int load_relocs(Ctx *x) {
         DClass *c = class_of(x, r->pid);
         DRel d;
         int n = r->length, ri = r->reference == GOFF_REF_RELIMM;
+        int xk;
         const IdInfo *t;
         if (!c) {
             warnf(x, "relocation in ESD %u is ignored (not a class)", r->pid);
             continue;
+        }
+        xk = r->action == GOFF_ACTION_ADD && !r->bit_length && !r->bit_offset && !r->cond_seq &&
+             xcon_reloc(x, r, &d);
+        if (xk) {
+            if ((uint64_t)r->offset + (uint64_t)n > c->len) {
+                warnf(x, "relocation at %s+%u is outside the class and is ignored", c->name, r->offset);
+                continue;
+            }
+            for (b = 0; b < (size_t)n; b++)
+                if (c->occ[r->offset + b]) break;
+            if (b < (size_t)n) {
+                warnf(x, "overlapping relocations at %s+%u; the later one is ignored", c->name,
+                      r->offset);
+                continue;
+            }
+            goto push;
         }
         if (r->action != GOFF_ACTION_ADD || r->bit_length || r->bit_offset || r->cond_seq ||
             (r->reference != GOFF_REF_ADDRESS && !ri)) {
@@ -409,6 +517,7 @@ static int load_relocs(Ctx *x) {
                 }
             }
         }
+    push:
         if (c->nrels == c->caprels) {
             c->caprels = c->caprels ? c->caprels * 2 : 16;
             c->rels = xrealloc(c->rels, c->caprels * sizeof *c->rels);
@@ -722,11 +831,17 @@ static void xattr_stmt(Ctx *x, const char *name, const GoffBehavior *b, int def_
             warnf(x, "scope %d of %s cannot be written", b->scope, name);
     }
     if (b->linkage == GOFF_LINKAGE_XPLINK) buf_printf(&ops, "%sLINKAGE(XPLINK)", ops.len ? "," : "");
-    if (b->executable != def_exec) {
-        if (b->executable == GOFF_EXEC_CODE)
-            buf_printf(&ops, "%sREFERENCE(CODE)", ops.len ? "," : "");
-        else if (b->executable == GOFF_EXEC_DATA)
-            buf_printf(&ops, "%sREFERENCE(DATA)", ops.len ? "," : "");
+    {
+        const char *ref = NULL;
+        if (b->executable != def_exec) {
+            if (b->executable == GOFF_EXEC_CODE)
+                ref = "CODE";
+            else if (b->executable == GOFF_EXEC_DATA)
+                ref = "DATA";
+        }
+        if (ref || b->indirect)
+            buf_printf(&ops, "%sREFERENCE(%s%s%s)", ops.len ? "," : "", ref ? ref : "",
+                       ref && b->indirect ? "," : "", b->indirect ? "INDIRECT" : "");
     }
     if (ops.len) stmt(&x->out, name, "XATTR", buf_cstr(&ops));
 }
@@ -822,9 +937,32 @@ static int safe_char(unsigned char b) {
            ch == ')';
 }
 
+/* Q, J, R constants and CXD */
+static void emit_xcon(Ctx *x, const DRel *r, const char *label) {
+    char *o2;
+    if (r->xk == 'X') {
+        stmt(&x->out, label, "CXD", NULL);
+        return;
+    }
+    if (r->len == 8)
+        o2 = xasprintf("%cD(%s)", r->xk, r->xname);
+    else if (r->len == 4)
+        o2 = xasprintf("%c(%s)", r->xk, r->xname);
+    else if (r->len > 4)
+        o2 = xasprintf("%cDL%d(%s)", r->xk, r->len, r->xname);
+    else
+        o2 = xasprintf("%cL%d(%s)", r->xk, r->len, r->xname);
+    stmt(&x->out, label, "DC", o2);
+    free(o2);
+}
+
 static void emit_adcon(Ctx *x, const DRel *r, const char *label) {
     Buf ops = {0};
     char *o2;
+    if (r->xk) {
+        emit_xcon(x, r, label);
+        return;
+    }
     if (r->er) {
         buf_puts(&ops, r->er->name);
         if (!r->vcon) addend_text(&ops, r->val);
@@ -956,6 +1094,19 @@ static void cattr_stmt(Ctx *x, DClass *c, uint8_t sect_rmode) {
     stmt(&x->out, c->name, "CATTR", buf_cstr(&ops));
 }
 
+/* DXD: the alignment as a zero length item, then the length */
+static void emit_dxd(Ctx *x, const DPr *p) {
+    Buf ops = {0};
+    int64_t big = p->len / 32768, rest = p->len % 32768;
+    const char *al = p->align <= 1 ? NULL : p->align == 2 ? "H" : p->align == 4 ? "F" : "D";
+    if (p->align > 8)
+        warnf(x, "the alignment %d of %s is written as 8", p->align, p->name);
+    if (al) buf_printf(&ops, "0%s", al);
+    if (big) buf_printf(&ops, "%s%lldXL32768", ops.len ? "," : "", (long long)big);
+    if (rest || (!big && !al)) buf_printf(&ops, "%sXL%lld", ops.len ? "," : "", (long long)rest);
+    stmt(&x->out, p->name, "DXD", buf_cstr(&ops));
+}
+
 static void emit_section(Ctx *x, DSect *s, size_t sect_idx) {
     DClass *first = s->classes.n ? s->classes.v[0] : NULL;
     const char *op = s->common ? "COM" : "CSECT";
@@ -980,6 +1131,7 @@ static void emit_section(Ctx *x, DSect *s, size_t sect_idx) {
         for (k = 0; k < c->names.n; k++)
             if (!c->names.v[k].sect) stmt(&x->out, NULL, "ENTRY", c->names.v[k].name);
     }
+    for (i = 0; i < s->prs.n; i++) emit_dxd(x, s->prs.v[i]);
     for (i = 0; i < x->ers.n; i++) {
         DEr *er = x->ers.v[i];
         if (er->sect != s || !er->used) continue;
@@ -1023,6 +1175,8 @@ char *disasm_module(const GoffModule *m, FILE *warn, int *nwarn, char *err, size
     for (i = 0; i < x.sects.n; i++)
         if (x.sects.v[i]->name) note_taken(&x, x.sects.v[i]->name);
     for (i = 0; i < x.ers.n; i++) note_taken(&x, x.ers.v[i]->name);
+    for (i = 0; i < x.sects.n; i++)
+        for (k = 0; k < x.sects.v[i]->prs.n; k++) note_taken(&x, x.sects.v[i]->prs.v[k]->name);
     for (i = 0; i < x.classes.n; i++) {
         DClass *c = x.classes.v[i];
         if (c->part) note_taken(&x, c->part);

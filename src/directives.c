@@ -401,6 +401,7 @@ void dir_xattr(Asm *a, Stmt *st) {
     x->name = st->name;
     x->attr.linkage = -1;
     x->attr.scope = -1;
+    x->attr.indirect = -1;
     x->attr.def = stmt_span(st);
     parse_attrs(a, st, &ops, &ats);
     for (i = 0; i < ats.n; i++) {
@@ -441,17 +442,36 @@ void dir_xattr(Asm *a, Stmt *st) {
             }
             x->attr.scope = sc;
         } else if (!strcmp(at->key, "REFERENCE")) {
-            char *r;
-            if (!want_args(a, st, at, 1, "REFERENCE(CODE|DATA)")) continue;
-            r = za_strupper(at->args.v[0]);
-            if (strcmp(r, "CODE") && strcmp(r, "DATA")) {
-                diag_help(rep_errorf(a->rep, "ZA3037", at->asp.v[0], "invalid REFERENCE \"%s\"",
-                                     at->args.v[0]),
-                          "use CODE or DATA");
-                st->bad = 1;
+            size_t k;
+            if (at->args.n < 1 || at->args.n > 2) {
+                want_args(a, st, at, 1, "REFERENCE(CODE|DATA[,DIRECT|INDIRECT])");
                 continue;
             }
-            x->attr.reference = r;
+            for (k = 0; k < at->args.n; k++) {
+                char *r = za_strupper(at->args.v[k]);
+                if (!strcmp(r, "CODE") || !strcmp(r, "DATA")) {
+                    if (x->attr.reference) {
+                        rep_errorf(a->rep, "ZA3037", at->asp.v[k],
+                                   "REFERENCE names CODE or DATA twice");
+                        st->bad = 1;
+                    } else {
+                        x->attr.reference = r;
+                    }
+                } else if (!strcmp(r, "DIRECT") || !strcmp(r, "INDIRECT")) {
+                    if (x->attr.indirect >= 0) {
+                        rep_errorf(a->rep, "ZA3037", at->asp.v[k],
+                                   "REFERENCE names DIRECT or INDIRECT twice");
+                        st->bad = 1;
+                    } else {
+                        x->attr.indirect = r[0] == 'I';
+                    }
+                } else {
+                    diag_help(rep_errorf(a->rep, "ZA3037", at->asp.v[k],
+                                         "invalid REFERENCE \"%s\"", at->args.v[k]),
+                              "use CODE or DATA, and DIRECT or INDIRECT");
+                    st->bad = 1;
+                }
+            }
         } else if (!strcmp(at->key, "PSECT")) {
             if (want_args(a, st, at, 1, "PSECT(name)")) x->attr.psect = at->args.v[0];
         } else {

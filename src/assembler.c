@@ -34,8 +34,8 @@ typedef struct {
 
 static const DirEntry directive_tab[] = {
     {"AMODE", dir_mode},   {"CATTR", dir_cattr},   {"CNOP", dir_cnop},   {"COM", dir_section},
-    {"COPY", dir_copy},    {"CSECT", dir_section}, {"DC", dir_dc},       {"DROP", dir_drop},
-    {"DS", dir_dc},        {"DSECT", dir_section}, {"EJECT", dir_ignore}, {"END", dir_end},
+    {"COPY", dir_copy},    {"CSECT", dir_section}, {"CXD", dir_cxd},   {"DC", dir_dc},       {"DROP", dir_drop},
+    {"DS", dir_dc},        {"DSECT", dir_section}, {"DXD", dir_dxd},     {"EJECT", dir_ignore}, {"END", dir_end},
     {"ENTRY", dir_entry},  {"EQU", dir_equ},      {"EXTRN", dir_extrn}, {"ICTL", dir_ignore},
     {"ISEQ", dir_ignore},  {"LOCTR", dir_loctr},  {"LTORG", dir_ltorg}, {"ORG", dir_org},
     {"PRINT", dir_ignore}, {"PUNCH", dir_ignore}, {"RMODE", dir_mode},  {"RSECT", dir_section},
@@ -340,6 +340,14 @@ static int sym_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
     case SYM_SECT:
         *out = asm_addr_value(a, s->piece, 0);
         return 1;
+    case SYM_DXD:
+        diag_help(rep_errorf(a->rep, "ZA2062", x->sp,
+                             "\"%s\" is an external dummy section and has no address",
+                             x->name),
+                  "use it in a Q-type constant, Q(%s), to get its offset, or J(%s) for its length",
+                  x->name, x->name);
+        st->bad = 1;
+        return 0;
     }
     return 0;
 }
@@ -531,6 +539,7 @@ void asm_advance(Asm *a, int64_t n) {
 
 void asm_align(Asm *a, int64_t n) {
     if (!a->cur || n <= 1) return;
+    if (n > a->cur->cls->sect->max_align) a->cur->cls->sect->max_align = (int)n;
     asm_advance(a, (n - a->cur->loc % n) % n);
 }
 
@@ -581,6 +590,8 @@ static Value relayout(Value v) {
     return r;
 }
 
+static void resolve_xd(Asm *a);
+
 static void layout(Asm *a) {
     size_t si, ci, pi;
     for (si = 0; si < a->mod->sections.n; si++) {
@@ -611,6 +622,32 @@ static void layout(Asm *a) {
     for (si = 0; si < a->mod->sym_order.n; si++) {
         Symbol *s = a->mod->sym_order.v[si];
         if (s->kind == SYM_REL) s->val = relayout(s->val);
+    }
+    resolve_xd(a);
+    /* ENTRY labels are known to pass 2 (R-type constants need them) */
+    for (si = 0; si < a->entries.n; si++) {
+        Symbol *s = asm_lookup(a, a->entries.v[si].name);
+        if (s && (s->kind == SYM_LABEL || s->kind == SYM_SECT)) s->entry = 1;
+    }
+}
+
+/* DSECTs named in Q and J constants become external dummy sections */
+static void resolve_xd(Asm *a) {
+    size_t i;
+    for (i = 0; i < a->xdrefs.n; i++) {
+        XdRef *r = &a->xdrefs.v[i];
+        Symbol *s = asm_lookup(a, r->name);
+        Section *d;
+        if (!s || s->kind != SYM_SECT || !s->sect || s->sect->kind != K_DSECT) continue;
+        if (!r->sect || r->sect->kind == K_DSECT) continue;
+        d = s->sect;
+        if (!s->xd) {
+            s->xd = 1;
+            s->xd_sect = r->sect;
+            s->xd_len = d->classes.v[0]->len;
+            s->xd_align = d->max_align > 1 ? d->max_align : 1;
+            if (r->sect) r->sect->prv = 1;
+        }
     }
 }
 
