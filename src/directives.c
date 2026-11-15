@@ -633,6 +633,67 @@ void dir_equ(Asm *a, Stmt *st) {
     }
 }
 
+/* ASSERT condition[,'message']: the assembly fails when the condition is 0.
+ * It is checked in pass 2, so sizes and forward references can be used. */
+void dir_assert(Asm *a, Stmt *st) {
+    OperandVec ops = {0};
+    Expr *e;
+    Value v;
+    char *msg = NULL;
+    if (!asm_ops(a, st, 1, 2, &ops)) return;
+    if (a->pass == 1 && st->name[0]) {
+        diag_help(rep_errorf(a->rep, "ZA1053", st->name_span, "ASSERT cannot have a name"),
+                  "remove the name; the statement defines nothing");
+        st->bad = 1;
+        return;
+    }
+    e = asm_expr(a, st, ops.v[0]);
+    if (!e) return;
+    if (ops.n == 2) {
+        char *t = str_trim(ops.v[1].text);
+        size_t n = strlen(t), i;
+        Buf b = {0};
+        int ok = n >= 2 && t[0] == '\'' && t[n - 1] == '\'';
+        for (i = 1; ok && i + 1 < n; i++) {
+            if (t[i] == '\'') {
+                if (i + 2 < n && t[i + 1] == '\'')
+                    i++;
+                else
+                    ok = 0;
+            }
+            if (ok) buf_putc(&b, t[i]);
+        }
+        if (!ok) {
+            if (a->pass == 1) {
+                diag_help(rep_errorf(a->rep, "ZA1051", asm_op_span(st, ops.v[1]),
+                                     "the ASSERT message must be a quoted text"),
+                          "for example: ASSERT sizeof(S)<=256,'S does not fit in 256 bytes'");
+                st->bad = 1;
+            }
+            return;
+        }
+        msg = xstrdup(buf_cstr(&b));
+    }
+    if (a->pass == 1) return;
+    if (!asm_eval(a, st, e, 1, &v)) return;
+    if (!value_is_abs(&v)) {
+        diag_label(rep_errorf(a->rep, "ZA1013", e->sp,
+                              "the ASSERT condition must be an absolute value"),
+                   "this is a relocatable address");
+        st->bad = 1;
+        return;
+    }
+    if (v.abs == 0) {
+        Span sp = asm_op_span(st, ops.v[0]);
+        if (msg)
+            diag_help(rep_errorf(a->rep, "ZA1052", sp, "assertion failed: %s", msg),
+                      "the condition was: %s", ops.v[0].text);
+        else
+            rep_errorf(a->rep, "ZA1052", sp, "assertion failed: %s", ops.v[0].text);
+        st->bad = 1;
+    }
+}
+
 void dir_org(Asm *a, Stmt *st) {
     OperandVec ops = {0};
     Expr *e;

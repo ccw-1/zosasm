@@ -144,6 +144,8 @@ struct Symbol {
     int64_t off;  /* offset in piece (SYM_LABEL) */
     Value val;    /* SYM_ABS, SYM_REL */
     int64_t len;  /* length attribute */
+    int64_t count; /* SYM_LABEL: number of items of the first DC/DS operand (countof) */
+    int align;     /* SYM_LABEL: alignment of the item in bytes (alignof) */
     char type;    /* type attribute (C, X, F, ...), 0 = U */
     int scale;    /* scale attribute */
     size_t def_idx; /* index of the defining statement */
@@ -277,7 +279,7 @@ int asm_valid_stmt_name(const Stmt *st);
 
 /* ---- expressions ----------------------------------------------------- */
 
-typedef enum { EX_NUM, EX_SYM, EX_LOC, EX_ATTR, EX_BIN, EX_UN } ExprKind;
+typedef enum { EX_NUM, EX_SYM, EX_LOC, EX_ATTR, EX_BIN, EX_UN, EX_FUNC } ExprKind;
 
 struct Expr {
     ExprKind kind;
@@ -287,13 +289,16 @@ struct Expr {
     char *qual; /* USING label of a qualified symbol (LABEL.NAME), else NULL */
     char attr;  /* 'L', 'T', ... */
     int loc;    /* L'* */
-    char op;    /* EX_BIN, EX_UN */
+    char op;    /* EX_BIN, EX_UN; EX_FUNC: 's' sizeof, 'o' offsetof, 'a' alignof, 'c' countof */
     Expr *l, *r;
 };
 
 /* Parse text (an operand or part of one); off is its offset in
  * st->operands for diagnostics. Returns NULL after reporting an error. */
 Expr *parse_expr(Stmt *st, const char *text, int off, Reporter *rep);
+/* the built-in functions sizeof, offsetof, alignof and countof: n bytes at s
+ * (not followed by a quote) name one */
+int expr_is_func_name(const char *s, size_t n);
 /* short description of e for messages */
 char *expr_describe(const Expr *e);
 
@@ -343,6 +348,17 @@ typedef struct {
 
 typedef Vec(XdRef) XdRefVec;
 
+/* sizeof or alignof of a DSECT used in pass 1: the value must still be right
+ * when the DSECT is complete */
+typedef struct {
+    Section *sect;
+    char fn; /* 's' or 'a' */
+    int64_t val;
+    Span sp;
+} FuncUse;
+
+typedef Vec(FuncUse) FuncUseVec;
+
 typedef struct {
     char *key;  /* operand text including '=' */
     char *name; /* generated label */
@@ -378,6 +394,7 @@ struct Asm {
     PoolVec pools;
     int pool_no;
     XdRefVec xdrefs;  /* names used by Q and J constants, resolved after pass 1 */
+    FuncUseVec fuses; /* sizeof/alignof of DSECTs seen in pass 1 */
     size_t cur_idx;   /* index of the statement being assembled */
     int64_t star_len; /* L'* of the current statement, 0 = unknown */
     Piece *pool_piece; /* the literal pool of END was written here, from pool_loc (ZSYM) */
@@ -395,7 +412,8 @@ typedef void (*Handler)(Asm *a, Stmt *st);
 /* assembler.c */
 Symbol *asm_lookup(Asm *a, const char *name);
 Symbol *asm_define(Asm *a, Stmt *st, const char *name, Span sp, int *created);
-void asm_define_label(Asm *a, Stmt *st, int64_t length, char typ);
+/* returns the new symbol in pass 1 (count 1, alignment 1), else NULL */
+Symbol *asm_define_label(Asm *a, Stmt *st, int64_t length, char typ);
 int asm_valid_name(const char *n);
 /* name is the label of an active labeled USING */
 int asm_using_label_active(Asm *a, const char *name);
@@ -426,6 +444,7 @@ void dir_mode(Asm *a, Stmt *st);
 void dir_entry(Asm *a, Stmt *st);
 void dir_extrn(Asm *a, Stmt *st);
 void dir_equ(Asm *a, Stmt *st);
+void dir_assert(Asm *a, Stmt *st);
 void dir_org(Asm *a, Stmt *st);
 void dir_cnop(Asm *a, Stmt *st);
 void dir_end(Asm *a, Stmt *st);

@@ -66,4 +66,4 @@ preprocessor `__COUNTER__`, `__BASE_FILE__`, `__INCLUDE_LEVEL__`,
 3. Labeled and dependent `USING`: changes how ZSYM records USING, so do it
    before Z1 writes its format.
 4. Scale/exponent modifiers, `CU`, `A(X-Y)` (SUB), `R`, `CCW*`.
-5. `sizeof` family and `ASSERT` (Z3).
+5. `sizeof` family and `ASSERT` (Z3) - **done**, DESIGN.md 12.

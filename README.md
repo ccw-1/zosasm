@@ -25,8 +25,15 @@ build/zosasm -E prog.za                     # show the preprocessed source
 ```
 
 Options: `-o FILE`, `-DNAME[=VAL]`, `-Idir`, `-E`, `-dump FILE`,
-`-disasm FILE`, `-generic`, `-gz0`, `-gz1`, `-color`,
-`-max-errors N`, `-Werror`. Source files use the extension `.za`.
+`-disasm FILE`, `-generic`, `-gz0`, `-gz1`, `-reproducible`, `-version`,
+`-color`, `-max-errors N`, `-Werror`. Source files use the extension `.za`.
+
+Assembly time helpers (DESIGN.md sections 8 and 12): `sizeof(x)`,
+`offsetof(S,f)`, `alignof(x)`, `countof(x)`, comparisons (`==  <  &&  !` ...),
+`ASSERT sizeof(S)<=256,'S is too big'`, and the preprocessor names
+`__COUNTER__`, `__BASE_FILE__`, `__INCLUDE_LEVEL__`, `__ZASM_VERSION__`,
+`__DATE__`, `__TIME__` (`SOURCE_DATE_EPOCH`, `-reproducible`) with the
+stringify operator `#(x)`.
 
 By default the object carries ZSYM (`-gz1`): symbols, EQUs and the operands
 of every statement in a NOLOAD class `C_ADATAE9C1` that the loader ignores

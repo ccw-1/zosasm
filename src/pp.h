@@ -12,6 +12,9 @@
 typedef struct {
     Vec(const char *) include_dirs; /* -I */
     Vec(const char *) defines;      /* -D: "NAME", "NAME=value", "NAME(a,b)=text" */
+    int reproducible;               /* -reproducible: no unstable built-ins (__DATE__ needs a fixed time) */
+    int has_epoch;                  /* epoch is the time for __DATE__ and __TIME__ */
+    int64_t epoch;                  /* seconds since 1970-01-01 UTC; else SOURCE_DATE_EPOCH, else the clock */
 } PpOptions;
 
 /* Preprocess text (the contents of file) and append the resulting lines to

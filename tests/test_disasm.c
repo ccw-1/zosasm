@@ -216,6 +216,18 @@ static const char *const programs[] = {
     "T        CSECT\n"
     "         CXD\n"
     "         END\n",
+    /* built-in functions, comparisons and ASSERT */
+    "S        DSECT\n"
+    "A        DS    F\n"
+    "B        DS    4CL10\n"
+    "SLEN     EQU   sizeof(S)\n"
+    "M        CSECT\n"
+    "         ASSERT sizeof(S)==44&&alignof(S)>=4,'S layout'\n"
+    "         LHI   1,sizeof(S)\n"
+    "         LA    2,offsetof(S,B)(3)\n"
+    "         LHI   4,countof(B)\n"
+    "SZ       DC    A(sizeof(M),SLEN)\n"
+    "         END\n",
 };
 
 static uint32_t zsym_esd(const GoffModule *g) {

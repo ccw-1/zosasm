@@ -607,10 +607,13 @@ static AddrOp split_addr(Operand o) {
             if (j >= 0) i = (size_t)j;
             break;
         }
-        case '(':
-            if (depth == 0) cand = (long)i;
+        case '(': {
+            size_t w = i;
+            while (w > 0 && is_sym_char((unsigned char)t[w - 1])) w--;
+            if (depth == 0 && !expr_is_func_name(t + w, i - w)) cand = (long)i;
             depth++;
             break;
+        }
         case ')':
             depth--;
             break;
@@ -1056,7 +1059,10 @@ void asm_instr(Asm *a, Stmt *st) {
     if (!asm_need_section(a, st)) return;
     asm_align(a, 2);
     a->star_len = in->length;
-    asm_define_label(a, st, in->length, 'I');
+    {
+        Symbol *ls = asm_define_label(a, st, in->length, 'I');
+        if (ls) ls->align = 2;
+    }
     if (st->bad) {
         asm_advance(a, in->length);
         return;

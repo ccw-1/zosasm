@@ -9,17 +9,21 @@
 #include "disasm.h"
 #include "goff.h"
 #include "pp.h"
+#include "version.h"
 #include "ebcdic.h"
 #include "zsym.h"
 
 static void usage(FILE *f) {
-    fprintf(f, "usage: zosasm [-o out.o] [-gz0|-gz1] [-DNAME[=val]] [-Idir] [-E] [-color] [-Werror] [-max-errors N] source.za\n"
+    fprintf(f, "usage: zosasm [-o out.o] [-gz0|-gz1] [-DNAME[=val]] [-Idir] [-E] [-reproducible] [-color] [-Werror] [-max-errors N] source.za\n"
                "       zosasm -dump file.o\n"
                "       zosasm [-o out.za] -disasm file.o\n"
                "  -o FILE         output object file (default: input with .o)\n"
                "  -DNAME[=VAL]    define a preprocessor macro (default value 1)\n"
                "  -Idir           search dir for #include files\n"
                "  -E              print the preprocessed source and stop\n"
+               "  -reproducible   fail on anything that changes between runs (__DATE__ and __TIME__\n"
+               "                  need SOURCE_DATE_EPOCH)\n"
+               "  -version        print the version\n"
                "  -dump FILE      print the structure of a GOFF object file and exit\n"
                "  -disasm FILE    convert a GOFF object back to source (stdout or -o)\n"
                "  -gz0|-gz1       symbolic object information (ZSYM) in the object: none | symbols and\n"
@@ -182,6 +186,11 @@ int main(int argc, char **argv) {
             vec_push(&ppo.include_dirs, a[2] ? a + 2 : argv[++i]);
         } else if (!strcmp(a, "-E")) {
             only_pp = 1;
+        } else if (!strcmp(a, "-reproducible")) {
+            ppo.reproducible = 1;
+        } else if (!strcmp(a, "-version")) {
+            printf("zosasm %s\n", ZASM_VERSION_STR);
+            return 0;
         } else if (!strcmp(a, "-generic")) {
             generic = 1;
         } else if (!strcmp(a, "-gz0")) {

@@ -202,8 +202,11 @@ assembly time, recorded as `CALL` nodes, written back as such by `-disasm`.
   make objects differ between builds; they are off with `-reproducible`).
   Position-dependent values (`__LINE__`) turn into plain numbers in the
   reversed source at tier 1; tier 2 can bring the name back.
-  A string form is needed (a file name inside `DC C'...'`): a `#`
-  stringify operator in function-like macros, as in C, is proposed.
+  A string form is needed (a file name inside `DC C'...'`): `#(x)` in a
+  function-like macro body (implemented as `#(x)`, not C's `#x`, because `#` is
+  a symbol character; DESIGN.md 8).
+  **Status:** implemented; `sizeof(label)` is the size of the whole first DC/DS
+  operand (`L'` times the count), not `L'`. See DESIGN.md 12.
 * **Link-time length**: HLASM's `J(DSECT)` and `Q()` give the *binder*'s
   value after merging same-named dummy sections; they stay (Phase 2, with
   `DXD`/`CXD`), the compile-time `sizeof` is for everything else.
@@ -218,7 +221,7 @@ assembly time, recorded as `CALL` nodes, written back as such by `-disasm`.
 |---|---|
 | Z1 | collector in the assembler (statement/symbol records with final offsets, crc), `src/zsym.c` writer, ED/TXT emission in `emit.c`, `-gz` options, `-dump` prints the blocks |
 | Z2 | reader (GOFF reader gets the class), smart `-disasm`, original names, DSECT/EQU/USING output, tests of section 5, fuzzing |
-| Z3 | `sizeof/offsetof/alignof/countof`, `ASSERT`, extra preprocessor built-ins, `-reproducible` |
+| Z3 | `sizeof/offsetof/alignof/countof`, `ASSERT`, extra preprocessor built-ins, `-reproducible` (**done**, DESIGN.md 12) |
 | Z4 | tier 2 (original source, pp history, compression) |
 | Z5 | DWARF bridge: DSECT as struct types, EQU as constants, line table, for LLDB (`frame variable (WORK*)$r2`); reading ZSYM from a program object through the binder API (needs a z/OS system; pok56 is unreachable now) |
 

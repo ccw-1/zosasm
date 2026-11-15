@@ -136,6 +136,7 @@ static void ep_skip(EP *p) {
 }
 
 static Expr *parse_add(EP *p);
+static Expr *parse_or(EP *p);
 
 static Expr *bin(EP *p, char op, size_t start, Expr *l, Expr *r) {
     Expr *e = mk(EX_BIN, ep_span(p, start));
@@ -149,7 +150,7 @@ static Expr *parse_primary(EP *p);
 
 static Expr *parse_unary(EP *p) {
     ep_skip(p);
-    if (p->pos < p->len && (p->s[p->pos] == '+' || p->s[p->pos] == '-')) {
+    if (p->pos < p->len && (p->s[p->pos] == '+' || p->s[p->pos] == '-' || p->s[p->pos] == '!')) {
         char op = p->s[p->pos];
         size_t start = p->pos;
         Expr *x, *e;
@@ -195,6 +196,68 @@ static Expr *parse_add(EP *p) {
             r = parse_mul(p);
             if (p->err) return NULL;
             l = bin(p, op, start, l, r);
+            continue;
+        }
+        break;
+    }
+    return l;
+}
+
+/* comparisons, && and || (the result is 1 or 0); only ASSERT and the like need
+ * them, but they work in every expression */
+static Expr *parse_cmp(EP *p) {
+    Expr *l = parse_add(p);
+    ep_skip(p);
+    if (!p->err && p->pos < p->len) {
+        const char *s = p->s + p->pos;
+        char op = 0;
+        size_t n = 0, start = p->pos;
+        if (!strncmp(s, "==", 2)) op = 'e', n = 2;
+        else if (!strncmp(s, "!=", 2)) op = 'n', n = 2;
+        else if (!strncmp(s, "<=", 2)) op = 'l', n = 2;
+        else if (!strncmp(s, ">=", 2)) op = 'g', n = 2;
+        else if (s[0] == '<') op = '<', n = 1;
+        else if (s[0] == '>') op = '>', n = 1;
+        if (op) {
+            Expr *r;
+            p->pos += n;
+            r = parse_add(p);
+            if (p->err) return NULL;
+            return bin(p, op, start, l, r);
+        }
+    }
+    return l;
+}
+
+static Expr *parse_and(EP *p) {
+    Expr *l = parse_cmp(p);
+    while (!p->err) {
+        ep_skip(p);
+        if (p->pos + 1 < p->len && p->s[p->pos] == '&' && p->s[p->pos + 1] == '&') {
+            size_t start = p->pos;
+            Expr *r;
+            p->pos += 2;
+            r = parse_cmp(p);
+            if (p->err) return NULL;
+            l = bin(p, '&', start, l, r);
+            continue;
+        }
+        break;
+    }
+    return l;
+}
+
+static Expr *parse_or(EP *p) {
+    Expr *l = parse_and(p);
+    while (!p->err) {
+        ep_skip(p);
+        if (p->pos + 1 < p->len && p->s[p->pos] == '|' && p->s[p->pos + 1] == '|') {
+            size_t start = p->pos;
+            Expr *r;
+            p->pos += 2;
+            r = parse_and(p);
+            if (p->err) return NULL;
+            l = bin(p, '|', start, l, r);
             continue;
         }
         break;
@@ -249,6 +312,66 @@ static Expr *symbol_expr(EP *p, size_t start, char *word) {
     e = mk(EX_SYM, ep_span(p, start));
     e->name = name;
     e->qual = qual;
+    return e;
+}
+
+/* ---- sizeof, offsetof, alignof, countof ---------------------------------- */
+
+static const char *const func_names[] = {"sizeof", "offsetof", "alignof", "countof"};
+
+int expr_is_func_name(const char *s, size_t n) {
+    size_t i;
+    for (i = 0; i < sizeof func_names / sizeof func_names[0]; i++)
+        if (strlen(func_names[i]) == n && !strncmp(func_names[i], s, n)) return 1;
+    return 0;
+}
+
+/* a plain or quoted symbol as the argument of a function */
+static Expr *func_arg(EP *p) {
+    size_t start;
+    Expr *e;
+    ep_skip(p);
+    start = p->pos;
+    if (p->pos < p->len && p->s[p->pos] == '"') {
+        char *nm = quoted_symbol(p);
+        if (!nm) return NULL;
+        e = mk(EX_SYM, ep_span(p, start));
+        e->name = nm;
+        return e;
+    }
+    if (p->pos < p->len && is_sym_start((unsigned char)p->s[p->pos])) {
+        while (p->pos < p->len && is_sym_char((unsigned char)p->s[p->pos])) p->pos++;
+        e = mk(EX_SYM, ep_span(p, start));
+        e->name = xstrndup(p->s + start, p->pos - start);
+        return e;
+    }
+    return ep_fail(p, "ZA1040", p->pos, 1, "a symbol name is expected here");
+}
+
+/* the word has been scanned and s[pos] is its '(' */
+static Expr *parse_func(EP *p, size_t start, const char *word) {
+    Expr *e = mk(EX_FUNC, ep_span(p, start));
+    int two = word[0] == 'o';
+    e->op = word[0];
+    e->name = xstrdup(word);
+    p->pos++;
+    e->l = func_arg(p);
+    if (!e->l) return NULL;
+    if (two) {
+        ep_skip(p);
+        if (p->pos >= p->len || p->s[p->pos] != ',')
+            return ep_fail(p, "ZA1040", p->pos, 1,
+                           "offsetof takes two arguments: offsetof(SECTION,FIELD)");
+        p->pos++;
+        e->r = func_arg(p);
+        if (!e->r) return NULL;
+    }
+    ep_skip(p);
+    if (p->pos >= p->len || p->s[p->pos] != ')')
+        return ep_fail(p, "ZA1040", p->pos, 1, "%s takes %s%s", word, two ? "two symbol names" : "one symbol name",
+                       " and a closing parenthesis");
+    p->pos++;
+    e->sp = ep_span(p, start);
     return e;
 }
 
@@ -364,7 +487,7 @@ static Expr *parse_primary(EP *p) {
     c = (unsigned char)p->s[p->pos];
     if (c == '(') {
         p->pos++;
-        e = parse_add(p);
+        e = parse_or(p);
         if (p->err) return NULL;
         ep_skip(p);
         if (p->pos >= p->len || p->s[p->pos] != ')')
@@ -404,6 +527,8 @@ static Expr *parse_primary(EP *p) {
         while (p->pos < p->len && is_sym_char((unsigned char)p->s[p->pos])) p->pos++;
         word = xstrndup(p->s + start, p->pos - start);
         if (p->pos < p->len && p->s[p->pos] == '\'') return parse_quoted(p, start, word);
+        if (p->pos < p->len && p->s[p->pos] == '(' && expr_is_func_name(word, strlen(word)))
+            return parse_func(p, start, word);
         return symbol_expr(p, start, word);
     }
     return ep_fail(p, "ZA1005", p->pos, 1, "unexpected character \"%c\" in expression", c);
@@ -423,7 +548,7 @@ Expr *parse_expr(Stmt *st, const char *text, int off, Reporter *rep) {
         rep_errorf(rep, "ZA1001", stmt_operand_span(st, off, 1), "expression expected");
         return NULL;
     }
-    e = parse_add(&p);
+    e = parse_or(&p);
     if (p.err) return NULL;
     ep_skip(&p);
     if (p.pos < p.len) {
@@ -445,6 +570,9 @@ char *expr_describe(const Expr *e) {
         return xstrdup("*");
     case EX_ATTR:
         return xasprintf("%c'%s", e->attr, e->name);
+    case EX_FUNC:
+        if (e->r) return xasprintf("%s(%s,%s)", e->name, e->l->name, e->r->name);
+        return xasprintf("%s(%s)", e->name, e->l->name);
     default:
         break;
     }

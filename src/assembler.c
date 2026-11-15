@@ -33,7 +33,7 @@ typedef struct {
 } DirEntry;
 
 static const DirEntry directive_tab[] = {
-    {"AMODE", dir_mode},   {"CATTR", dir_cattr},   {"CNOP", dir_cnop},   {"COM", dir_section},
+    {"AMODE", dir_mode},   {"ASSERT", dir_assert}, {"CATTR", dir_cattr},   {"CNOP", dir_cnop},   {"COM", dir_section},
     {"COPY", dir_copy},    {"CSECT", dir_section}, {"CXD", dir_cxd},   {"DC", dir_dc},       {"DROP", dir_drop},
     {"DS", dir_dc},        {"DSECT", dir_section}, {"DXD", dir_dxd},     {"EJECT", dir_ignore}, {"END", dir_end},
     {"ENTRY", dir_entry},  {"EQU", dir_equ},      {"EXTRN", dir_extrn}, {"ICTL", dir_ignore},
@@ -181,20 +181,20 @@ int asm_need_section(Asm *a, Stmt *st) {
 
 /* Define the statement's name field as an address in the current location
  * counter. */
-void asm_define_label(Asm *a, Stmt *st, int64_t length, char typ) {
+Symbol *asm_define_label(Asm *a, Stmt *st, int64_t length, char typ) {
     Piece *piece;
     int64_t off;
     int created;
     Symbol *s;
-    if (!st->name[0] || a->pass != 1) return;
-    if (!asm_need_section(a, st)) return;
+    if (!st->name[0] || a->pass != 1) return NULL;
+    if (!asm_need_section(a, st)) return NULL;
     if (!asm_valid_stmt_name(st)) {
         diag_help(rep_errorf(a->rep, "ZA1021", st->name_span, "\"%s\" is not a valid symbol name",
                              st->name),
                   "symbols start with a letter or one of @ # $ _ and continue with letters, digits "
                   "or those characters; any other name is written in double quotes");
         st->bad = 1;
-        return;
+        return NULL;
     }
     piece = a->cur;
     off = a->cur->loc;
@@ -206,7 +206,11 @@ void asm_define_label(Asm *a, Stmt *st, int64_t length, char typ) {
         s->len = length;
         s->type = typ;
         s->sect = a->sect;
+        s->count = 1;
+        s->align = 1;
+        return s;
     }
+    return NULL;
 }
 
 /* ---- operands and expressions ------------------------------------------ */
@@ -282,6 +286,36 @@ static Value undefined_value(void) {
     return v;
 }
 
+/* x names a symbol that does not exist (yet) */
+static int missing_symbol(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
+    if (a->pass == 1 && !need) {
+        *out = undefined_value();
+        return 1;
+    }
+    if (a->pass == 1) {
+        diag_help(diag_label(rep_errorf(a->rep, "ZA1010", x->sp,
+                                        "symbol \"%s\" must be defined before this statement",
+                                        x->name),
+                             "not defined yet"),
+                  "forward references are only allowed where the value is not needed to size "
+                  "the statement (for example in A-type constants and branches)");
+        st->bad = 1;
+        return 0;
+    }
+    {
+        Diag *d = rep_errorf(a->rep, "ZA1011", x->sp, "undefined symbol \"%s\"", x->name);
+        size_t i;
+        const char **names = xmalloc((a->mod->sym_order.n + 1) * sizeof *names);
+        const char *c;
+        for (i = 0; i < a->mod->sym_order.n; i++) names[i] = a->mod->sym_order.v[i]->name;
+        c = diag_closest(x->name, names, a->mod->sym_order.n);
+        if (c) diag_help(d, "did you mean \"%s\"?", c);
+        free(names);
+    }
+    st->bad = 1;
+    return 0;
+}
+
 static int sym_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
     Symbol *s = asm_lookup(a, x->name);
     if (x->qual && a->laid && !asm_using_label_active(a, x->qual)) {
@@ -292,34 +326,7 @@ static int sym_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
         st->bad = 1;
         return 0;
     }
-    if (!s) {
-        if (a->pass == 1 && !need) {
-            *out = undefined_value();
-            return 1;
-        }
-        if (a->pass == 1) {
-            diag_help(diag_label(rep_errorf(a->rep, "ZA1010", x->sp,
-                                            "symbol \"%s\" must be defined before this statement",
-                                            x->name),
-                                 "not defined yet"),
-                      "forward references are only allowed where the value is not needed to size "
-                      "the statement (for example in A-type constants and branches)");
-            st->bad = 1;
-            return 0;
-        }
-        {
-            Diag *d = rep_errorf(a->rep, "ZA1011", x->sp, "undefined symbol \"%s\"", x->name);
-            size_t i;
-            const char **names = xmalloc((a->mod->sym_order.n + 1) * sizeof *names);
-            const char *c;
-            for (i = 0; i < a->mod->sym_order.n; i++) names[i] = a->mod->sym_order.v[i]->name;
-            c = diag_closest(x->name, names, a->mod->sym_order.n);
-            if (c) diag_help(d, "did you mean \"%s\"?", c);
-            free(names);
-        }
-        st->bad = 1;
-        return 0;
-    }
+    if (!s) return missing_symbol(a, st, x, need, out);
     s->used = 1;
     switch (s->kind) {
     case SYM_LABEL:
@@ -455,6 +462,122 @@ static int attr_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
     return 1;
 }
 
+static const char *op_text(char op) {
+    switch (op) {
+    case 'e': return "==";
+    case 'n': return "!=";
+    case 'l': return "<=";
+    case 'g': return ">=";
+    case '&': return "&&";
+    case '|': return "||";
+    case '*': return "*";
+    case '/': return "/";
+    case '<': return "<";
+    case '>': return ">";
+    }
+    return "?";
+}
+
+/* ---- sizeof, offsetof, alignof, countof (DESIGN.md 12) ------------------ */
+
+/* the symbol is of a kind the function cannot handle */
+static int func_kind_err(Asm *a, Stmt *st, const Expr *x, const Expr *arg, const char *want) {
+    asm_expr_err(a, st, arg->sp, "ZA1041", "%s needs %s, but \"%s\" is something else", x->name, want,
+                 arg->name);
+    return 0;
+}
+
+/* The length of a section is known after the first pass; that of a DSECT is
+ * taken from what has been read so far and checked at the end of pass 1.
+ * Returns 1 when it is known, 0 with a placeholder in *out when it is not
+ * and is not needed, -1 after an error (it is needed to lay out the
+ * statement). */
+static int func_late(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
+    if (a->laid) return 1;
+    *out = undefined_value();
+    if (!need) return 0;
+    diag_help(rep_errorf(a->rep, "ZA1042", x->sp,
+                         "%s of a section is not known yet where its value sizes this statement",
+                         x->name),
+              "the size of a CSECT is known only after the whole source has been read; use it "
+              "where the value is not needed to lay out storage (A-type constants, "
+              "instructions), or use the size of a labelled DS or a DSECT instead");
+    st->bad = 1;
+    return -1;
+}
+
+static int func_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
+    Symbol *s = asm_lookup(a, x->l->name);
+    int64_t n = 0;
+    int late;
+    if (!s) return missing_symbol(a, st, x->l, need, out);
+    s->used = 1;
+    if (x->op == 'o') {
+        Symbol *f = asm_lookup(a, x->r->name);
+        Class *c;
+        if (s->kind != SYM_SECT || !s->sect)
+            return func_kind_err(a, st, x, x->l, "a section name as its first argument");
+        if (!f) return missing_symbol(a, st, x->r, need, out);
+        f->used = 1;
+        if (f->kind != SYM_LABEL || !f->piece || f->piece->cls->sect != s->sect ||
+            f->piece->cls != s->sect->classes.v[0]) {
+            asm_expr_err(a, st, x->r->sp, "ZA1043", "\"%s\" is not a field of \"%s\"", f->name,
+                         s->name);
+            return 0;
+        }
+        c = f->piece->cls;
+        if (c->sect->kind == K_DSECT) {
+            n = f->off;
+        } else {
+            late = func_late(a, st, x, need, out);
+            if (late <= 0) return late == 0;
+            n = f->piece->start + f->off;
+        }
+        *out = value_abs(n);
+        return 1;
+    }
+    switch (s->kind) {
+    case SYM_LABEL:
+        if (x->op == 's')
+            n = (s->len ? s->len : 1) * s->count;
+        else if (x->op == 'a')
+            n = s->align;
+        else
+            n = s->count;
+        break;
+    case SYM_SECT:
+        if (x->op == 'c') return func_kind_err(a, st, x, x->l, "a label of a DC or DS");
+        if (!a->laid && s->sect->kind == K_DSECT) { /* provisional, checked after pass 1 */
+            Piece *last = s->sect->classes.v[0]->pieces.v[s->sect->classes.v[0]->pieces.n - 1];
+            FuncUse u;
+            n = x->op == 's' ? piece_len(last) : (s->sect->max_align > 1 ? s->sect->max_align : 1);
+            u.sect = s->sect;
+            u.fn = x->op;
+            u.val = n;
+            u.sp = x->sp;
+            vec_push(&a->fuses, u);
+            break;
+        }
+        late = func_late(a, st, x, need, out);
+        if (late <= 0) return late == 0;
+        if (x->op == 's')
+            n = s->sect->classes.v[0]->len;
+        else
+            n = s->sect->max_align > 1 ? s->sect->max_align : 1;
+        break;
+    case SYM_DXD:
+        if (x->op == 'c') return func_kind_err(a, st, x, x->l, "a label of a DC or DS");
+        n = x->op == 's' ? s->xd_len : s->xd_align;
+        break;
+    default:
+        return func_kind_err(a, st, x, x->l,
+                             x->op == 'c' ? "a label of a DC or DS"
+                                          : "a label, a section or a DXD name");
+    }
+    *out = value_abs(n);
+    return 1;
+}
+
 int asm_eval(Asm *a, Stmt *st, const Expr *e, int need, Value *out) {
     switch (e->kind) {
     case EX_NUM:
@@ -468,9 +591,20 @@ int asm_eval(Asm *a, Stmt *st, const Expr *e, int need, Value *out) {
         return sym_value(a, st, e, need, out);
     case EX_ATTR:
         return attr_value(a, st, e, need, out);
+    case EX_FUNC:
+        return func_value(a, st, e, need, out);
     case EX_UN: {
         Value v;
         if (!asm_eval(a, st, e->l, need, &v)) return 0;
+        if (e->op == '!') {
+            if (!value_is_abs(&v)) {
+                asm_expr_err(a, st, e->sp, "ZA1012", "the operand of \"!\" must be an absolute value");
+                return 0;
+            }
+            *out = value_abs(!v.abs);
+            out->defined = v.defined;
+            return 1;
+        }
         *out = e->op == '-' ? value_neg(v) : v;
         return 1;
     }
@@ -488,9 +622,25 @@ int asm_eval(Asm *a, Stmt *st, const Expr *e, int need, Value *out) {
             return 1;
         }
         if (!value_is_abs(&l) || !value_is_abs(&r)) {
-            asm_expr_err(a, st, e->sp, "ZA1012", "operands of \"%c\" must be absolute values",
-                         e->op);
+            asm_expr_err(a, st, e->sp, "ZA1012", "operands of \"%s\" must be absolute values",
+                         op_text(e->op));
             return 0;
+        }
+        if (strchr("enlg<>&|", e->op)) {
+            int64_t x = l.abs, y = r.abs, z = 0;
+            switch (e->op) {
+            case 'e': z = x == y; break;
+            case 'n': z = x != y; break;
+            case 'l': z = x <= y; break;
+            case 'g': z = x >= y; break;
+            case '<': z = x < y; break;
+            case '>': z = x > y; break;
+            case '&': z = x != 0 && y != 0; break;
+            case '|': z = x != 0 || y != 0; break;
+            }
+            *out = value_abs(z);
+            out->defined = l.defined && r.defined;
+            return 1;
         }
         if (e->op == '*') {
             *out = value_abs(l.abs * r.abs);
@@ -592,6 +742,26 @@ static Value relayout(Value v) {
 
 static void resolve_xd(Asm *a);
 
+/* sizeof and alignof of a DSECT were answered in pass 1 from what was known
+ * then; the DSECT must not have changed since */
+static void check_func_uses(Asm *a) {
+    size_t i;
+    for (i = 0; i < a->fuses.n; i++) {
+        FuncUse *u = &a->fuses.v[i];
+        int64_t now = u->fn == 's' ? u->sect->classes.v[0]->len
+                                   : (u->sect->max_align > 1 ? u->sect->max_align : 1);
+        if (now != u->val) {
+            diag_help(rep_errorf(a->rep, "ZA1044", u->sp,
+                                 "%s of the DSECT \"%s\" was %lld here, but it is %lld at the "
+                                 "end of the source",
+                                 u->fn == 's' ? "sizeof" : "alignof", u->sect->name,
+                                 (long long)u->val, (long long)now),
+                      "the DSECT was extended after this use; use the value only after the DSECT "
+                      "is complete");
+        }
+    }
+}
+
 static void layout(Asm *a) {
     size_t si, ci, pi;
     for (si = 0; si < a->mod->sections.n; si++) {
@@ -624,6 +794,7 @@ static void layout(Asm *a) {
         if (s->kind == SYM_REL) s->val = relayout(s->val);
     }
     resolve_xd(a);
+    check_func_uses(a);
     /* ENTRY labels are known to pass 2 (R-type constants need them) */
     for (si = 0; si < a->entries.n; si++) {
         Symbol *s = asm_lookup(a, a->entries.v[si].name);

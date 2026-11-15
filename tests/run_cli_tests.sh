@@ -44,6 +44,19 @@ printf 'T CSECT\n COPY X\n' > $T/pp5.za
 $X -o $T/pp5.o $T/pp5.za 2>$T/err; check "COPY rejected" $? 1
 grep -q ZA9001 $T/err; check "COPY code" $? 0
 
+# built-ins, -reproducible, -version
+printf '#define S(x) C ## #(x)\nT CSECT\n DC S(__DATE__)\n DC S(__BASE_FILE__)\n' > $T/b2.za
+SOURCE_DATE_EPOCH=1700000000 $X -E $T/b2.za 2>/dev/null | grep -q "DC C'2023-11-14'"; check "__DATE__ with SOURCE_DATE_EPOCH" $? 0
+env -u SOURCE_DATE_EPOCH $X -E -reproducible $T/b2.za 2>$T/err >/dev/null; check "-reproducible without a time" $? 1
+grep -q ZA4080 $T/err; check "-reproducible code" $? 0
+SOURCE_DATE_EPOCH=1700000000 $X -reproducible -o $T/b2a.o $T/b2.za 2>/dev/null; check "-reproducible with a time" $? 0
+SOURCE_DATE_EPOCH=1700000000 $X -reproducible -o $T/b2b.o $T/b2.za 2>/dev/null
+cmp -s $T/b2a.o $T/b2b.o; check "-reproducible gives equal objects" $? 0
+$X -version | grep -q "^zosasm [0-9]"; check "-version" $? 0
+printf 'S DSECT\nA DS F\nM CSECT\n ASSERT sizeof(S)==8,"S must be 8"\n' | sed "s/\"/'/g" > $T/as.za
+$X -o $T/as.o $T/as.za 2>$T/err; check "ASSERT fails the assembly" $? 1
+grep -q "assertion failed: S must be 8" $T/err; check "ASSERT message" $? 0
+
 # ZSYM: on by default, -gz0 leaves it out
 $X -dump $T/hello.o | grep -q "^ZSYM: 1 block"; check "ZSYM by default" $? 0
 $X -dump $T/hello.o | grep -q "complete"; check "ZSYM block complete" $? 0

@@ -2,11 +2,14 @@
  *
  * Diagnostic codes: ZA4010-4012 #include, ZA4020-4023 #define/#undef,
  * ZA4030-4034 conditionals, ZA4040-4042 macro calls, ZA4050/4051 #error and
- * #warning, ZA4060/4061 #pragma, ZA4070 trailing comma. */
+ * #warning, ZA4060/4061 #pragma, ZA4070 trailing comma, ZA4080/4081 the time
+ * of __DATE__ and __TIME__. */
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "pp.h"
+#include "version.h"
 
 #define PP_MAX_DEPTH 32
 #define PP_MAX_EXPANSION ((size_t)4 << 20)
@@ -47,6 +50,11 @@ typedef struct {
     int too_big;
     /* trailing comma check */
     int comma;
+    /* built-ins */
+    const char *base; /* the file given to pp_run */
+    long counter;     /* __COUNTER__ */
+    int have_now, now_bad;
+    time_t now; /* __DATE__ and __TIME__ */
 } Pp;
 
 /* ---- lexical helpers --------------------------------------------------- */
@@ -83,6 +91,90 @@ static int in_active(const Active *a, const Macro *m) {
     for (; a; a = a->next)
         if (a->m == m) return 1;
     return 0;
+}
+
+/* ---- built-in names ----------------------------------------------------- */
+
+static const char *const builtin_names[] = {"__FILE__",          "__LINE__",
+                                            "__BASE_FILE__",     "__INCLUDE_LEVEL__",
+                                            "__COUNTER__",       "__ZASM_VERSION__",
+                                            "__DATE__",          "__TIME__"};
+
+static int is_builtin(const char *id) {
+    size_t i;
+    for (i = 0; i < sizeof builtin_names / sizeof builtin_names[0]; i++)
+        if (!strcmp(id, builtin_names[i])) return 1;
+    return 0;
+}
+
+/* The time for __DATE__ and __TIME__: -D... option, SOURCE_DATE_EPOCH, or the
+ * clock; with -reproducible only a fixed time is allowed. Returns 0 (after a
+ * diagnostic) when there is none. */
+static int pp_now(Pp *pp) {
+    const char *env;
+    if (pp->have_now) return 1;
+    if (pp->now_bad) return 0;
+    env = getenv("SOURCE_DATE_EPOCH");
+    if (pp->opt->has_epoch) {
+        pp->now = (time_t)pp->opt->epoch;
+    } else if (env && *env) {
+        const char *q;
+        int64_t v = 0;
+        for (q = env; *q >= '0' && *q <= '9' && v < ((int64_t)1 << 50); q++) v = v * 10 + (*q - '0');
+        if (*q || q == env) {
+            diag_help(rep_errorf(pp->rep, "ZA4081", pp->use,
+                                 "SOURCE_DATE_EPOCH is not a number of seconds: \"%s\"", env),
+                      "set it to the seconds since 1970-01-01, for example 1700000000");
+            pp->now_bad = 1;
+            return 0;
+        }
+        pp->now = (time_t)v;
+    } else if (pp->opt->reproducible) {
+        diag_help(rep_errorf(pp->rep, "ZA4080", pp->use,
+                             "__DATE__ and __TIME__ need a fixed time with -reproducible"),
+                  "set the environment variable SOURCE_DATE_EPOCH, or drop -reproducible");
+        pp->now_bad = 1;
+        return 0;
+    } else {
+        pp->now = time(NULL);
+    }
+    pp->have_now = 1;
+    return 1;
+}
+
+/* the text of a built-in name; 0 when id is none */
+static int builtin_text(Pp *pp, const char *id, Buf *out) {
+    if (!strcmp(id, "__FILE__")) {
+        buf_puts(out, pp->file);
+    } else if (!strcmp(id, "__LINE__")) {
+        buf_printf(out, "%d", pp->line);
+    } else if (!strcmp(id, "__BASE_FILE__")) {
+        buf_puts(out, pp->base);
+    } else if (!strcmp(id, "__INCLUDE_LEVEL__")) {
+        buf_printf(out, "%d", pp->depth);
+    } else if (!strcmp(id, "__COUNTER__")) {
+        buf_printf(out, "%ld", pp->counter++);
+    } else if (!strcmp(id, "__ZASM_VERSION__")) {
+        buf_printf(out, "%d", ZASM_VERSION_NUM);
+    } else if (!strcmp(id, "__DATE__") || !strcmp(id, "__TIME__")) {
+        struct tm *t;
+        if (!pp_now(pp)) {
+            buf_puts(out, id);
+            return 1;
+        }
+        t = gmtime(&pp->now);
+        if (!t) {
+            buf_puts(out, id);
+            return 1;
+        }
+        if (id[2] == 'D')
+            buf_printf(out, "%04d-%02d-%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
+        else
+            buf_printf(out, "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
+    } else {
+        return 0;
+    }
+    return 1;
 }
 
 /* ---- macro expansion --------------------------------------------------- */
@@ -140,7 +232,34 @@ static char *substitute(const Macro *m, char **raw, char **exp) {
             paste_prev = 1;
             continue;
         }
-        if (c == '\'' && !is_attr_quote(b, i)) {
+        if (c == '#' && b[i + 1] == '(' && exp) { /* #(param): the argument as a quoted text */
+            size_t k = i + 2, e, f;
+            int p = -1, q;
+            while (is_blank((unsigned char)b[k])) k++;
+            e = is_sym_start((unsigned char)b[k]) ? ident_end(b, k) : k;
+            f = e;
+            while (is_blank((unsigned char)b[f])) f++;
+            if (e > k && b[f] == ')') {
+                char *id = xstrndup(b + k, e - k);
+                for (q = 0; q < m->nparams; q++)
+                    if (!strcmp(m->params[q], id)) p = q;
+                free(id);
+            }
+            if (p >= 0) {
+                const char *t = exp[p];
+                buf_putc(&out, '\'');
+                for (; *t; t++) {
+                    if (*t == '\'') buf_putc(&out, '\'');
+                    buf_putc(&out, *t);
+                }
+                buf_putc(&out, '\'');
+                i = f + 1;
+                paste_prev = 0;
+                continue;
+            }
+            buf_putc(&out, c);
+            i++;
+        } else if (c == '\'' && !is_attr_quote(b, i)) {
             long q = close_quote(b, i);
             size_t e = q < 0 ? n : (size_t)q + 1;
             buf_write(&out, b + i, e - i);
@@ -210,11 +329,7 @@ static char *expand(Pp *pp, const char *s, const Active *act) {
             if (s[j] == '\'') { /* L'X, C'..': a prefix, not a name */
                 buf_puts(&out, id);
                 i = j;
-            } else if (!strcmp(id, "__FILE__")) {
-                buf_puts(&out, pp->file);
-                i = j;
-            } else if (!strcmp(id, "__LINE__")) {
-                buf_printf(&out, "%d", pp->line);
+            } else if (builtin_text(pp, id, &out)) {
                 i = j;
             } else if ((m = strmap_get(&pp->macros, id)) == NULL || in_active(act, m)) {
                 buf_puts(&out, id);
@@ -344,8 +459,7 @@ static void do_define(Pp *pp, const char *p, Span sp) {
     m = xcalloc(sizeof *m);
     m->name = xstrndup(name_p, j);
     m->def = sp;
-    if (!strcmp(m->name, "__FILE__") || !strcmp(m->name, "__LINE__") ||
-        !strcmp(m->name, "defined")) {
+    if (is_builtin(m->name) || !strcmp(m->name, "defined")) {
         rep_errorf(pp->rep, "ZA4021", sp, "\"%s\" cannot be defined as a macro", m->name);
         return;
     }
@@ -597,7 +711,7 @@ static char *replace_defined(Pp *pp, const char *s) {
                 j = is_sym_start((unsigned char)s[k]) ? ident_end(s, k) : k;
                 if (j > k) {
                     id = xstrndup(s + k, j - k);
-                    buf_puts(&out, strmap_get(&pp->macros, id) ? "1" : "0");
+                    buf_puts(&out, strmap_get(&pp->macros, id) || is_builtin(id) ? "1" : "0");
                     free(id);
                     if (paren) {
                         while (is_blank((unsigned char)s[j])) j++;
@@ -797,7 +911,7 @@ static void do_directive(Pp *pp, const char *dir, const char *rest, const char *
             if (active(pp)) rep_errorf(pp->rep, "ZA4030", sp, "#%s needs a macro name", dir);
         } else {
             char *id = xstrndup(p, j);
-            def = strmap_get(&pp->macros, id) != NULL;
+            def = strmap_get(&pp->macros, id) != NULL || is_builtin(id);
             free(id);
         }
         push_cond(pp, !strcmp(dir, "ifdef") ? def : !def, sp);
@@ -987,6 +1101,7 @@ void pp_run(const char *file, const char *text, size_t len, const PpOptions *opt
     pp->opt = opt;
     pp->out = out;
     pp->file = file;
+    pp->base = file;
     for (i = 0; i < opt->defines.n; i++) {
         char *d = xstrdup(opt->defines.v[i]);
         char *eq = strchr(d, '=');

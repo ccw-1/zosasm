@@ -12,6 +12,10 @@ typedef struct {
     Reporter *rep;
 } Out;
 
+static void put_file(const char *path, const char *text);
+static int g_repro, g_has_epoch;
+static int64_t g_epoch;
+
 static Out run_pp(const char *src, const char *const *defs, const char *const *incs) {
     PpOptions o;
     SrcVec lines = {0};
@@ -20,6 +24,9 @@ static Out run_pp(const char *src, const char *const *defs, const char *const *i
     size_t i, n;
     Out out;
     memset(&o, 0, sizeof o);
+    o.reproducible = g_repro;
+    o.has_epoch = g_has_epoch;
+    o.epoch = g_epoch;
     for (; defs && *defs; defs++) vec_push(&o.defines, *defs);
     for (; incs && *incs; incs++) vec_push(&o.include_dirs, *incs);
     rep_add_source(rep, "t.za", src, strlen(src));
@@ -152,6 +159,79 @@ static void test_comma(void) {
     expect("comma in remark", " LR 1,2 remark,\nLBL DC A(2)\n", " LR 1,2 remark,|LBL DC A(2)", "");
 }
 
+static void test_builtins(void) {
+    Out o;
+    const char *incs[] = {"build/pp_inc", NULL};
+    expect("__COUNTER__", " A __COUNTER__\n B __COUNTER__,__COUNTER__\n", " A 0| B 1,2", "");
+    expect("__COUNTER__ in #if", "#if __COUNTER__ == 0 && __COUNTER__ == 1\n yes\n#endif\n", " yes",
+           "");
+    expect("__COUNTER__ in a macro", "#define N __COUNTER__\n X N,N\n", " X 0,1", "");
+    expect("__COUNTER__ in a quote", " DC C'__COUNTER__'\n", " DC C'__COUNTER__'", "");
+    expect("__ZASM_VERSION__", " X __ZASM_VERSION__\n", " X 100", "");
+    expect("version in #if", "#if __ZASM_VERSION__ >= 100\n yes\n#else\n no\n#endif\n", " yes", "");
+    expect("__BASE_FILE__", " X __BASE_FILE__,__FILE__\n", " X t.za,t.za", "");
+    expect("__INCLUDE_LEVEL__", " X __INCLUDE_LEVEL__\n", " X 0", "");
+    expect("defined(builtin)",
+           "#ifdef __LINE__\n a\n#endif\n#if defined(__COUNTER__)\n b\n#endif\n", " a| b", "");
+    expect("builtin cannot be defined", "#define __COUNTER__ 5\n X __COUNTER__\n", " X 0",
+           "ZA4021");
+    expect("builtin cannot be defined 2", "#define __DATE__ 5\n", "", "ZA4021");
+    CHECK(system("rm -rf build/pp_inc && mkdir -p build/pp_inc") == 0);
+    put_file("build/pp_inc/l.inc", " IN __INCLUDE_LEVEL__,__BASE_FILE__,__FILE__\n"
+                                   "#include \"l2.inc\"\n");
+    put_file("build/pp_inc/l2.inc", " IN2 __INCLUDE_LEVEL__\n");
+    o = run_pp(" TOP __INCLUDE_LEVEL__\n#include <l.inc>\n", NULL, incs);
+    CHECK_MSG(!strcmp(o.text, " TOP 0| IN 1,t.za,build/pp_inc/l.inc| IN2 2"),
+              "include level: \"%s\" (%s)", o.text, o.codes);
+}
+
+static void test_stringify(void) {
+    expect("#(x)", "#define STR(x) C ## #(x)\n DC STR(abc)\n", " DC C'abc'", "");
+    expect("#(x) with blanks", "#define S(x) #( x )\n X S(a b)\n", " X 'a b'", "");
+    expect("#(x) doubles quotes", "#define S(x) #(x)\n X S(C'A')\n", " X 'C''A'''", "");
+    expect("#(x) expands the argument", "#define N 10\n#define S(x) #(x)\n X S(N)\n", " X '10'",
+           "");
+    expect("#(x) of a built-in", "#define S(x) #(x)\n X S(__LINE__),S(__FILE__)\n",
+           " X '2','t.za'", "");
+    expect("#(x) second parameter", "#define S(a,b) a #(b) #(a)\n X S(1,two)\n", " X 1 'two' '1'",
+           "");
+    expect("#(x) pasted after", "#define S(x) #(x) ## Z\n X S(a)\n", " X 'a'Z", "");
+    expect("#( not a parameter", "#define S(x) #(y) #(x+1)\n X S(a)\n", " X #(y) #(a+1)", "");
+    expect("#( in an object macro", "#define S #(x)\n X S\n", " X #(x)", "");
+    expect("# label is kept", "#define S(x) #X x\n X S(a)\n", " X #X a", "");
+    expect("empty argument", "#define S(x) #(x)\n X S()\n", " X ''", "");
+}
+
+static void test_date(void) {
+    Out o;
+    g_has_epoch = 1;
+    g_epoch = 1700000000; /* 2023-11-14 22:13:20 UTC */
+    expect("__DATE__", " X __DATE__,__TIME__\n", " X 2023-11-14,22:13:20", "");
+    g_epoch = 0;
+    expect("epoch 0", " X __DATE__,__TIME__\n", " X 1970-01-01,00:00:00", "");
+    g_epoch = 951782399; /* 2000-02-28 23:59:59 */
+    expect("leap year", " X __DATE__\n", " X 2000-02-28", "");
+    g_has_epoch = 0;
+    setenv("SOURCE_DATE_EPOCH", "1700000000", 1);
+    expect("SOURCE_DATE_EPOCH", " X __DATE__,__TIME__\n", " X 2023-11-14,22:13:20", "");
+    g_repro = 1;
+    expect("reproducible with SOURCE_DATE_EPOCH", " X __DATE__\n", " X 2023-11-14", "");
+    setenv("SOURCE_DATE_EPOCH", "12x", 1);
+    o = run_pp(" X __DATE__\n", NULL, NULL);
+    CHECK_STR(o.codes, "ZA4081");
+    setenv("SOURCE_DATE_EPOCH", "", 1);
+    o = run_pp(" X __DATE__,__TIME__\n", NULL, NULL);
+    CHECK_MSG(!strcmp(o.codes, "ZA4080"), "reproducible without a time: \"%s\"", o.codes);
+    o = run_pp(" X __LINE__,__COUNTER__\n", NULL, NULL);
+    CHECK_STR(o.codes, ""); /* the stable built-ins stay allowed */
+    g_repro = 0;
+    unsetenv("SOURCE_DATE_EPOCH");
+    o = run_pp(" X __DATE__\n", NULL, NULL);
+    CHECK_STR(o.codes, "");
+    CHECK_MSG(strlen(o.text) == 13 && o.text[7] == '-' && o.text[10] == '-', "clock date \"%s\"",
+              o.text);
+}
+
 static void test_command_line(void) {
     const char *defs[] = {"A", "B=7", "F(x)=x+x", NULL};
     Out o = run_pp(" DC A,B,F(2)\n#ifdef A\n yes\n#endif\n", defs, NULL);
@@ -234,6 +314,9 @@ int main(void) {
     test_conditionals();
     test_directives();
     test_comma();
+    test_builtins();
+    test_stringify();
+    test_date();
     test_command_line();
     test_include();
     test_expansion_note();

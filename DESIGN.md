@@ -384,8 +384,26 @@ conflict).
   `##` paste), `#undef`, `#if`/`#ifdef`/`#ifndef`/`#elif`/`#else`/`#endif`,
   `#error`, `#warning`, `#pragma`. `#if` expressions: integers, `defined(X)`,
   `! && || == != < > <= >= + - * / % ~`, parentheses. Command line
-  `-DNAME=val`, `-Idir`, `-E` (print the preprocessed lines and stop);
-  `__FILE__` (bare file name), `__LINE__`.
+  `-DNAME=val`, `-Idir`, `-E` (print the preprocessed lines and stop).
+* Built-in names (they cannot be `#define`d, `defined(X)` is true for
+  them, ZA4021): `__FILE__` (the file being read), `__LINE__`,
+  `__BASE_FILE__` (the file named on the command line), `__INCLUDE_LEVEL__`
+  (0 in the main file), `__COUNTER__` (0, 1, 2, ... one per use in this
+  run), `__ZASM_VERSION__` (`major*10000 + minor*100 + patch`, 0.1.0 is
+  `100`), `__DATE__` (`2026-11-15`) and `__TIME__` (`20:21:05`), both UTC.
+  `__DATE__` and `__TIME__` use `SOURCE_DATE_EPOCH` when it is set; with
+  `-reproducible` and no `SOURCE_DATE_EPOCH` they are an error (ZA4080), so
+  an object cannot silently change between builds. A malformed
+  `SOURCE_DATE_EPOCH` is ZA4081. All of these are plain text, so they work
+  in operands but not inside a quoted string (see `#(x)` below).
+* **Stringify `#(x)`**: in the body of a function-like macro, `#(x)` where
+  *x* is a parameter name becomes the argument as a quoted text, `'` doubled:
+  `#define STR(x) C ## #(x)` and `DC STR(__DATE__)` give `DC C'2026-11-15'`.
+  The spelling differs from C's `#x` on purpose: `#` is a symbol character
+  here (`#COUNT` is a label), so `#x` cannot be told from a name. Unlike C,
+  the argument is macro-expanded first (`STR(N)` with `#define N 10` gives
+  `'10'`), so no two-level trick is needed. `#(` followed by anything but a
+  parameter name is left alone.
 * A `#` in column 1 is a directive only when followed by one of those
   keywords; otherwise it is an ordinary label such as `#COUNT`.
 * No expansion inside quoted strings, and none when an identifier is
@@ -408,7 +426,8 @@ conflict).
   expanded inside its own expansion.
 * Error codes: `ZA4010-4012` include, `ZA4020-4023` define/undef,
   `ZA4030-4034` conditionals, `ZA4040-4042` macro calls, `ZA4050/4051`
-  `#error`/`#warning`, `ZA4060/4061` pragma, `ZA4070` comma continuation.
+  `#error`/`#warning`, `ZA4060/4061` pragma, `ZA4070` comma continuation,
+  `ZA4080/4081` the time of `__DATE__`/`__TIME__`.
   When the preprocessor reports an error the assembler does not run.
 * Diagnostics map each output line to its original file and line; expanded
   lines get a note "in expansion of macro X at file:line"; included files
@@ -598,3 +617,73 @@ are not kept (tier 2, `-gz2`). The file/line of a statement come from the
 preprocessed input. Nothing here is checked against an
 IBM tool; the class name and attributes follow the ADATA description in the
 GOFF documentation.
+
+## 12. Built-in functions, comparisons and ASSERT (`expr.c`, `assembler.c`)
+
+These replace the `*-LABEL` length tricks and the `MNOTE`/conditional
+assembly checks of HLASM. They are assembly time only; nothing is written to
+the object except through ZSYM (the statements are kept as written, so
+`-disasm` of an object with ZSYM shows `sizeof(S)` again, while the generic
+converter writes the number).
+
+**Functions.** `sizeof(x)`, `offsetof(S,f)`, `alignof(x)`, `countof(x)`; the
+names are lower case and are recognised only when directly followed by `(`
+(a symbol `SIZEOF` is an ordinary symbol; in an operand such as
+`LA 1,sizeof(S)(2)` the first parenthesis is the call and `(2)` the index).
+The arguments are plain or quoted symbol names.
+
+| call | meaning |
+|---|---|
+| `sizeof(label)` | bytes of the first operand of its `DC`/`DS`, `L'label * countof(label)`. `W DS 4CL10` is 40, `T DC 3H'1'` is 6, an instruction label is the instruction length. (`L'` itself stays the element length, as in HLASM.) |
+| `sizeof(section)` | bytes of the first class (`B_TEXT`) of a DSECT or CSECT |
+| `sizeof(dxd)` | the length of an external dummy section (`DXD`) |
+| `offsetof(S,f)` | offset of the label *f* in the section *S* (a DSECT, or any section whose first class holds *f*) |
+| `alignof(label)` | the alignment of the item in bytes: its type's boundary, 1 when it has an explicit length, 2 for an instruction |
+| `alignof(section)` | the strictest alignment used in it (at least 1); of a `DXD`, its alignment |
+| `countof(label)` | duplication factor times the number of values of the first operand: `4CL10` 4, `3H'1'` 3, `F'1,2,3'` 3, `0F` 0 |
+
+**When a value is known.** A label's size, count and alignment are known
+immediately after its statement. The length of a section is known only at
+the end of pass 1, so:
+
+* a **DSECT** is answered at once from what has been read so far, and the
+  answer is recorded; at the end of pass 1 it is compared with the final
+  length and a DSECT that grew afterwards is an error (**ZA1044**, "was 8
+  here, but it is 12 at the end"). A closed DSECT therefore works anywhere,
+  including `SLEN EQU sizeof(S)` and `DS CL(sizeof(S))`.
+* a **CSECT** answers in pass 2 only (forward reference semantics): in
+  `DC A(sizeof(M))` or an instruction operand it is fine; where the value
+  would size storage or define an `EQU` it is **ZA1042**.
+* `offsetof` of a DSECT field is known when the field is defined; of a
+  CSECT field in pass 2.
+
+Diagnostics: `ZA1040` bad argument list, `ZA1041` the symbol has no size /
+count / alignment (an `EQU`, an external symbol; `countof` of a section),
+`ZA1042` too early, `ZA1043` *f* is not a field of *S*, `ZA1044` DSECT grew.
+An undefined name is the usual `ZA1010` (pass 1, where needed) or `ZA1011`.
+
+**Comparisons and logic** (all expressions, lowest precedence; result 1 or
+0, operands must be absolute): `==  !=  <  <=  >  >=`, `&&`, `||`, and
+unary `!` (which binds like unary minus). `&&` and `||` evaluate both sides.
+A relocatable difference (`A-B`, same section) is absolute and can be
+compared. Parentheses group (`(1<2)*7` is 7). A single `&` or `|` is still
+an error. These are needed by `ASSERT`, but any operand can use them:
+`LHI 1,sizeof(S)>256`.
+
+**`ASSERT condition[,'message']`.** Checked in pass 2, so sizes and forward
+references work (`ASSERT sizeof(M)<=4096,'M is bigger than a page'`). A
+zero condition is **ZA1052** (`assertion failed: message`, with the
+condition text as help; without a message the condition text is the
+message); the object is not written. The message is a quoted text with `''`
+for a quote. `ZA1051` bad message, `ZA1053` a name on the statement,
+`ZA1013` relocatable condition. The statement generates no bytes and is
+recorded in ZSYM as "other".
+
+**Not done.** `sizeof(type)` (`sizeof(F)`), `sizeof` of an expression, and
+`offsetof` with a nested path. `sizeof(label)` of an `EQU` is an error
+rather than its `L'` (the length attribute of an `EQU` is rarely
+meaningful).
+
+**Preprocessor side** (section 8): `__COUNTER__`, `__BASE_FILE__`,
+`__INCLUDE_LEVEL__`, `__ZASM_VERSION__`, `__DATE__`, `__TIME__`, the `#(x)`
+stringify operator, `-reproducible`, `-version`.

@@ -867,7 +867,11 @@ void dir_dc(Asm *a, Stmt *st) {
         if (!sp.has_len) asm_align(a, dc_alignment(&sp));
         if (!label_done) {
             int64_t l = vals.n > 0 ? (int64_t)vals.v[0].n : 0;
-            asm_define_label(a, st, l, sp.typ);
+            Symbol *ls = asm_define_label(a, st, l, sp.typ);
+            if (ls) {
+                ls->count = sp.dup * (int64_t)vals.n;
+                ls->align = sp.has_len ? 1 : (int)dc_alignment(&sp);
+            }
             label_done = 1;
         }
         for (j = 0; j < vals.n; j++) total += (int64_t)vals.v[j].n;
@@ -948,7 +952,10 @@ void dir_cxd(Asm *a, Stmt *st) {
     if (!asm_need_section(a, st)) return;
     if (!asm_ops(a, st, 0, 0, &ops)) return;
     asm_align(a, 4);
-    asm_define_label(a, st, 4, 'F');
+    {
+        Symbol *ls = asm_define_label(a, st, 4, 'F');
+        if (ls) ls->align = 4;
+    }
     asm_reloc(a, 4, NULL, NULL, REL_CXD);
     asm_put(a, zero, 4);
     if (a->pass == 1) a->sect->prv = 1;

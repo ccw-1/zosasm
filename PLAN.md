@@ -50,8 +50,10 @@ Status key: [x] done, [-] in progress, [ ] open.
 - [x] ZSYM Z2: smart `-disasm` from the ZSYM statements, per-section fallback, `-generic` (DESIGN.md 11)
 - [ ] ZSYM tier 2 `-gz2`: original source text (ZSYM.md)
 - [x] labeled and dependent USING, USING ranges, qualified symbols (DESIGN.md 4.3)
+- [x] `sizeof`/`offsetof`/`alignof`/`countof`, comparisons, `ASSERT`, preprocessor
+      built-ins, `#(x)` stringify, `-reproducible` (DESIGN.md 12, 8)
 - [ ] HLASM feature review verdicts (HLASM-REVIEW.md): (DXD/CXD/Q/J/R done),
-      scale/exponent, A(X-Y), R, CCW, `sizeof`, `ASSERT`
+      scale/exponent, A(X-Y), CU, CCW, decimal/binary float forms
 
 ## Phase 3 - quality
 
