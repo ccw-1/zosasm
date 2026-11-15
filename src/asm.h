@@ -449,6 +449,7 @@ void dir_org(Asm *a, Stmt *st);
 void dir_cnop(Asm *a, Stmt *st);
 void dir_end(Asm *a, Stmt *st);
 void dir_dxd(Asm *a, Stmt *st);
+void dir_ccw(Asm *a, Stmt *st);
 void dir_cxd(Asm *a, Stmt *st);
 void dir_copy(Asm *a, Stmt *st);
 void dir_ignore(Asm *a, Stmt *st);
@@ -461,6 +462,9 @@ typedef struct {
     char ext; /* 'A'/'E' (character), 'D' (F, A), 'B'/'H' (floating point) */
     int64_t length;
     int has_len, has_nom, quoted;
+    int has_scale, has_exp; /* Sn and En modifiers */
+    int64_t scale, exp10;
+    int scale_off, exp_off; /* positions inside the operand */
     char *nom;  /* nominal text without the delimiters */
     int nom_off;
     int off, n; /* the operand inside Stmt.operands */
@@ -488,6 +492,13 @@ void dir_dc(Asm *a, Stmt *st);
 /* float.c: E, D and L constants; fills out (n bytes) or describes the
  * problem in err. ieee selects binary instead of hexadecimal floating point. */
 int float_bytes(const char *text, int ieee, int n, uint8_t *out, const char **err);
+/* E, D and L constants of every kind: ext is 0, 'H', 'Q', 'B' or 'D'; with
+ * an exponent modifier (power of 10) and a scale modifier (hexadecimal
+ * digits). 1 ok, 2 ok with a warning in *warn, 0 not a number, -1 error. */
+int float_const(const char *text, char ext, int n, long exp10, long scale, uint8_t *out,
+                const char **err, const char **warn);
+/* F and H: whole number result of text * 10^exp10 * 2^scale, rounded */
+int fixed_bytes(const char *text, int n, long exp10, long scale, uint8_t *out, const char **err);
 int dc_float(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out);
 
 /* instr.c */

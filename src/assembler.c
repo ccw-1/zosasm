@@ -33,7 +33,7 @@ typedef struct {
 } DirEntry;
 
 static const DirEntry directive_tab[] = {
-    {"AMODE", dir_mode},   {"ASSERT", dir_assert}, {"CATTR", dir_cattr},   {"CNOP", dir_cnop},   {"COM", dir_section},
+    {"AMODE", dir_mode},   {"ASSERT", dir_assert}, {"CATTR", dir_cattr},   {"CCW", dir_ccw},     {"CCW0", dir_ccw},   {"CCW1", dir_ccw},   {"CNOP", dir_cnop},   {"COM", dir_section},
     {"COPY", dir_copy},    {"CSECT", dir_section}, {"CXD", dir_cxd},   {"DC", dir_dc},       {"DROP", dir_drop},
     {"DS", dir_dc},        {"DSECT", dir_section}, {"DXD", dir_dxd},     {"EJECT", dir_ignore}, {"END", dir_end},
     {"ENTRY", dir_entry},  {"EQU", dir_equ},      {"EXTRN", dir_extrn}, {"ICTL", dir_ignore},

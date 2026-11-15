@@ -24,8 +24,8 @@ Status key: [x] done, [-] in progress, [ ] open.
 - [x] machine instructions: operand classes, `USING`/`DROP` base/displacement
       resolution, relative branches and `LARL`/`BRASL` (+ RLD relative
       immediate for other elements), extended mnemonics, `CNOP`, `ORG`
-- [x] `DC` types (done except Q S R G CU, decimal float, scale/exponent,
-      bit lengths)  C X B F H FD P Z A AD Y S V Q (+ E D L hex/binary float,
+- [x] `DC` types (done except S G, bit lengths; CU, CCW, scale/exponent, decimal float and
+      rounding modes: DESIGN.md 13)  C X B F H FD P Z A AD Y S V Q (+ E D L hex/binary float,
       CA/CE character sets), duplication/length/scale modifiers, multiple
       nominal values, `DS` with `0` boundary alignment
 - [x] literals and `LTORG` (pool at END in the first CSECT)
@@ -52,8 +52,9 @@ Status key: [x] done, [-] in progress, [ ] open.
 - [x] labeled and dependent USING, USING ranges, qualified symbols (DESIGN.md 4.3)
 - [x] `sizeof`/`offsetof`/`alignof`/`countof`, comparisons, `ASSERT`, preprocessor
       built-ins, `#(x)` stringify, `-reproducible` (DESIGN.md 12, 8)
-- [ ] HLASM feature review verdicts (HLASM-REVIEW.md): (DXD/CXD/Q/J/R done),
-      scale/exponent, A(X-Y), CU, CCW, decimal/binary float forms
+- [x] scale/exponent modifiers, CU, CCW/CCW0/CCW1, decimal float, rounding modes and special
+      values (DESIGN.md 13; not checked against IBM `as` yet)
+- [ ] `A(X-Y)` (RLD SUB), bit-length modifiers
 
 ## Phase 3 - quality
 

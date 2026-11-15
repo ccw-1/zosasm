@@ -445,8 +445,8 @@ conflict).
   `O'` yield the EBCDIC code of the letter (`T'`: DC type, `I` instruction,
   `J` section, `T` external, `U` unknown/EQU; `O'`: `A` directive, `O`
   machine instruction, `U` unknown, no `E`/`M`) or 0/1 for `D'`, which is
-  true only for symbols defined *before* the statement. `S'` is always 0
-  until scale modifiers exist; `I'` follows the HLASM formulas (F/H
+  true only for symbols defined *before* the statement. `S'` is the scale
+  modifier of an F/H/E/D/L constant (else 0, section 13); `I'` follows the HLASM formulas (F/H
   `8L-S-1`, P `2L-S-1`, Z `L-S`, E/D/L `2(L-1)-S`, otherwise 0). `K'` and
   `N'` belong to the macro language and give `ZA1032`; `ZA1031` is a
   `X'*` that cannot be evaluated; `ZA1033` is an EQU type operand outside
@@ -687,3 +687,87 @@ meaningful).
 **Preprocessor side** (section 8): `__COUNTER__`, `__BASE_FILE__`,
 `__INCLUDE_LEVEL__`, `__ZASM_VERSION__`, `__DATE__`, `__TIME__`, the `#(x)`
 stringify operator, `-reproducible`, `-version`.
+
+## 13. DC modifiers, CU, CCW, floating point forms (`dc.c`, `float.c`)
+
+**None of this has been compared with IBM `as` / HLASM output yet** (no
+z/OS access at the time of writing). The values follow the HLASM Language
+Reference, and the tests (`tests/test_dc_mod.c`) check the manual's own
+examples (`FS24'6.5'`, `HS6'-25.46'`, `FS4'-10,25.3,U268435455'`) and
+published IEEE 754 patterns; the first run on z/OS must re-check the rest.
+
+**Modifier order** `dup type [ext] [Ln] [Sn] [En] ['value']`. `n` is a
+decimal number or `(expression)`, with an optional sign. `DcSpec` has
+`has_scale/scale/has_exp/exp10`.
+
+**Scale `Sn`.** F and H: -187..346, the value is multiplied by 2^n after the
+conversion and rounded half away from zero to a whole number (the leftmost
+lost bit decides). E, D, L (hexadecimal): 0..14 (E, D) or 0..28 (L); the
+fraction is shifted right by n hex digits (an unnormalized fraction, the
+characteristic is raised). EB/DB/LB: warning `ZA2059`, the modifier is
+ignored. Decimal float and every other type: error (`ZA2057`, `ZA2056`).
+The scale becomes the `S'` attribute of the label (`I'` already used it).
+
+**Exponent `En`** (power of 10, applied before the conversion, added to the
+exponent in the nominal value). -85..75; with the B or H type
+extension -2^31..2^31-1 (the decimal D extension keeps -85..75). Only
+F, H, E, D, L. `ZA2058`.
+
+**F and H nominals** are now decimal numbers with fraction and `E`
+exponent; a leading `U` means unsigned (no sign allowed). Whole numbers keep
+the old permissive range (an n-byte constant accepts up to 2^(8n)-1 and
+down to -2^(8n-1)); 8-byte signed values stop at 2^63-1 unless `U`.
+Arithmetic is exact (`float.c` bignums). `ZA2022` not a number, `ZA2023`
+does not fit.
+
+**CU.** `CU'text'`: UTF-16 big endian, two bytes per code unit, characters
+above U+FFFF become surrogate pairs. Source text is UTF-8, so any Unicode
+character can be written. Length modifier is in **bytes**, must be even
+(`ZA2042`), truncates on the right (`ZA2049` if it would cut a surrogate
+pair) and pads with U+0020. Implicit length is the data length; `DS CU` is 2
+bytes. HLASM's `CU(1202/1208)` options (UTF-16LE, UTF-8) do not exist.
+
+**CCW, CCW0, CCW1** (`dir_ccw`). Four operands: command code, data address,
+flags, count. Doubleword aligned, 8 bytes, the label has length 8 and type
+`W`. Format 0: `cmd, addr(3 bytes, relocated like AL3), flags, 0, count`;
+format 1: `cmd, flags, count, addr(4 bytes, relocated like A)`. Operand
+ranges `ZA2064` (command and flags 0..255, count 0..65535); `ZA2065` is a
+warning for flags bits 38-39 set in format 0. Needs an active section, like
+every data directive. The statement is ZSYM kind "other" and round trips
+through `-disasm`.
+
+**Floating point.** One entry point `float_const(text, ext, n, exp10,
+scale, ...)` returns 1 ok, 2 ok with a warning (`ZA2066`), 0 not a number
+(`ZA2050`), -1 error (`ZA2053`).
+
+* Type extensions: none/`H` hexadecimal, `B` binary (IEEE 754, 4/8/16
+  bytes), `D` decimal (IEEE 754-2008 DPD, 4/8/16 bytes), `LQ` hexadecimal
+  extended aligned on a quadword.
+* **Rounding mode** at the end of the nominal value: `EB'0.1R5'`. `B`
+  and `H`: `R1` (nearest, ties away), `R4` (nearest even), `R5` toward zero,
+  `R6` toward +infinity, `R7` toward -infinity. `D`: `R8` nearest even, `R9`
+  toward zero, `R10` up, `R11` down, `R12` nearest ties away, `R13` nearest
+  ties toward zero, `R14` away from zero, `R15` round for re-round (truncate,
+  but a result ending in 0 or 5 with a dropped non-zero tail is incremented).
+  Defaults: plain and H `R1` (as before), B `R4`, D `R8`. Without B, D or H
+  a mode is an error.
+* **Special values** `'(INF)'`, `'-(INF)'`, `(QNAN)`, `(SNAN)`, `(NAN)`,
+  `(MAX)`, `(MIN)`, `(DMIN)` for B and D; `(MAX)`, `(MIN)`, `(DMIN)` for
+  hexadecimal. Bit patterns follow the manual's notes (SNAN has `01`, QNAN
+  `11` and NAN `10` in the two high fraction bits; decimal NaNs have no
+  payload and NAN = QNAN). `MIN` is the smallest normal number, `DMIN` the
+  smallest subnormal. Decimal `MIN` is 1000000E-101 (short), i.e. 1E-95.
+* **Range**: binary overflow gives a warning and infinity or the largest
+  number depending on the mode (and `-` sign); underflow to zero or to a
+  subnormal with lost bits is a warning. Decimal overflow and underflow are
+  the same. Hexadecimal overflow stays an error. A negative zero keeps its
+  sign (`EB'-0'` is `80000000`).
+* **Decimal float** works on the digit string, not on a rational: the
+  preferred exponent is kept (`DD'1.50'` is 150E-2, `DD'1.5'` is 15E-1);
+  more digits than the format has are rounded by the mode; an exponent too
+  large with spare digits is folded down (`ED'1E96'` is 1000000E90); too
+  small becomes subnormal. Short 7 digits, long 16, extended 34.
+
+**Not done.** Bit-length modifiers (`L.n`), `QY`, `S`/`SY`, `G`, the `CU`
+code page options, and the exponent modifier warning for values that are not
+exactly representable.

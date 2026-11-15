@@ -24,8 +24,9 @@ int64_t dc_alignment(const DcSpec *sp) {
     case 'E':
         return 4;
     case 'D':
-    case 'L':
         return 8;
+    case 'L':
+        return sp->ext == 'Q' ? 16 : 8;
     }
     return 1;
 }
@@ -48,6 +49,8 @@ int64_t dc_deflen(const DcSpec *sp) {
         return 8;
     case 'L':
         return 16;
+    case 'C':
+        return sp->ext == 'U' ? 2 : 1;
     }
     return 1;
 }
@@ -119,6 +122,65 @@ static int dc_number(Asm *a, Stmt *st, const char *s, size_t *i, int base, const
     return 0;
 }
 
+/* the same with an optional sign */
+static int dc_snumber(Asm *a, Stmt *st, const char *s, size_t *i, int base, const char *what,
+                      int64_t *out) {
+    int neg = 0;
+    if (s[*i] == '+' || s[*i] == '-') {
+        neg = s[*i] == '-';
+        (*i)++;
+    }
+    if (!dc_number(a, st, s, i, base, what, out)) return 0;
+    if (neg) *out = -*out;
+    return 1;
+}
+
+/* range checks of the scale and exponent modifiers (HLASM Language Reference,
+ * "Scale modifier" and "Exponent modifier") */
+static int dc_check_modifiers(Asm *a, Stmt *st, DcSpec *sp) {
+    int fixed = sp->typ == 'F' || sp->typ == 'H';
+    int fp = sp->typ == 'E' || sp->typ == 'D' || sp->typ == 'L';
+    if (!sp->has_scale && !sp->has_exp) return 1;
+    if (!fixed && !fp) {
+        int at = sp->has_scale ? sp->scale_off : sp->exp_off;
+        diag_help(dc_err(a, st, "ZA2056", sp->off + at, 1,
+                         "scale and exponent modifiers are only allowed for F, H, E, D and L "
+                         "constants, not for %c",
+                         sp->typ),
+                  "remove the modifier");
+        return 0;
+    }
+    if (sp->has_scale) {
+        int64_t lo = fixed ? -187 : 0, hi = fixed ? 346 : sp->typ == 'L' ? 28 : 14;
+        if (fp && sp->ext == 'D') {
+            dc_err(a, st, "ZA2057", sp->off + sp->scale_off, 1,
+                   "a decimal floating-point constant has no scale modifier");
+            return 0;
+        } else if (fp && sp->ext == 'B') {
+            if (a->pass == 1)
+                rep_warnf(a->rep, "ZA2059", stmt_operand_span(st, sp->off + sp->scale_off, 1),
+                          "binary floating point has no scale modifier; it is ignored");
+            sp->has_scale = 0;
+        } else if (sp->scale < lo || sp->scale > hi) {
+            dc_err(a, st, "ZA2057", sp->off + sp->scale_off, 1,
+                   "scale modifier %lld is outside %lld to %lld for type %c%s", (long long)sp->scale,
+                   (long long)lo, (long long)hi, sp->typ, fixed ? "" : " (hexadecimal)");
+            return 0;
+        }
+    }
+    if (sp->has_exp) {
+        int wide = fp && (sp->ext == 'B' || sp->ext == 'H');
+        int64_t lo = wide ? -2147483647 - 1 : -85, hi = wide ? 2147483647 : 75;
+        if (sp->exp10 < lo || sp->exp10 > hi) {
+            dc_err(a, st, "ZA2058", sp->off + sp->exp_off, 1,
+                   "exponent modifier %lld is outside %lld to %lld", (long long)sp->exp10,
+                   (long long)lo, (long long)hi);
+            return 0;
+        }
+    }
+    return 1;
+}
+
 /* Parse one operand of DC or DS: [dup]T[ext][Lnn]['nominal' | (nominal)].
  * Reports errors and returns 0 when the operand cannot be used. */
 int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp) {
@@ -173,8 +235,8 @@ int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp) {
             sp->ext = c;
             i++;
         } else if (sp->typ == 'C' && c == 'U') {
-            dc_err(a, st, "ZA9002", o.off + (int)i, 1, "CU (UTF-16) constants are not supported yet");
-            return 0;
+            sp->ext = 'U';
+            i++;
         } else if ((sp->typ == 'F' || sp->typ == 'A' || sp->typ == 'Q' || sp->typ == 'J' ||
                     sp->typ == 'R') &&
                    c == 'D') {
@@ -188,9 +250,11 @@ int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp) {
             sp->ext = c;
             i++;
         } else if (fp && c == 'D') {
-            dc_err(a, st, "ZA9002", o.off + (int)i - 1, 2,
-                   "decimal floating-point constants are not supported yet");
-            return 0;
+            sp->ext = 'D';
+            i++;
+        } else if (sp->typ == 'L' && c == 'Q') {
+            sp->ext = 'Q';
+            i++;
         }
     }
     /* modifiers */
@@ -212,9 +276,22 @@ int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp) {
         if ((c == 'S' || c == 'E') && i + 1 < len &&
             (za_isdigit((unsigned char)s[i + 1]) || s[i + 1] == '-' || s[i + 1] == '+' ||
              s[i + 1] == '(')) {
-            dc_err(a, st, "ZA9002", o.off + (int)i, 1,
-                   "scale and exponent modifiers are not supported yet");
-            return 0;
+            int64_t n;
+            int at = (int)i;
+            i++;
+            if (!dc_snumber(a, st, s, &i, o.off, c == 'S' ? "scale modifier" : "exponent modifier",
+                            &n))
+                return 0;
+            if (c == 'S') {
+                sp->has_scale = 1;
+                sp->scale = n;
+                sp->scale_off = at;
+            } else {
+                sp->has_exp = 1;
+                sp->exp10 = n;
+                sp->exp_off = at;
+            }
+            continue;
         }
         break;
     }
@@ -279,6 +356,14 @@ int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp) {
             return 0;
         }
     }
+    if (sp->typ == 'C' && sp->ext == 'U' && sp->has_len && (sp->length & 1)) {
+        diag_help(dc_err(a, st, "ZA2042", o.off, (int)len,
+                         "the length of a CU constant must be a multiple of 2, not %lld",
+                         (long long)sp->length),
+                  "UTF-16 uses 2 bytes per code unit; CU'ab' is 4 bytes long");
+        return 0;
+    }
+    if (!dc_check_modifiers(a, st, sp)) return 0;
     if (sp->dup < 0) {
         dc_err(a, st, "ZA2017", o.off, (int)len, "negative duplication factor");
         return 0;
@@ -322,6 +407,48 @@ static int dc_char(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
     size_t sl = strlen(str), n, i;
     uint8_t *b;
     uint8_t pad = 0x40;
+    if (sp->ext == 'U') { /* UTF-16, big endian, padded with U+0020 */
+        Buf bb = {0};
+        for (i = 0; i < sl;) {
+            uint32_t cp;
+            i += utf8_next(str + i, sl - i, &cp);
+            if (cp >= 0x10000) {
+                cp -= 0x10000;
+                buf_putc(&bb, (int)(0xD8 | (cp >> 18)));
+                buf_putc(&bb, (int)((cp >> 10) & 0xFF));
+                buf_putc(&bb, (int)(0xDC | ((cp >> 8) & 3)));
+                buf_putc(&bb, (int)(cp & 0xFF));
+            } else {
+                buf_putc(&bb, (int)(cp >> 8));
+                buf_putc(&bb, (int)(cp & 0xFF));
+            }
+        }
+        n = bb.len;
+        b = xmalloc(n + 2);
+        memcpy(b, bb.p ? bb.p : "", n);
+        if (sp->has_len) {
+            size_t want = (size_t)sp->length;
+            if (want < n && want >= 2 && (b[want - 2] & 0xFC) == 0xD8) {
+                diag_help(dc_err(a, st, "ZA2049", sp->nom_off - 1, (int)strlen(sp->nom) + 2,
+                                 "the length %zu cuts a UTF-16 surrogate pair in two", want),
+                          "use a length of %zu or more", want + 2);
+                return 0;
+            }
+            {
+                uint8_t *nb = xmalloc(want + 2);
+                for (i = 0; i < want; i++) nb[i] = i < n ? b[i] : (i & 1 ? 0x20 : 0x00);
+                b = nb;
+                n = want;
+            }
+        } else if (n == 0) {
+            diag_help(dc_err(a, st, "ZA2019", sp->nom_off - 1, 2,
+                             "an empty character constant needs a length modifier"),
+                      "write for example `CUL2''` for one blank");
+            return 0;
+        }
+        push_val(out, b, n);
+        return 1;
+    }
     if (sp->ext == 'A') {
         Buf bb = {0};
         pad = 0x20;
@@ -422,30 +549,25 @@ static int dc_int(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
     split_nominal(sp, &items);
     for (k = 0; k < items.n; k++) {
         char *t = str_trim(items.v[k].text);
-        int64_t v;
-        uint8_t *b;
-        if (!parse_i64(t, &v)) {
-            Diag *d = dc_err(a, st, "ZA2022", items.v[k].off, (int)strlen(items.v[k].text) + 1,
-                             "\"%s\" is not a whole decimal number", items.v[k].text);
-            if (strpbrk(t, ".Ee"))
-                diag_help(d, "fractions, exponents and scale modifiers are not supported yet for "
-                             "%c constants",
-                          sp->typ);
+        uint8_t *b = zeros((size_t)(n < 1 ? 1 : n));
+        const char *err;
+        int r = n < 1 ? 1 : fixed_bytes(t, n, (long)sp->exp10, (long)sp->scale, b, &err);
+        if (r == 0) {
+            diag_help(dc_err(a, st, "ZA2022", items.v[k].off, (int)strlen(items.v[k].text) + 1,
+                             "\"%s\" is not a decimal number", items.v[k].text),
+                      "write for example `%c'25'`, `%c'-1.5'`, `%c'2E3'` or `%c'U200'`", sp->typ,
+                      sp->typ, sp->typ, sp->typ);
             return 0;
         }
-        if (n >= 1 && n < 8) {
-            int64_t lo = -((int64_t)1 << (8 * n - 1)), hi = ((int64_t)1 << (8 * n)) - 1;
-            if (v < lo || v > hi) {
-                diag_help(dc_err(a, st, "ZA2023", items.v[k].off, (int)strlen(items.v[k].text),
-                                 "value %lld does not fit in %d byte(s)", (long long)v, n),
-                          "allowed range: %lld to %lld; use a longer length such as %cL%d",
-                          (long long)lo, (long long)hi, sp->typ, n + 1);
-                return 0;
-            }
+        if (r < 0) {
+            diag_help(dc_err(a, st, "ZA2023", items.v[k].off, (int)strlen(items.v[k].text), "%s",
+                             err),
+                      "with length %d the value, after scaling, must fit in %d byte(s); use a "
+                      "longer length such as %cL%d",
+                      n, n, sp->typ, n + 1);
+            return 0;
         }
-        b = zeros((size_t)n);
-        be_bytes((uint64_t)v, n, b);
-        push_val(out, b, (size_t)n);
+        push_val(out, b, (size_t)(n < 1 ? 0 : n));
     }
     return 1;
 }
@@ -871,6 +993,7 @@ void dir_dc(Asm *a, Stmt *st) {
             if (ls) {
                 ls->count = sp.dup * (int64_t)vals.n;
                 ls->align = sp.has_len ? 1 : (int)dc_alignment(&sp);
+                if (sp.has_scale) ls->scale = (int)sp.scale;
             }
             label_done = 1;
         }
@@ -960,3 +1083,91 @@ void dir_cxd(Asm *a, Stmt *st) {
     asm_put(a, zero, 4);
     if (a->pass == 1) a->sect->prv = 1;
 }
+
+/* CCW, CCW0 and CCW1: an 8 byte channel command word, doubleword aligned.
+ * Format 0: command, 24 bit address, flags, 0, count. Format 1: command,
+ * flags, count, 31 bit address. */
+void dir_ccw(Asm *a, Stmt *st) {
+    int fmt1 = za_streqi(st->op, "CCW1");
+    OperandVec ops = {0};
+    Symbol *ls;
+    uint8_t head[8] = {0}, tail[8] = {0};
+    int64_t cmd = 0, flags = 0, count = 0;
+    DcVal addr;
+    int ok = 1, k;
+    size_t nh, nt;
+    static const char *const what[] = {"the command code", "the data address", "the flags",
+                                       "the data count"};
+    static const int64_t maxv[] = {255, 0, 255, 65535};
+    if (!asm_need_section(a, st)) return;
+    if (!asm_ops(a, st, 4, 4, &ops)) {
+        asm_define_label(a, st, 8, 'W');
+        return;
+    }
+    asm_align(a, 8);
+    ls = asm_define_label(a, st, 8, 'W');
+    if (ls) {
+        ls->count = 1;
+        ls->align = 8;
+    }
+    memset(&addr, 0, sizeof addr);
+    addr.n = fmt1 ? 4 : 3;
+    addr.b = zeros(addr.n);
+    if (a->laid) {
+        int64_t v[4] = {0, 0, 0, 0};
+        for (k = 0; k < 4; k++) {
+            if (k == 1) {
+                Expr *e = asm_expr(a, st, ops.v[1]);
+                Value val;
+                if (!e || !asm_eval(a, st, e, 0, &val)) {
+                    ok = 0;
+                } else if (val.defined && !addr_con(a, st, e, val, (int)addr.n, &addr)) {
+                    ok = 0;
+                } else if (!val.defined) {
+                    ok = 0;
+                }
+                continue;
+            }
+            if (!asm_abs_expr(a, st, ops.v[k], what[k], &v[k])) {
+                ok = 0;
+                continue;
+            }
+            if (v[k] < 0 || v[k] > maxv[k]) {
+                diag_help(rep_errorf(a->rep, "ZA2064", asm_op_span(st, ops.v[k]),
+                                     "%s is %lld; it must be 0 to %lld", what[k], (long long)v[k],
+                                     (long long)maxv[k]),
+                          "a channel command word field is %d bit(s) wide", k == 3 ? 16 : 8);
+                st->bad = 1;
+                ok = 0;
+            }
+        }
+        cmd = v[0];
+        flags = v[2];
+        count = v[3];
+        if (ok && !fmt1 && (flags & 3))
+            rep_warnf(a->rep, "ZA2065", asm_op_span(st, ops.v[2]),
+                      "bits 38 and 39 of a format-0 CCW must be zero (flags %lld)",
+                      (long long)flags);
+    }
+    if (fmt1) {
+        head[0] = (uint8_t)cmd;
+        head[1] = (uint8_t)flags;
+        head[2] = (uint8_t)(count >> 8);
+        head[3] = (uint8_t)count;
+        nh = 4;
+        nt = 0;
+    } else {
+        head[0] = (uint8_t)cmd;
+        nh = 1;
+        tail[0] = (uint8_t)flags;
+        tail[2] = (uint8_t)(count >> 8);
+        tail[3] = (uint8_t)count;
+        nt = 4;
+    }
+    (void)ok;
+    asm_put(a, head, nh);
+    if (addr.has_rel) asm_reloc(a, (int)addr.n, addr.target, addr.cls, addr.kind);
+    asm_put(a, addr.b, addr.n);
+    if (nt) asm_put(a, tail, nt);
+}
+
