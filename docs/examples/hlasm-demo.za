@@ -1,0 +1,24 @@
+*        SUM OF TWO WORDS (HLASM, FIXED COLUMNS)
+* THE ONLY SECTION
+SUMTAB   CSECT
+R1       EQU   %r1
+R2       EQU   %r2
+R3       EQU   %r3
+R13      EQU   %r13
+R14      EQU   %r14
+R15      EQU   %r15
+         STM   R14,R3,12(R13)
+         LR    R2,R15              lower case is folded
+         USING SUMTAB,R2
+         LA    R3,TABLE
+         L     R1,0(,R3)
+         A     R1,4(,R3)
+         ST    R1,TOTAL
+         MVC   TEXT(L'TEXT),=C'done'
+         LM    R14,R3,12(R13)
+         BR    R14                 RETURN
+TABLE    DC    F'10',F'20'
+TOTAL    DS    F
+TEXT     DC    C'a string that is split at the end of the card,        and goes on here'
+         LTORG
+         END   SUMTAB

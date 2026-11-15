@@ -875,3 +875,76 @@ is in it. Table sections start a page with `-lpage`.
 **Not done.** Carets under the source for diagnostics; `CEJECT`; keeping a
 statement's diagnostics on the same page; a cross reference use inside a
 literal; a listing option for a different column layout.
+
+## 16. Converting HLASM source (`hlasm2za`, `src/convert.c`, `src/regops.c`)
+
+`hlasm2za` is a separate program (`build/hlasm2za`, `src/hlasm2za.c` holds only
+`main`) around the library function `hlasm_convert`. It links the same objects
+as `zosasm` (the instruction table, `split_operands`, the directive list).
+
+**Stages.**
+
+1. *Physical lines to statements* (`join_statement`). Tabs are expanded, CR
+   removed. The source columns are `ICTL begin,end,continue` (default
+   1,71,16; a leading `ICTL` changes them, `end` = 80 means no
+   continuation). A non blank character after the end column is a
+   continuation mark; the next line's text starts at the continue column.
+   How the pieces are joined depends on where the first one ends: inside a
+   quoted string (the piece is padded with blanks to the end column and the next
+   piece is appended as it is), after a comma (trailing blanks are dropped and
+   the leading blanks of the next piece are stripped), in a remark (the next
+   piece is added to the remark), or in the middle of a token (appended as
+   it is). Sequence numbers (after the continuation column) are dropped.
+2. *Fields* (`split_fields`): name, operation, operands (up to the first blank
+   outside quotes and parentheses, with the quote rules of the zosasm
+   reader, `is_attr_quote` included), remark. Identifiers in name, operation
+   and operands are folded to upper case outside quoted strings (`fold`; the
+   digits of an `X'..'` string too; zosasm accepts lower case hex digits,
+   so this is only for a uniform look). The
+   text after an operation that takes no operands (`CSECT`, `LTORG`, an
+   instruction whose variants all have zero slots) is a remark; it is
+   moved to a comment line before the statement because zosasm would read
+   it as operands.
+3. *Registers* (`analyse_registers`, `write_stmt`): see below.
+4. *Output* (`put_stmt`): name padded to 9, operation to 6 (operands start in
+   column 16), remark in column 36 or two blanks after the operands; an operand
+   list beyond the width (`-w`, default 100) is broken after a top level
+   comma (zosasm continues a statement after a trailing comma).
+
+**Registers.** `regops_map` (`src/regops.c`, also used by `-disasm
+-strict-registers`) walks the register positions of a statement through a
+callback: for an instruction the variant chosen for the operand count
+(`asm_choose_variant`), its register slots, and inside an address `D(X,B)` /
+`D(L,B)` / `D(R,B)` the index/register part (a length is not a register) and the
+base; for `USING` every operand but the first, for `DROP` all. The converter
+runs it twice. The analysis pass counts, for every symbol that an `EQU` makes
+equal to a number (or to a symbol of that kind: an alias, which forms a group with
+its target), the uses as a whole register operand per kind (r f a c v)
+and all occurrences in operands (`count_names`; quoted strings skipped,
+attribute references not). A group is *clean* when no member occurs other
+than as a whole register operand, and then it is written `EQU %r<n>` if its
+uses have one kind (or, with no uses, if the name suggests it: `R5` = 5) and
+the uses keep the name. Otherwise the `EQU` stays and uses in register positions
+become literals `%r<n>`. Names `R<n>`, `FR<n>`... that no `EQU` defines are
+taken as that register when the kind fits (YREGS, `COPY` members), with a
+warning. `YREGS` is replaced by `R0`..`R15` as ordinary `EQU` statements,
+which then go through the same analysis.
+
+**Left alone, reported.** Macro definitions are commented out (the macro name is
+remembered to report its calls), `COPY X` becomes `#include "x.inc"`, `ISEQ`
+is dropped, conditional assembly statements, `&` variables, sequence
+symbols, unsupported directives (`OPSYN`, `PUSH`, `POP`, `ACONTROL`, `ADATA`,
+`CEJECT`, `EXITCTL`, `REPRO`, `ALIAS`) and unknown operations (macro calls)
+stay as written with a warning. Warnings are sorted by line.
+
+**Tests.** `tests/test_convert.c` (layout, columns, continuation, ICTL,
+remarks, registers, relaxed, width, unconverted), `testdata/hlasm/` (fixed
+column inputs; `prog.za` is the expected output), the command line tests (strict and
+relaxed output assemble to the same object with `-gz0`; the guide's
+`hlasm-demo` pair), and a run over the macro library files for crashes.
+
+**Not done.** Expansion of common IBM macros, `EQUREGS`, DC forms zosasm does not
+have (`L.n`, `G`, `S`, `SY`, `QY`) are not checked, `-relaxed` keeps
+EQU names unchanged, tabs in the middle of a statement are expanded to 8 column
+stops (HLASM has no tabs), and the case of member names in `COPY` is always
+folded to lower case.

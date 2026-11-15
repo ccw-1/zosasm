@@ -1,0 +1,811 @@
+/* convert.c - HLASM source to zosasm source.
+ *
+ * Steps: (1) cut the card columns and join continuation lines into
+ * statements, (2) split the fields and fold identifiers to upper case,
+ * (3) find the EQU names that are registers and how they are used,
+ * (4) write the statements again with registers as %r1 (strict) and the
+ * zosasm layout. What cannot be converted (macros, conditional assembly) is
+ * left as it is or commented out, and reported. */
+#include <stdlib.h>
+#include <string.h>
+
+#include "asm.h"
+#include "convert.h"
+#include "isa.h"
+#include "regops.h"
+
+void conv_options_default(ConvOptions *o) {
+    o->begin = 1;
+    o->end = 71;
+    o->cont = 16;
+    o->strict = 1;
+    o->width = 100;
+    o->inc_ext = ".inc";
+}
+
+/* ---- data ----------------------------------------------------------------- */
+
+enum { K_BLANK, K_COMMENT, K_STMT };
+
+typedef struct {
+    int kind;
+    int line;   /* first physical line (1-based) */
+    char *text; /* K_COMMENT: the whole line */
+    char *name, *op, *operands, *remark; /* K_STMT, identifiers folded to upper case */
+    int alias;  /* EQU of an already known register name */
+} LS;
+
+typedef struct Sym {
+    char *name;
+    int val;            /* the number it equates */
+    struct Sym *parent; /* alias: the symbol it equates */
+    int occ;            /* occurrences in operands (not counting alias EQUs) */
+    int slot[5];        /* uses as a whole register operand, per class */
+    int pref;           /* class suggested by the name (R5 = 5), or -1 */
+    /* group results, valid at the root */
+    int gslot[5];
+    int gbad;  /* a member is used other than as a whole register operand */
+    int gpref; /* class suggested by a member's name */
+    int gclass; /* the class the EQU is written with; -1: it stays a number */
+} Sym;
+
+typedef struct {
+    int line, seq;
+    char *msg;
+} Warn;
+
+typedef struct {
+    ConvOptions o;
+    Vec(char *) lines;
+    Vec(LS) ls;
+    Vec(Warn) warns;
+    StrMap syms; /* name -> Sym * */
+    Vec(Sym *) symlist;
+    StrMap dirs;   /* known directives */
+    StrMap macros; /* macros defined (and commented out) in this file */
+    StrMap noted;  /* keys already warned about */
+    Buf out;
+} Conv;
+
+static const char CLS[] = "rfacv";
+
+static void warnf(Conv *c, int line, const char *fmt, ...) {
+    Warn w;
+    va_list ap;
+    va_start(ap, fmt);
+    w.msg = xvasprintf(fmt, ap);
+    va_end(ap);
+    w.line = line;
+    w.seq = (int)c->warns.n;
+    vec_push(&c->warns, w);
+}
+
+static int once(Conv *c, const char *key) {
+    if (strmap_get(&c->noted, key)) return 0;
+    strmap_put(&c->noted, key, c);
+    return 1;
+}
+
+static int is_digits(const char *s) {
+    if (!*s) return 0;
+    for (; *s; s++)
+        if (!za_isdigit((unsigned char)*s)) return 0;
+    return 1;
+}
+
+static int blank_str(const char *s) {
+    for (; *s; s++)
+        if (*s != ' ') return 0;
+    return 1;
+}
+
+static char *rtrim_dup(const char *s, size_t n) {
+    while (n > 0 && (s[n - 1] == ' ' || s[n - 1] == '\t')) n--;
+    return xstrndup(s, n);
+}
+
+/* ---- physical lines ---------------------------------------------------------- */
+
+static void split_lines(Conv *c, const char *text, size_t len) {
+    size_t i = 0;
+    while (i < len) {
+        Buf b = {0};
+        int col = 0;
+        while (i < len && text[i] != '\n') {
+            unsigned char ch = (unsigned char)text[i++];
+            if (ch == '\r' && (i >= len || text[i] == '\n')) continue;
+            if (ch == '\t') {
+                do {
+                    buf_putc(&b, ' ');
+                    col++;
+                } while (col % 8);
+            } else if (ch == '\f') {
+                buf_putc(&b, ' ');
+                col++;
+            } else {
+                buf_putc(&b, ch);
+                col++;
+            }
+        }
+        if (i < len) i++; /* the newline */
+        vec_push(&c->lines, xstrdup(buf_cstr(&b)));
+    }
+}
+
+/* ---- case folding ------------------------------------------------------------ */
+
+/* upper case outside quoted strings; the digits of an X string are upper
+ * cased too; attribute references (L'SYM) do not start a string */
+static char *fold(const char *s) {
+    Buf b = {0};
+    int inq = 0, hex = 0;
+    size_t i;
+    for (i = 0; s[i]; i++) {
+        unsigned char ch = (unsigned char)s[i];
+        if (inq) {
+            if (ch == '\'') {
+                if (s[i + 1] == '\'') {
+                    buf_putc(&b, '\'');
+                    buf_putc(&b, '\'');
+                    i++;
+                    continue;
+                }
+                inq = 0;
+                buf_putc(&b, '\'');
+                continue;
+            }
+            buf_putc(&b, hex ? za_toupper(ch) : ch);
+            continue;
+        }
+        if (ch == '\'' && !is_attr_quote(s, i)) {
+            size_t j = i;
+            while (j > 0 && za_isalnum((unsigned char)s[j - 1])) j--;
+            while (j < i && za_isdigit((unsigned char)s[j])) j++;
+            hex = j < i && (s[j] == 'x' || s[j] == 'X');
+            inq = 1;
+            buf_putc(&b, '\'');
+            continue;
+        }
+        buf_putc(&b, za_toupper(ch));
+    }
+    return xstrdup(buf_cstr(&b));
+}
+
+/* ---- fields ------------------------------------------------------------------ */
+
+typedef struct {
+    char *name, *op, *operands, *remark;
+    int open_quote; /* the text ends inside a quoted string */
+} Fields;
+
+static void split_fields(const char *s, Fields *f) {
+    size_t p = 0, q;
+    int depth = 0, inq = 0;
+    memset(f, 0, sizeof *f);
+    if (s[0] && !is_blank((unsigned char)s[0])) {
+        while (s[p] && !is_blank((unsigned char)s[p])) p++;
+        f->name = xstrndup(s, p);
+    } else {
+        f->name = xstrdup("");
+    }
+    while (is_blank((unsigned char)s[p])) p++;
+    q = p;
+    while (s[q] && !is_blank((unsigned char)s[q])) q++;
+    f->op = xstrndup(s + p, q - p);
+    p = q;
+    while (is_blank((unsigned char)s[p])) p++;
+    for (q = p; s[q]; q++) {
+        char ch = s[q];
+        if (inq) {
+            if (ch == '\'') {
+                if (s[q + 1] == '\'')
+                    q++;
+                else
+                    inq = 0;
+            }
+            continue;
+        }
+        if (ch == '\'') {
+            if (!is_attr_quote(s, q)) inq = 1;
+        } else if (ch == '(') {
+            depth++;
+        } else if (ch == ')') {
+            depth--;
+        } else if ((ch == ' ' || ch == '\t') && depth <= 0) {
+            break;
+        }
+    }
+    f->open_quote = inq;
+    f->operands = xstrndup(s + p, q - p);
+    while (is_blank((unsigned char)s[q])) q++;
+    f->remark = xstrdup(s + q);
+}
+
+/* the source columns of a line from index from up to the end column */
+static char *columns(const Conv *c, const char *ln, int from) {
+    size_t n = strlen(ln);
+    size_t e = (size_t)c->o.end;
+    if (e > n) e = n;
+    if (from < 0) from = 0;
+    if ((size_t)from >= e) return xstrdup("");
+    return xstrndup(ln + from, e - (size_t)from);
+}
+
+static int has_cont_mark(const Conv *c, const char *ln) {
+    return c->o.cont > 0 && c->o.end < 80 && strlen(ln) > (size_t)c->o.end && ln[c->o.end] != ' ';
+}
+
+/* ---- classification of operations ------------------------------------------- */
+
+static const char *const OPERANDLESS[] = {"CSECT", "DSECT", "RSECT", "COM", "LOCTR", "LTORG", "EJECT", "MEND", "MEXIT", "ANOP", NULL};
+static const char *const CASTMT[] = {"AIF",  "AGO",  "ANOP", "SETA", "SETB",  "SETC",    "LCLA",  "LCLB", "LCLC",
+                                     "GBLA", "GBLB", "GBLC", "ACTR", "MNOTE", "MEXIT",   "AREAD", "AINSERT", "MHELP", NULL};
+static const char *const UNSUPPORTED[] = {"OPSYN", "PUSH", "POP", "ACONTROL", "ADATA", "CEJECT", "EXITCTL", "REPRO", "ALIAS", NULL};
+
+static int in_list(const char *const *l, const char *s) {
+    for (; *l; l++)
+        if (!strcmp(*l, s)) return 1;
+    return 0;
+}
+
+static int takes_no_operands(const char *op) {
+    size_t n, i;
+    const IsaInst *v;
+    if (in_list(OPERANDLESS, op)) return 1;
+    v = isa_lookup(op, &n);
+    if (!v) return 0;
+    for (i = 0; i < n; i++) {
+        IsaSlots sl;
+        isa_slots(&v[i], &sl);
+        if (sl.n != 0) return 0;
+    }
+    return 1;
+}
+
+static int is_instruction(const char *op) {
+    size_t n;
+    return isa_lookup(op, &n) != NULL;
+}
+
+static int has_amp(const char *s) {
+    for (; *s; s++) {
+        if (*s == '&') {
+            if (s[1] == '&') {
+                s++;
+                continue;
+            }
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void classify(Conv *c, const LS *l) {
+    const char *op = l->op;
+    int bad = 1;
+    if (!*op) return;
+    if (l->name[0] == '.' || l->name[0] == '&' || op[0] == '&') {
+        warnf(c, l->line, "conditional assembly (sequence symbol or variable symbol): not converted");
+    } else if (in_list(CASTMT, op)) {
+        warnf(c, l->line, "%s is conditional assembly: not converted (use #if and #define)", op);
+    } else if (in_list(UNSUPPORTED, op)) {
+        warnf(c, l->line, "%s is not supported by zosasm%s", op,
+              strcmp(op, "ALIAS") ? "" : " (name the symbol with a quoted symbol \"name\" instead)");
+    } else if (strmap_get(&c->macros, op)) {
+        warnf(c, l->line, "call of %s, a macro defined in this file (the definition is commented out)", op);
+    } else if (!strcmp(op, "COPY") || !strcmp(op, "ISEQ") || !strcmp(op, "ICTL")) {
+        bad = 0; /* handled when writing */
+    } else if (!is_instruction(op) && !strmap_get(&c->dirs, op)) {
+        warnf(c, l->line, "%s is not an instruction or directive (a macro call?): left as it is", op);
+    } else {
+        bad = 0;
+    }
+    if (!bad && has_amp(l->operands)) warnf(c, l->line, "operand with a variable symbol (&): not converted");
+}
+
+/* ---- statements -------------------------------------------------------------- */
+
+static void push_comment(Conv *c, int line, char *text) {
+    LS l = {0};
+    l.kind = K_COMMENT;
+    l.line = line;
+    l.text = text;
+    vec_push(&c->ls, l);
+}
+
+static void push_stmt(Conv *c, int line, const char *name, const char *op, const char *operands, const char *remark) {
+    LS l = {0};
+    l.kind = K_STMT;
+    l.line = line;
+    l.name = xstrdup(name);
+    l.op = xstrdup(op);
+    l.operands = xstrdup(operands);
+    l.remark = xstrdup(remark);
+    vec_push(&c->ls, l);
+}
+
+/* a physical line as a comment: the source columns plus the continuation mark */
+static char *raw_comment(const Conv *c, const char *ln) {
+    size_t n = strlen(ln), e = (size_t)c->o.end + 1;
+    char *r;
+    if (e < n) n = e;
+    r = rtrim_dup(ln, n);
+    return xasprintf("* %s", r);
+}
+
+/* the statement that starts at physical line *i (joined with its continuation
+ * lines); *i is left on its last line */
+static char *join_statement(Conv *c, size_t *i) {
+    Buf acc = {0};
+    const char *ln = c->lines.v[*i];
+    size_t pw = (size_t)(c->o.end - (c->o.begin - 1)), last;
+    char *piece = columns(c, ln, c->o.begin - 1);
+    buf_puts(&acc, piece);
+    last = strlen(piece);
+    while (has_cont_mark(c, ln)) {
+        Fields f;
+        char *t;
+        int mode; /* 0: the next piece continues the text, 1: after a comma, 2: a remark */
+        size_t tl;
+        if (*i + 1 >= c->lines.n) {
+            warnf(c, (int)*i + 1, "continuation mark on the last line");
+            break;
+        }
+        for (; last < pw; last++) buf_putc(&acc, ' ');
+        split_fields(buf_cstr(&acc), &f);
+        if (f.open_quote) {
+            mode = 0;
+        } else {
+            t = rtrim_dup(acc.p, acc.len);
+            tl = strlen(t);
+            split_fields(t, &f);
+            if (tl > 0 && t[tl - 1] == ',' && !*f.remark) {
+                mode = 1;
+            } else if (acc.p[acc.len - 1] != ' ' && !*f.remark) {
+                mode = 0;
+            } else {
+                mode = 2;
+            }
+            if (mode != 0) {
+                acc.len = 0;
+                buf_puts(&acc, t);
+            }
+        }
+        (*i)++;
+        ln = c->lines.v[*i];
+        piece = columns(c, ln, c->o.cont - 1);
+        pw = (size_t)(c->o.end - (c->o.cont - 1));
+        last = strlen(piece);
+        if (mode == 1) {
+            char *p = piece;
+            while (*p == ' ') p++;
+            buf_puts(&acc, p);
+        } else if (mode == 2) {
+            char *p = piece;
+            while (*p == ' ') p++;
+            p = rtrim_dup(p, strlen(p));
+            if (*p) {
+                buf_putc(&acc, ' ');
+                buf_puts(&acc, p);
+            }
+        } else {
+            buf_puts(&acc, piece);
+        }
+        if (mode != 0) last = pw; /* nothing to pad */
+    }
+    return xstrdup(buf_cstr(&acc));
+}
+
+static void yregs(Conv *c, int line) {
+    int k;
+    for (k = 0; k < 16; k++) {
+        char nm[8], num[8];
+        sprintf(nm, "R%d", k);
+        sprintf(num, "%d", k);
+        push_stmt(c, line, nm, "EQU", num, "");
+    }
+}
+
+static void parse(Conv *c) {
+    size_t i;
+    int in_macro = 0, proto = 0, seen = 0;
+    for (i = 0; i < c->lines.n; i++) {
+        const char *ln = c->lines.v[i];
+        char *t = columns(c, ln, c->o.begin - 1);
+        int line = (int)i + 1;
+        size_t first, k;
+        char *joined, *fo, *fn, *fp, *remark;
+        Fields f;
+        if (in_macro) {
+            push_comment(c, line, raw_comment(c, ln));
+            if (*t != '*' && !(t[0] == '.' && t[1] == '*') && !blank_str(t)) {
+                split_fields(fold(t), &f);
+                if (proto) {
+                    proto = 0;
+                    strmap_put(&c->macros, f.op, c);
+                }
+                if (!strcmp(f.op, "MEND")) in_macro = 0;
+            }
+            continue;
+        }
+        if (blank_str(t)) {
+            LS l = {0};
+            l.kind = K_BLANK;
+            l.line = line;
+            vec_push(&c->ls, l);
+            continue;
+        }
+        if (t[0] == '*' || (t[0] == '.' && t[1] == '*')) {
+            const char *body = t[0] == '*' ? t : t + 1;
+            if (za_strncmpi(t, "*PROCESS", 8) == 0)
+                warnf(c, line, "*PROCESS options are not converted: give the equivalent options to zosasm");
+            push_comment(c, line, rtrim_dup(body, strlen(body)));
+            continue;
+        }
+        first = i;
+        joined = join_statement(c, &i);
+        split_fields(joined, &f);
+        fo = fold(f.operands);
+        fn = fold(f.name);
+        fp = fold(f.op);
+        remark = f.remark;
+        if (!seen && !strcmp(fp, "ICTL")) {
+            int b = 1, e = 71, kk = 16, nn = sscanf(fo, "%d,%d,%d", &b, &e, &kk);
+            if (nn >= 2 && b >= 1 && e > b && e <= 80) {
+                c->o.begin = b;
+                c->o.end = e;
+                c->o.cont = e == 80 ? 0 : (nn >= 3 ? kk : 16);
+            } else {
+                warnf(c, line, "ICTL operands not understood: columns unchanged");
+            }
+            seen = 1;
+            continue;
+        }
+        seen = 1;
+        if (!strcmp(fp, "MACRO") && !*fn) {
+            push_comment(c, line, xstrdup("* ---- macro definition, not converted (zosasm has no macros: use #define or #include) ----"));
+            for (k = first; k <= i; k++) push_comment(c, (int)k + 1, raw_comment(c, c->lines.v[k]));
+            in_macro = 1;
+            proto = 1;
+            warnf(c, line, "macro definition commented out");
+            continue;
+        }
+        if (!strcmp(fp, "YREGS") && !*fo) {
+            yregs(c, line);
+            continue;
+        }
+        if (*fo && takes_no_operands(fp)) {
+            /* the text is a remark; zosasm would read it as operands */
+            push_comment(c, line, xasprintf("* %s%s%s", f.operands, *remark ? " " : "", remark));
+            fo = xstrdup("");
+            remark = xstrdup("");
+        }
+        push_stmt(c, line, fn, fp, fo, remark);
+        classify(c, &c->ls.v[c->ls.n - 1]);
+    }
+}
+
+/* ---- registers ----------------------------------------------------------------- */
+
+static int cls_of(unsigned flags) { return (int)(strchr(CLS, regops_letter(flags)) - CLS); }
+
+static Sym *root(Sym *s) {
+    while (s->parent) s = s->parent;
+    return s;
+}
+
+/* "R5", "FPR2", ... : the class and number a register name suggests */
+static int reg_pattern(const char *n, int *cls, int *num) {
+    static const struct {
+        const char *pre;
+        int cls;
+    } P[] = {{"FPR", 1}, {"GR", 0}, {"FR", 1}, {"AR", 2}, {"CR", 3}, {"VR", 4}, {"R", 0}, {"F", 1}, {"V", 4}};
+    size_t i;
+    for (i = 0; i < sizeof P / sizeof P[0]; i++) {
+        size_t l = strlen(P[i].pre);
+        if (!strncmp(n, P[i].pre, l) && is_digits(n + l) && strlen(n + l) <= 2) {
+            *cls = P[i].cls;
+            *num = atoi(n + l);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static Sym *sym_new(Conv *c, const char *name, int val, Sym *parent) {
+    Sym *s = xcalloc(sizeof *s);
+    int cl, n;
+    s->name = xstrdup(name);
+    s->val = val;
+    s->parent = parent;
+    s->pref = -1;
+    s->gpref = -1;
+    s->gclass = -1;
+    if (reg_pattern(name, &cl, &n) && n == val) s->pref = cl;
+    strmap_put(&c->syms, name, s);
+    vec_push(&c->symlist, s);
+    return s;
+}
+
+/* EQU statements that equate a number or an already known register name */
+static void collect_equs(Conv *c) {
+    size_t i;
+    for (i = 0; i < c->ls.n; i++) {
+        LS *l = &c->ls.v[i];
+        OperandVec ops = {0};
+        char *t;
+        if (l->kind != K_STMT || strcmp(l->op, "EQU") || !*l->name || strmap_get(&c->syms, l->name)) continue;
+        split_operands(&ops, l->operands);
+        if (ops.n != 1) continue;
+        t = str_trim(ops.v[0].text);
+        if (is_digits(t) && strlen(t) < 6) {
+            sym_new(c, l->name, atoi(t), NULL);
+        } else if (is_symbol_like(t)) {
+            Sym *p = strmap_get(&c->syms, t);
+            if (p) {
+                sym_new(c, l->name, p->val, p);
+                l->alias = 1;
+            }
+        }
+    }
+}
+
+typedef struct {
+    Conv *c;
+    int line;
+} RCtx;
+
+static char *analyse_visit(void *ctx, const char *text, unsigned flags) {
+    RCtx *rc = ctx;
+    char *t = str_trim(text);
+    Sym *s;
+    if (is_symbol_like(t) && (s = strmap_get(&rc->c->syms, t)) != NULL) s->slot[cls_of(flags)]++;
+    return NULL;
+}
+
+static char *literal(int cl, long n) { return xasprintf("%%%c%ld", CLS[cl], n); }
+
+static char *rewrite_visit(void *ctx, const char *text, unsigned flags) {
+    RCtx *rc = ctx;
+    Conv *c = rc->c;
+    char *t = str_trim(text);
+    int cl = cls_of(flags), mx = cl == 4 ? 31 : 15;
+    Sym *s;
+    int pc, pn;
+    if (!*t || t[0] == '%') return NULL;
+    if (is_digits(t)) {
+        long n = atol(t);
+        if (n > mx) {
+            warnf(c, rc->line, "register number %ld is out of range", n);
+            return NULL;
+        }
+        return literal(cl, n);
+    }
+    if (is_symbol_like(t) && (s = strmap_get(&c->syms, t)) != NULL) {
+        Sym *r = root(s);
+        if (s->val > mx) {
+            warnf(c, rc->line, "%s equates %d, which is out of range for a register here", t, s->val);
+            return NULL;
+        }
+        if (!r->gbad && r->gclass == cl) return NULL; /* the EQU becomes %r<n>: keep the name */
+        return literal(cl, s->val);
+    }
+    if (is_symbol_like(t) && reg_pattern(t, &pc, &pn) && pc == cl && pn <= mx) {
+        if (once(c, t))
+            warnf(c, rc->line, "%s is not defined in this file: taken as register %d (YREGS, or an EQU in a COPY member?)", t, pn);
+        return literal(cl, pn);
+    }
+    warnf(c, rc->line, "operand \"%s\" is not a register number or an EQU name: left as it is", t);
+    return NULL;
+}
+
+/* occurrences of the known EQU names in an operand text */
+static void count_names(Conv *c, const char *s) {
+    size_t i = 0;
+    int inq = 0;
+    while (s[i]) {
+        unsigned char ch = (unsigned char)s[i];
+        if (inq) {
+            if (ch == '\'') {
+                if (s[i + 1] == '\'')
+                    i++;
+                else
+                    inq = 0;
+            }
+            i++;
+            continue;
+        }
+        if (ch == '\'') {
+            if (!is_attr_quote(s, i)) inq = 1;
+            i++;
+        } else if (is_sym_start(ch) && (i == 0 || s[i - 1] != '&')) {
+            size_t j = i;
+            char *tok;
+            Sym *sy;
+            while (is_sym_char((unsigned char)s[j])) j++;
+            tok = xstrndup(s + i, j - i);
+            sy = strmap_get(&c->syms, tok);
+            if (sy) sy->occ++;
+            i = j;
+        } else if (za_isdigit(ch)) {
+            while (is_sym_char((unsigned char)s[i])) i++; /* a number or hex digits: no names */
+        } else {
+            i++;
+        }
+    }
+}
+
+static int reg_kind(const char *op, RegOpsKind *k) {
+    if (!strcmp(op, "USING")) {
+        *k = RO_USING;
+        return 1;
+    }
+    if (!strcmp(op, "DROP")) {
+        *k = RO_DROP;
+        return 1;
+    }
+    if (is_instruction(op)) {
+        *k = RO_INSN;
+        return 1;
+    }
+    return 0;
+}
+
+static void analyse_registers(Conv *c) {
+    size_t i;
+    RCtx rc;
+    rc.c = c;
+    collect_equs(c);
+    for (i = 0; i < c->ls.n; i++) {
+        LS *l = &c->ls.v[i];
+        RegOpsKind k;
+        if (l->kind != K_STMT) continue;
+        rc.line = l->line;
+        if (!l->alias) count_names(c, l->operands);
+        if (reg_kind(l->op, &k)) regops_map(l->op, k, l->operands, analyse_visit, &rc);
+    }
+    for (i = 0; i < c->symlist.n; i++) {
+        Sym *s = c->symlist.v[i], *r = root(s);
+        int k, tot = 0;
+        for (k = 0; k < 5; k++) {
+            r->gslot[k] += s->slot[k];
+            tot += s->slot[k];
+        }
+        if (s->occ != tot) r->gbad = 1;
+        if (s->pref >= 0 && r->gpref < 0) r->gpref = s->pref;
+    }
+    for (i = 0; i < c->symlist.n; i++) {
+        Sym *s = c->symlist.v[i];
+        int k, n = 0, which = -1;
+        if (s->parent) continue;
+        for (k = 0; k < 5; k++)
+            if (s->gslot[k]) {
+                n++;
+                which = k;
+            }
+        if (s->gbad)
+            s->gclass = -1;
+        else if (n == 1)
+            s->gclass = which;
+        else if (n == 0)
+            s->gclass = s->gpref;
+        else
+            s->gclass = -1;
+        if (s->gclass >= 0 && s->val > (s->gclass == 4 ? 31 : 15)) s->gclass = -1;
+    }
+}
+
+/* ---- output --------------------------------------------------------------------- */
+
+static void put_stmt(Conv *c, const char *name, const char *op, const char *operands, const char *remark) {
+    Buf line = {0};
+    OperandVec ops = {0};
+    size_t i, k;
+    const size_t indent = 15;
+    buf_puts(&line, name);
+    if (strlen(name) < 9) {
+        for (k = strlen(name); k < 9; k++) buf_putc(&line, ' ');
+    } else {
+        buf_putc(&line, ' ');
+    }
+    buf_puts(&line, op);
+    if (*operands) {
+        for (k = strlen(op); k < 6; k++) buf_putc(&line, ' ');
+        if (strlen(op) >= 6) buf_putc(&line, ' ');
+        split_operands(&ops, operands);
+        for (i = 0; i < ops.n; i++) {
+            char *piece = xasprintf("%s%s", ops.v[i].text, i + 1 < ops.n ? "," : "");
+            if (i > 0 && c->o.width > 0 && line.len + strlen(piece) > (size_t)c->o.width && line.len > indent) {
+                buf_putc(&line, '\n');
+                buf_puts(&c->out, buf_cstr(&line));
+                line.len = 0;
+                for (k = 0; k < indent; k++) buf_putc(&line, ' ');
+            }
+            buf_puts(&line, piece);
+        }
+    }
+    if (*remark) {
+        if (line.len < 35) {
+            for (k = line.len; k < 35; k++) buf_putc(&line, ' ');
+        } else {
+            buf_puts(&line, "  ");
+        }
+        buf_puts(&line, remark);
+    }
+    {
+        char *s = rtrim_dup(buf_cstr(&line), line.len);
+        buf_puts(&c->out, s);
+        buf_putc(&c->out, '\n');
+    }
+}
+
+static void write_stmt(Conv *c, LS *l) {
+    const char *ops = l->operands;
+    RegOpsKind k;
+    RCtx rc;
+    rc.c = c;
+    rc.line = l->line;
+    if (!strcmp(l->op, "ISEQ")) return;
+    if (!strcmp(l->op, "COPY") && !*l->name && *str_trim(l->operands)) {
+        char *m = str_trim(l->operands), *lo = za_strlower(m);
+        buf_printf(&c->out, "#include \"%s%s\"\n", lo, c->o.inc_ext);
+        if (*l->remark) buf_printf(&c->out, "* %s\n", l->remark);
+        if (once(c, lo))
+            warnf(c, l->line, "COPY %s became #include \"%s%s\": convert that member too (hlasm2za -o %s%s)", m, lo, c->o.inc_ext, lo,
+                  c->o.inc_ext);
+        return;
+    }
+    if (c->o.strict && !strcmp(l->op, "EQU") && *l->name) {
+        Sym *s = strmap_get(&c->syms, l->name);
+        if (s) {
+            Sym *r = root(s);
+            OperandVec o = {0};
+            split_operands(&o, l->operands);
+            if (o.n == 1 && !r->gbad && r->gclass >= 0) ops = literal(r->gclass, s->val);
+        }
+    } else if (c->o.strict && reg_kind(l->op, &k) && *l->operands) {
+        char *r = regops_map(l->op, k, l->operands, rewrite_visit, &rc);
+        if (r)
+            ops = r;
+        else
+            warnf(c, l->line, "no form of %s with this number of operands: registers not converted", l->op);
+    }
+    if (ops[0] && ops[strlen(ops) - 1] == ',')
+        warnf(c, l->line, "the operand field ends with a comma: zosasm continues it on the next line");
+    put_stmt(c, l->name, l->op, ops, l->remark);
+}
+
+static int warn_cmp(const void *a, const void *b) {
+    const Warn *x = a, *y = b;
+    if (x->line != y->line) return x->line < y->line ? -1 : 1;
+    return x->seq < y->seq ? -1 : x->seq > y->seq;
+}
+
+char *hlasm_convert(const char *text, size_t len, const char *file, const ConvOptions *opt, FILE *warn, int *nwarn) {
+    Conv c;
+    size_t i;
+    memset(&c, 0, sizeof c);
+    c.o = *opt;
+    {
+        const char *const *dn;
+        size_t nd = asm_directive_names(&dn);
+        for (i = 0; i < nd; i++) strmap_put(&c.dirs, dn[i], &c);
+    }
+    split_lines(&c, text, len);
+    parse(&c);
+    if (c.o.strict) analyse_registers(&c);
+    for (i = 0; i < c.ls.n; i++) {
+        LS *l = &c.ls.v[i];
+        if (l->kind == K_BLANK)
+            buf_putc(&c.out, '\n');
+        else if (l->kind == K_COMMENT)
+            buf_printf(&c.out, "%s\n", l->text);
+        else
+            write_stmt(&c, l);
+    }
+    if (c.warns.n) qsort(c.warns.v, c.warns.n, sizeof *c.warns.v, warn_cmp);
+    for (i = 0; i < c.warns.n; i++)
+        if (warn) fprintf(warn, "%s:%d: warning: %s\n", file, c.warns.v[i].line, c.warns.v[i].msg);
+    if (nwarn) *nwarn = (int)c.warns.n;
+    return xstrdup(buf_cstr(&c.out));
+}

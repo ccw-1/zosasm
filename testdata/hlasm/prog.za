@@ -1,0 +1,32 @@
+*        SAVE AREA DEMO, FIXED COLUMNS WITH CONTINUATION
+* THE ENTRY SECTION
+PROG     CSECT
+PROG     AMODE 31
+PROG     RMODE ANY
+R0       EQU   %r0
+R1       EQU   %r1
+R2       EQU   %r2
+R12      EQU   %r12
+R13      EQU   %r13
+R14      EQU   %r14
+R15      EQU   %r15
+BASE     EQU   %r12                ALIAS
+FP0      EQU   %f0                 FLOATING POINT REGISTER 0
+         STM   R14,R12,12(R13)     SAVE CALLERS REGISTERS
+         LR    BASE,R15
+         USING PROG,BASE
+         LA    R1,WORK             lower case source
+         LD    FP0,=D'1.5'
+         MVC   MSG(L'MSG),=C'Hello, World'
+         MVC   LONGNAME(8),SOURCE
+         DC    C'A STRING THAT RUNS TO THE END OF THE CARD,            ON THE NEXT ONE'
+         DC    X'F0F1',A(PROG),AL2(LEN)  LOWER CASE HEX
+LEN      EQU   *-PROG
+         LM    R14,R12,12(R13)
+         BR    R14                 RETURN
+         LTORG
+WORK     DS    18F
+MSG      DC    CL20' '
+LONGNAME DS    CL8
+SOURCE   DC    CL8'ABCDEFGH'
+         END   PROG

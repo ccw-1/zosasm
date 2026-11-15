@@ -37,6 +37,7 @@ printed here is that file, and the test suite assembles each of them.
 13. Command reference
 14. Differences from HLASM and known limits
 15. Recipes: a subroutine, a table, build variants, source round trip
+16. Converting HLASM source: `hlasm2za`
 
 ### Feature index
 
@@ -58,6 +59,7 @@ printed here is that file, and the test suite assembles each of them.
 | every command line option | 13 | |
 | know what differs from HLASM, what is unverified | 14 | |
 | a subroutine, a table search, build variants | 15 | `linkage.za`, `table.za`, `config.za` |
+| convert existing HLASM source (columns, registers, `COPY`) | 16 | `hlasm-demo.asm`, `hlasm-demo.za` |
 
 ---
 
@@ -1237,6 +1239,7 @@ zosasm [options] source.za
 zosasm -dump file.o
 zosasm [-generic] [-o out.za] -disasm file.o
 zosasm [-o dir] -unpack file.o
+hlasm2za [options] input.asm        (section 16)
 ```
 
 | option | meaning |
@@ -1283,6 +1286,10 @@ Environment: `SOURCE_DATE_EPOCH` (seconds since 1970) fixes `__DATE__` and
 | `*-LABEL` length tricks | `sizeof`, `offsetof`, `alignof`, `countof` |
 | listing | `-l` (section 11.2), a different layout; `TITLE`, `EJECT`, `SPACE`, `PRINT` work in it; `PUNCH`, `ICTL`, `ISEQ` are accepted and ignored |
 | object deck / OBJ output | GOFF only |
+
+`hlasm2za` (section 16) converts HLASM source to the zosasm form: it cuts the
+card columns, folds names to upper case, writes registers as `%r1`, and
+reports what it cannot convert (macros, conditional assembly).
 
 **Not implemented.** `ACONTROL`, `ADATA`, `AINSERT`, `CEJECT`, `EXITCTL`,
 `MNOTE`, `OPSYN`, `PUSH`, `POP`, `REPRO`; DC types `G`, `S`, `SY`, `QY`; bit
@@ -1479,3 +1486,165 @@ The object records the file name as it was given, so assemble the unpacked
 file under the same relative name (here: from inside `src`); then the object
 is byte for byte the same. Add `-reproducible` when the source uses
 `__DATE__` or `__TIME__`.
+
+---
+
+## 16. Converting HLASM source: `hlasm2za`
+
+```sh
+hlasm2za [options] input.asm        # writes input.za
+```
+
+`hlasm2za` reads HLASM source (card columns, upper case names, `COPY`) and
+writes zosasm source, by default with every register in `%r1` notation, so
+that the result assembles with `-strict-registers`. It is a source to source
+converter that does not assemble anything and does not need the rest of the
+toolchain; it understands the *form* of HLASM statements, not macros.
+
+| option | meaning |
+|---|---|
+| `-o FILE` | output file (default: the input with the extension `.za`; `-` = standard output) |
+| `-ictl B,E,C` | source columns if the file has no `ICTL` (default `1,71,16`) |
+| `-relaxed` | leave register numbers as they are (no `%r`) |
+| `-w N` | break an operand list after a comma beyond column N (default 100, 0 = never) |
+| `-inc-ext EXT` | extension of the files `COPY` becomes `#include` of (default `.inc`) |
+| `-q` | no warnings |
+| `-version`, `-h` | version, usage |
+
+The input `-` is standard input. Warnings go to standard error as
+`file:line: warning: text`; the exit status is 0 when the output was written
+(warnings are not errors), 1 for a file that cannot be read or written, 2 for
+a bad command line.
+
+### 16.1 What is converted
+
+| HLASM | zosasm |
+|---|---|
+| columns: names in column 1, continuation mark in column 72, sequence numbers in 73-80 | free form: the columns are cut, continued statements are joined and written again with a trailing comma where they are long |
+| `ICTL begin,end,continue` | honoured for the rest of the file, then dropped |
+| lower case source | names, operations and operands in upper case; quoted strings stay as written; the digits of `X'..'` are upper cased |
+| `* comment`, `.* comment` | `* comment` |
+| remark after an operation without operands (`CSECT`, `LTORG`, `PR`...) | a `* remark` comment line before the statement (zosasm would read it as operands) |
+| `YREGS` | `R0 EQU %r0` ... `R15 EQU %r15` |
+| `R12 EQU 12`, `BASE EQU R12` | `R12 EQU %r12`, `BASE EQU %r12` (see 16.2) |
+| register numbers: `LR 1,2`, `L 1,4(2,3)`, `USING *,12`, `DROP 12` | `LR %r1,%r2`, `L %r1,4(%r2,%r3)`, `USING *,%r12`, `DROP %r12` (floating point, access, control and vector registers get `%f`, `%a`, `%c`, `%v`) |
+| `COPY name` | `#include "name.inc"` (lower case); convert the member itself with `hlasm2za -o name.inc` |
+| `ISEQ` | dropped |
+| `MACRO` ... `MEND` | commented out, one `*` line per source line (zosasm has no macros: use `#define` or `#include`) |
+
+An example. The HLASM input (72 columns, a continued operand and a continued
+string):
+
+<!-- example: hlasm-demo.asm -->
+```
+*        SUM OF TWO WORDS (HLASM, FIXED COLUMNS)
+SUMTAB   CSECT                          THE ONLY SECTION
+R1       EQU   1
+R2       EQU   2
+R3       EQU   3
+R13      EQU   13
+R14      EQU   14
+R15      EQU   15
+         STM   R14,R3,12(R13)
+         lr    r2,r15                   lower case is folded
+         using sumtab,r2
+         LA    R3,TABLE
+         L     R1,0(,R3)
+         A     R1,4(,R3)
+         ST    R1,TOTAL
+         MVC   TEXT(L'TEXT),                                           X
+               =C'done'
+         LM    R14,R3,12(R13)
+         BR    R14                      RETURN
+TABLE    DC    F'10',F'20'
+TOTAL    DS    F
+TEXT     DC    C'a string that is split at the end of the card,        X
+               and goes on here'
+         LTORG
+         END   SUMTAB
+```
+
+`hlasm2za hlasm-demo.asm` writes:
+
+<!-- example: hlasm-demo.za -->
+```za
+*        SUM OF TWO WORDS (HLASM, FIXED COLUMNS)
+* THE ONLY SECTION
+SUMTAB   CSECT
+R1       EQU   %r1
+R2       EQU   %r2
+R3       EQU   %r3
+R13      EQU   %r13
+R14      EQU   %r14
+R15      EQU   %r15
+         STM   R14,R3,12(R13)
+         LR    R2,R15              lower case is folded
+         USING SUMTAB,R2
+         LA    R3,TABLE
+         L     R1,0(,R3)
+         A     R1,4(,R3)
+         ST    R1,TOTAL
+         MVC   TEXT(L'TEXT),=C'done'
+         LM    R14,R3,12(R13)
+         BR    R14                 RETURN
+TABLE    DC    F'10',F'20'
+TOTAL    DS    F
+TEXT     DC    C'a string that is split at the end of the card,        and goes on here'
+         LTORG
+         END   SUMTAB
+```
+
+The result assembles with `zosasm -strict-registers`. Converting it with
+`-relaxed` gives the same object (`-gz0`), which is how the converter is
+tested: the strict and the relaxed text must assemble to the same bytes.
+
+### 16.2 Registers
+
+A number or a name in a register position of an instruction (the table tells
+which operands are registers, as in 6.1), or in `USING` and `DROP`, is
+rewritten like this:
+
+* a plain number becomes `%r<n>` (`%f`, `%a`, `%c`, `%v` by the position);
+* a name made with `NAME EQU <number>` or `NAME EQU <other register name>` is
+  a **register name** if *every* use of it, and of the names it is an alias of,
+  is as a whole register operand, always of the same kind. Its `EQU` is then
+  written `NAME EQU %r<n>` (or `%f...`) and the uses keep the name;
+* a name that is also used in another way (a displacement, a length,
+  `LEN EQU 4` used in `LA 1,LEN`...) or in registers of two kinds stays a
+  number: its `EQU` is not changed and each use in a register position
+  becomes `%r<n>`;
+* a name that is not defined in this file but looks like a register (`R5`,
+  `FR2`, `AR1`...) is taken as that register when its kind fits the position,
+  with a warning: it probably comes from `YREGS` or a `COPY` member (for such
+  members convert them too; `R5 EQU 5` there becomes `R5 EQU %r5`);
+* anything else (an expression, an unknown name) stays as it is, with a
+  warning, and assembling with `-strict-registers` will point at it.
+
+Literals (`=A(5)`) and everything that is not a register operand are never
+touched.
+
+### 16.3 What is not converted
+
+These are left as they are (or commented out) and reported, so that you can
+fix them by hand; zosasm then fails on them with a message that names the
+line.
+
+* **Macro definitions** are commented out, calls of them stay: replace them by
+  `#define` macros, by `#include` files or by the statements they would
+  generate. Calls of **system macros** (`SAVE`, `RETURN`, `WTO`, `GETMAIN`,
+  `STORAGE`, `SYSSTATE`...) are reported as "not an instruction or directive
+  (a macro call?)"; the macro library is not available to zosasm, so write
+  what they expand to.
+* **Conditional assembly** (`AIF`, `AGO`, `ANOP`, `SETA`, `SETB`, `SETC`,
+  `LCL*`, `GBL*`, `ACTR`, `MNOTE`, `&variables`, `.sequence` symbols): use
+  `#if`, `#define`, `ASSERT` and `#error` (section 3).
+* **`OPSYN`, `PUSH`, `POP`, `ACONTROL`, `ADATA`, `CEJECT`, `EXITCTL`,
+  `REPRO`, `ALIAS`**: not supported by zosasm (`ALIAS` is replaced by quoted
+  symbols, section 2.2).
+* **`*PROCESS`** lines: the options go on the zosasm command line.
+* DC and DS forms that zosasm does not have (section 14) are not checked by
+  the converter; assemble the result to find them.
+
+The converter works on the text only, so after converting run the result
+through `zosasm -strict-registers -Werror`; a clean run means that nothing
+was left behind.

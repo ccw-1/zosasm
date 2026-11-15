@@ -173,6 +173,32 @@ awk '/^<!-- listing: tables -->$/{f=1;next} f&&/^```/{if(inb){exit}else{inb=1;ne
 cmp -s $T/g2.txt $T/g2.guide; check "docs/GUIDE.md shows the using.za tables" $? 0
 $X -l $T/nodir/x.lst -o $T/hl.o docs/examples/hello.za 2>/dev/null; check "-l to an unwritable file" $? 1
 
+# hlasm2za: HLASM source to zosasm source
+H=build/hlasm2za
+$H -o $T/prog.za testdata/hlasm/prog.asm 2>$T/err; check "hlasm2za exit" $? 0
+[ ! -s $T/err ]; check "hlasm2za: no warnings for plain code" $? 0
+cmp -s $T/prog.za testdata/hlasm/prog.za; check "hlasm2za output is testdata/hlasm/prog.za" $? 0
+$X -strict-registers -Werror -o $T/prog.o $T/prog.za 2>$T/err; check "the converted program assembles with -strict-registers" $? 0
+$H -relaxed -o $T/progr.za testdata/hlasm/prog.asm 2>/dev/null
+$X -gz0 -Werror -o $T/progr.o $T/progr.za 2>/dev/null; check "-relaxed output assembles" $? 0
+$X -gz0 -strict-registers -o $T/prog0.o $T/prog.za 2>/dev/null
+cmp -s $T/prog0.o $T/progr.o; check "strict and relaxed conversions give the same object" $? 0
+cp testdata/hlasm/prog.asm $T/cp.asm; $H $T/cp.asm 2>/dev/null; [ -s $T/cp.za ]; check "hlasm2za default output name" $? 0
+$H -o - testdata/hlasm/prog.asm 2>/dev/null | cmp -s - testdata/hlasm/prog.za; check "hlasm2za -o -" $? 0
+$H - < testdata/hlasm/prog.asm 2>/dev/null | cmp -s - testdata/hlasm/prog.za; check "hlasm2za from standard input" $? 0
+$H -o - docs/examples/hlasm-demo.asm 2>/dev/null | cmp -s - docs/examples/hlasm-demo.za; check "docs/examples/hlasm-demo.za is the conversion of hlasm-demo.asm" $? 0
+$X -strict-registers -Werror -o $T/demo.o docs/examples/hlasm-demo.za 2>/dev/null; check "hlasm-demo.za assembles with -strict-registers" $? 0
+$H -o $T/nc.za testdata/hlasm/notconv.asm 2>$T/err; check "hlasm2za with unconvertible statements: exit 0" $? 0
+grep -q 'notconv.asm:3: warning: macro definition commented out' $T/err; check "hlasm2za reports the macro" $? 0
+grep -q 'notconv.asm:9: warning: AIF is conditional assembly' $T/err; check "hlasm2za reports AIF" $? 0
+grep -q '^#include "myregs.inc"$' $T/nc.za; check "COPY becomes #include" $? 0
+$H -q -o $T/nc.za testdata/hlasm/notconv.asm 2>$T/err; [ ! -s $T/err ]; check "hlasm2za -q" $? 0
+$H -o $T/none.za $T/missing.asm 2>/dev/null; check "hlasm2za missing file" $? 1
+$H 2>/dev/null; check "hlasm2za without input" $? 2
+$H -bogus x 2>/dev/null; check "hlasm2za bad option" $? 2
+$H -version | grep -q '^hlasm2za 0'; check "hlasm2za -version" $? 0
+printf '          lr 1,2\n' | $H -ictl 10,71,16 - 2>/dev/null | grep -q 'LR    %r1,%r2'; check "hlasm2za -ictl" $? 0
+
 rm -rf $T
 [ $fail = 0 ] && echo "tests/run_cli_tests.sh: ok"
 exit $fail

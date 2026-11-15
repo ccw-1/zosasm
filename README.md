@@ -6,7 +6,7 @@ files. Portable C99; it needs only a C compiler and `make`.
 ## Building
 
 ```sh
-make          # build/zosasm
+make          # build/zosasm and build/hlasm2za
 make test     # unit tests and command line tests
 make clean
 ```
@@ -23,6 +23,7 @@ build/zosasm -dump hello.o                  # print the GOFF structure
 build/zosasm -disasm hello.o -o back.za     # GOFF object -> zosasm source
 build/zosasm -E prog.za                     # show the preprocessed source
 build/zosasm -l prog.lst -o prog.o prog.za  # assemble and write a listing
+build/hlasm2za old.asm                      # HLASM source -> zosasm source (old.za)
 ```
 
 Options: `-o FILE`, `-DNAME[=VAL]`, `-Idir`, `-E`, `-dump FILE`,
@@ -56,6 +57,12 @@ Registers can be written as numbers, as names you defined (`R1 EQU 1`; a bare
 `R1` is not predefined) or GNU style: `lgr %r1,%R2`, `ler %f2,%f4`, `vl %v1,0(%r2)`. With
 `-strict-registers` only the GNU style and names made with `NAME EQU %r12`
 are accepted in register positions (guide section 6.1).
+
+`hlasm2za FILE.asm` converts HLASM source (card columns, upper case, `COPY`,
+registers as numbers or `EQU` names) to zosasm source, by default with
+`%r1` registers so that the result assembles with `-strict-registers`; macros
+and conditional assembly are commented out or left and reported (guide
+section 16, DESIGN.md section 16).
 
 ## Regenerating the instruction table (developers only)
 

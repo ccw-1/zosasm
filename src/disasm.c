@@ -15,6 +15,7 @@
 
 #include "asm.h"
 #include "disasm.h"
+#include "regops.h"
 #include "ebcdic.h"
 #include "goff.h"
 #include "isa.h"
@@ -936,16 +937,7 @@ static int class_exec(const DClass *c) {
 }
 
 static void reg_text(Buf *o, unsigned flags, int64_t v) {
-    char l = 'r';
-    if (flags & F_VR)
-        l = 'v';
-    else if (flags & F_FPR)
-        l = 'f';
-    else if (flags & F_AR)
-        l = 'a';
-    else if (flags & F_CR)
-        l = 'c';
-    buf_printf(o, "%%%c%lld", l, (long long)v);
+    buf_printf(o, "%%%c%lld", regops_letter(flags), (long long)v);
 }
 
 static void addend_text(Buf *o, int64_t a) {
@@ -1462,75 +1454,24 @@ static int64_t strict_reg_value(Ctx *x, const char *text) {
     return -1;
 }
 
-/* the operand text with the register written as %r<n> (unchanged if it is not one) */
-static char *strict_reg_operand(Ctx *x, const char *text, unsigned flags) {
-    int64_t v = strict_reg_value(x, text);
+/* regops_map callback: the register position written as %r<n>; NULL keeps it */
+static char *strict_visit(void *ctx, const char *text, unsigned flags) {
+    int64_t v = strict_reg_value(ctx, text);
     Buf b = {0};
-    if (v < 0 || v > ((flags & F_VR) ? 31 : 15)) return xstrdup(text);
+    if (v < 0 || v > ((flags & F_VR) ? 31 : 15)) return NULL;
     reg_text(&b, flags, v);
     return xstrdup(buf_cstr(&b));
-}
-
-static void put_operands(Buf *out, const OperandVec *v) {
-    size_t i;
-    for (i = 0; i < v->n; i++) {
-        if (i) buf_putc(out, ',');
-        buf_puts(out, v->v[i].text);
-    }
 }
 
 /* the operands of a statement with every register written as %r1; the text
  * itself when the statement is none of the kinds that are known to take registers */
 static char *strict_operands(Ctx *x, const ZStmt *s, const char *operands) {
-    OperandVec ops = {0};
-    size_t i;
-    Buf out = {0};
-    if (s->kind == ZS_USING || s->kind == ZS_DROP) {
-        split_operands(&ops, operands);
-        for (i = (s->kind == ZS_USING ? 1 : 0); i < ops.n; i++) ops.v[i].text = strict_reg_operand(x, ops.v[i].text, F_GPR);
-        put_operands(&out, &ops);
-        return xstrdup(buf_cstr(&out));
-    }
-    if (s->kind == ZS_INSN) {
-        size_t nv;
-        const IsaInst *vars = isa_lookup(s->op, &nv), *in;
-        IsaSlots sl;
-        split_operands(&ops, operands);
-        in = vars ? asm_choose_variant(vars, nv, (int)ops.n) : NULL;
-        if (!in) return xstrdup(operands);
-        isa_slots(in, &sl);
-        for (i = 0; i < ops.n && (int)i < sl.n; i++) {
-            const IsaSlot *sk = &sl.s[i];
-            const IsaOperand *f = isa_op(in, (size_t)sk->field);
-            if (sk->kind == SK_REG) {
-                ops.v[i].text = strict_reg_operand(x, ops.v[i].text, f->flags);
-            } else if (sk->kind == SK_ADDR) {
-                AddrOp ad = asm_split_addr(ops.v[i]);
-                Buf t = {0};
-                size_t k;
-                if (!ad.parens || str_trim(ops.v[i].text)[0] == '=') continue; /* not a literal */
-                for (k = 0; k < ad.inner.n; k++) {
-                    unsigned fl = F_GPR;
-                    int is_mid = ad.inner.n == 2 ? k == 0 : sk->mid >= 0;
-                    if (is_mid && sk->mid >= 0) {
-                        if (sk->mid_kind == 'L') continue;
-                        fl = isa_op(in, (size_t)sk->mid)->flags;
-                    } else if (is_mid) {
-                        continue;
-                    }
-                    ad.inner.v[k].text = strict_reg_operand(x, ad.inner.v[k].text, fl);
-                }
-                buf_puts(&t, ad.disp.text);
-                buf_putc(&t, '(');
-                put_operands(&t, &ad.inner);
-                buf_putc(&t, ')');
-                ops.v[i].text = xstrdup(buf_cstr(&t));
-            }
-        }
-        put_operands(&out, &ops);
-        return xstrdup(buf_cstr(&out));
-    }
-    return xstrdup(operands);
+    char *r = NULL;
+    if (s->kind == ZS_USING || s->kind == ZS_DROP)
+        r = regops_map("", s->kind == ZS_USING ? RO_USING : RO_DROP, operands, strict_visit, x);
+    else if (s->kind == ZS_INSN)
+        r = regops_map(s->op, RO_INSN, operands, strict_visit, x);
+    return r ? r : xstrdup(operands);
 }
 
 static void strict_prepare(Ctx *x, const ZBlock *b) {
