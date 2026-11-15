@@ -1,0 +1,332 @@
+/* emit.c - write a Module as a GOFF object file. */
+#include <stdlib.h>
+#include <string.h>
+
+#include "asm.h"
+#include "ebcdic.h"
+#include "goff.h"
+
+/* GOFF name of an unnamed control section */
+#define PRIV_NAME "$PRIV000000"
+#define DEFAULT_CLASS "B_TEXT"
+
+static const char *sect_name(const Section *s) { return s->name[0] ? s->name : PRIV_NAME; }
+
+static void set_name(GoffESD *e, const char *s) {
+    e->name = ebcdic_from_source(s, strlen(s), &e->name_len);
+}
+
+static XAttr *xattr_of(const Module *m, const char *name) {
+    Symbol *s = module_symbol(m, name);
+    return s ? s->xattr : NULL;
+}
+
+static void apply_xattr(GoffBehavior *b, const XAttr *x) {
+    if (!x) return;
+    if (x->linkage >= 0) b->linkage = (uint8_t)x->linkage;
+    if (x->scope >= 0) b->scope = (uint8_t)x->scope;
+    if (x->reference) {
+        if (!strcmp(x->reference, "CODE"))
+            b->executable = GOFF_EXEC_CODE;
+        else if (!strcmp(x->reference, "DATA"))
+            b->executable = GOFF_EXEC_DATA;
+    }
+}
+
+/* the ESD item that carries the text of the class */
+static uint32_t class_target(const Class *c) { return c->part ? c->pr : c->esd; }
+
+#define TRY(call)                                                  \
+    do {                                                           \
+        const char *e_ = (call);                                   \
+        if (e_) {                                                  \
+            snprintf(err, errsz, "%s", e_);                        \
+            return NULL;                                           \
+        }                                                          \
+    } while (0)
+
+static const char *emit_class(GoffWriter *w, const Module *m, Section *s, Class *c) {
+    uint8_t rmode = c->attr.rmode ? c->attr.rmode : s->rmode;
+    uint8_t align = c->attr.align >= 0 ? (uint8_t)c->attr.align : GOFF_ALIGN_DBL;
+    uint8_t exec = (uint8_t)c->attr.executable;
+    uint8_t loading = GOFF_LOAD_NOW;
+    uint8_t bind = c->attr.merge ? GOFF_BIND_MERGE : GOFF_BIND_CAT;
+    GoffESD ed, pr;
+    const char *e;
+    if (!strcmp(c->name, DEFAULT_CLASS)) exec = GOFF_EXEC_CODE;
+    if (c->attr.noload)
+        loading = GOFF_NOLOAD;
+    else if (c->attr.defload)
+        loading = GOFF_LOAD_DEFERRED;
+
+    memset(&ed, 0, sizeof ed);
+    ed.type = GOFF_ED;
+    ed.parent = s->esd;
+    set_name(&ed, c->name);
+    ed.name_space = GOFF_NS_NORMAL;
+    ed.length = (uint32_t)c->len;
+    ed.attr.amode = s->amode;
+    ed.attr.rmode = rmode;
+    ed.attr.bind_algorithm = bind;
+    ed.attr.tasking = (uint8_t)c->attr.tasking;
+    ed.attr.read_only = c->attr.readonly;
+    ed.attr.executable = exec;
+    ed.attr.loading = loading;
+    ed.attr.alignment = align;
+    ed.attr.common = s->kind == K_COM;
+    if (c->attr.fill >= 0) {
+        ed.has_fill = 1;
+        ed.fill = (uint8_t)c->attr.fill;
+    }
+    if (c->part) {
+        ed.length = 0;
+        ed.name_space = GOFF_NS_PARTS3;
+    }
+    if ((e = goff_write_esd(w, &ed)) != NULL) return e;
+    c->esd = ed.id;
+    if (!c->part) return NULL;
+
+    memset(&pr, 0, sizeof pr);
+    pr.type = GOFF_PR;
+    pr.parent = ed.id;
+    set_name(&pr, c->part);
+    pr.name_space = GOFF_NS_PARTS3;
+    pr.length = (uint32_t)c->len;
+    pr.attr.amode = s->amode;
+    pr.attr.bind_algorithm = bind;
+    pr.attr.tasking = (uint8_t)c->attr.tasking;
+    pr.attr.read_only = c->attr.readonly;
+    pr.attr.executable = exec;
+    pr.attr.loading = loading;
+    pr.attr.alignment = align;
+    if (c->attr.priority >= 0) pr.priority = (uint32_t)c->attr.priority;
+    apply_xattr(&pr.attr, xattr_of(m, c->part));
+    if (c->attr.fill >= 0) {
+        pr.has_fill = 1;
+        pr.fill = (uint8_t)c->attr.fill;
+    }
+    if ((e = goff_write_esd(w, &pr)) != NULL) return e;
+    c->pr = pr.id;
+    return NULL;
+}
+
+static void init_ld(GoffESD *ld, Section *s, const char *name, const Class *c) {
+    uint8_t exec = (uint8_t)c->attr.executable;
+    if (!strcmp(c->name, DEFAULT_CLASS)) exec = GOFF_EXEC_CODE;
+    memset(ld, 0, sizeof *ld);
+    ld->type = GOFF_LD;
+    ld->parent = c->part ? c->pr : c->esd;
+    set_name(ld, name);
+    ld->name_space = GOFF_NS_NORMAL;
+    ld->attr.amode = s->amode;
+    ld->attr.executable = exec;
+    ld->attr.scope = GOFF_SCOPE_MODULE;
+}
+
+static int reloc_item(const Class *c, const Reloc *r, GoffReloc *g, char *err, size_t errsz) {
+    memset(g, 0, sizeof *g);
+    g->pid = class_target(c);
+    g->offset = (uint32_t)r->off;
+    g->length = (uint8_t)r->len;
+    g->action = GOFF_ACTION_ADD;
+    switch (r->kind) {
+    case REL_ADDR:
+    case REL_V:
+        g->reference = GOFF_REF_ADDRESS;
+        break;
+    case REL_RI:
+        g->reference = GOFF_REF_RELIMM;
+        break;
+    default:
+        snprintf(err, errsz, "relocation kind %d is not supported", (int)r->kind);
+        return 0;
+    }
+    if (r->target) {
+        g->rid = r->target->esd;
+        g->referent = GOFF_REFERENT_LABEL;
+        if (r->kind == REL_V) g->store = 1;
+    } else if (r->cls) {
+        if (r->cls->part) {
+            g->rid = r->cls->pr;
+            g->referent = GOFF_REFERENT_LABEL;
+        } else {
+            g->rid = r->cls->esd;
+            g->referent = GOFF_REFERENT_CLASS;
+        }
+    } else {
+        snprintf(err, errsz, "relocation without a target");
+        return 0;
+    }
+    return 1;
+}
+
+typedef struct {
+    int64_t off;
+    size_t idx;
+} SortKey;
+
+static int cmp_key(const void *x, const void *y) {
+    const SortKey *a = x, *b = y;
+    if (a->off != b->off) return a->off < b->off ? -1 : 1;
+    return a->idx < b->idx ? -1 : a->idx > b->idx;
+}
+
+uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
+    GoffWriter *w = goff_writer_new(1);
+    SectionVec secs = {0};
+    SymbolVec er_order = {0};
+    SectionVec er_parent = {0};
+    GoffReloc *rlds = NULL;
+    size_t nrld = 0, caprld = 0;
+    GoffEnd end;
+    size_t si, ci, i, k;
+    const uint8_t *out;
+    uint8_t *copy;
+
+    for (si = 0; si < m->sections.n; si++)
+        if (m->sections.v[si]->kind != K_DSECT) vec_push(&secs, m->sections.v[si]);
+    if (secs.n == 0) {
+        snprintf(err, errsz, "no control section to emit");
+        return NULL;
+    }
+
+    /* external references: one ER per symbol, below the first section using it */
+#define NOTE(SYM, SECT)                                           \
+    do {                                                          \
+        Symbol *sym_ = (SYM);                                     \
+        int seen_ = 0;                                            \
+        size_t q_;                                                \
+        if (sym_) {                                               \
+            for (q_ = 0; q_ < er_order.n; q_++)                   \
+                if (er_order.v[q_] == sym_) seen_ = 1;            \
+            if (!seen_) {                                         \
+                vec_push(&er_order, sym_);                        \
+                vec_push(&er_parent, (SECT));                     \
+            }                                                     \
+        }                                                         \
+    } while (0)
+    for (si = 0; si < secs.n; si++)
+        for (ci = 0; ci < secs.v[si]->classes.n; ci++) {
+            Class *c = secs.v[si]->classes.v[ci];
+            for (k = 0; k < c->relocs.n; k++) NOTE(c->relocs.v[k].target, secs.v[si]);
+        }
+    if (m->entry) {
+        Symbol *e = module_symbol(m, m->entry);
+        if (e && e->kind == SYM_EXT) NOTE(e, secs.v[0]);
+    }
+#undef NOTE
+
+    for (si = 0; si < secs.n; si++) {
+        Section *s = secs.v[si];
+        GoffESD sd;
+        memset(&sd, 0, sizeof sd);
+        sd.type = GOFF_SD;
+        set_name(&sd, sect_name(s));
+        sd.attr.common = s->kind == K_COM;
+        TRY(goff_write_esd(w, &sd));
+        s->esd = sd.id;
+        for (ci = 0; ci < s->classes.n; ci++) TRY(emit_class(w, m, s, s->classes.v[ci]));
+
+        /* label definitions: the section name and ENTRY symbols */
+        if (s->name[0]) {
+            GoffESD ld;
+            Symbol *sym;
+            init_ld(&ld, s, s->name, s->classes.v[0]);
+            apply_xattr(&ld.attr, xattr_of(m, s->name));
+            TRY(goff_write_esd(w, &ld));
+            sym = module_symbol(m, s->name);
+            if (sym) sym->ld_esd = ld.id;
+        }
+        for (i = 0; i < m->sym_order.n; i++) {
+            Symbol *sym = m->sym_order.v[i];
+            Class *c;
+            GoffESD ld;
+            int64_t off;
+            if (!sym->entry || sym->sect != s || !strcmp(sym->name, s->name)) continue;
+            if (sym->kind != SYM_LABEL && sym->kind != SYM_SECT) continue;
+            c = sym->piece->cls;
+            off = sym->piece->start;
+            if (sym->kind == SYM_LABEL) off += sym->off;
+            init_ld(&ld, s, sym->name, c);
+            ld.offset = (uint32_t)off;
+            apply_xattr(&ld.attr, sym->xattr);
+            TRY(goff_write_esd(w, &ld));
+            sym->ld_esd = ld.id;
+        }
+        for (i = 0; i < er_order.n; i++) {
+            Symbol *sym = er_order.v[i];
+            GoffESD er;
+            if (er_parent.v[i] != s) continue;
+            memset(&er, 0, sizeof er);
+            er.type = GOFF_ER;
+            er.parent = s->esd;
+            set_name(&er, sym->name);
+            er.name_space = GOFF_NS_NORMAL;
+            er.attr.amode = s->amode;
+            er.attr.scope = GOFF_SCOPE_SECTION;
+            if (sym->weak) {
+                er.attr.bind_strength = GOFF_STRENGTH_WEAK;
+                er.attr.scope = GOFF_SCOPE_MODULE;
+            }
+            apply_xattr(&er.attr, sym->xattr);
+            TRY(goff_write_esd(w, &er));
+            sym->esd = er.id;
+        }
+    }
+
+    /* text */
+    for (si = 0; si < secs.n; si++)
+        for (ci = 0; ci < secs.v[si]->classes.n; ci++) {
+            Class *c = secs.v[si]->classes.v[ci];
+            if (c->len == 0) continue;
+            TRY(goff_write_text(w, class_target(c), 0, GOFF_STYLE_BYTE, c->data, (size_t)c->len));
+        }
+
+    /* relocations, in offset order per class */
+    for (si = 0; si < secs.n; si++)
+        for (ci = 0; ci < secs.v[si]->classes.n; ci++) {
+            Class *c = secs.v[si]->classes.v[ci];
+            SortKey *keys = xmalloc((c->relocs.n + 1) * sizeof *keys);
+            for (k = 0; k < c->relocs.n; k++) {
+                keys[k].off = c->relocs.v[k].off;
+                keys[k].idx = k;
+            }
+            qsort(keys, c->relocs.n, sizeof *keys, cmp_key);
+            for (k = 0; k < c->relocs.n; k++) {
+                if (nrld == caprld) {
+                    caprld = caprld ? caprld * 2 : 64;
+                    rlds = xrealloc(rlds, caprld * sizeof *rlds);
+                }
+                if (!reloc_item(c, &c->relocs.v[keys[k].idx], &rlds[nrld], err, errsz)) {
+                    free(keys);
+                    return NULL;
+                }
+                nrld++;
+            }
+            free(keys);
+        }
+    if (nrld > 0) TRY(goff_write_rld(w, rlds, nrld));
+    free(rlds);
+
+    /* END */
+    memset(&end, 0, sizeof end);
+    if (m->entry) {
+        Symbol *e = module_symbol(m, m->entry);
+        if (e->kind == SYM_EXT) {
+            end.kind = GOFF_ENTRY_BYNAME;
+            end.name = ebcdic_from_source(e->name, strlen(e->name), &end.name_len);
+        } else {
+            Class *c = e->piece->cls;
+            int64_t off = e->piece->start;
+            if (e->kind == SYM_LABEL) off += e->off;
+            end.kind = GOFF_ENTRY_BYID;
+            end.esdid = class_target(c);
+            end.offset = (uint32_t)off;
+            end.amode = c->sect->amode;
+        }
+    }
+    TRY(goff_write_end(w, &end, &out, len));
+    copy = xmalloc(*len + 1);
+    memcpy(copy, out, *len);
+    return copy;
+}

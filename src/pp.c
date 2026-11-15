@@ -1,0 +1,987 @@
+/* pp.c - the preprocessor. See pp.h and DESIGN.md section 8.
+ *
+ * Diagnostic codes: ZA4010-4012 #include, ZA4020-4023 #define/#undef,
+ * ZA4030-4034 conditionals, ZA4040-4042 macro calls, ZA4050/4051 #error and
+ * #warning, ZA4060/4061 #pragma, ZA4070 trailing comma. */
+#include <stdlib.h>
+#include <string.h>
+
+#include "pp.h"
+
+#define PP_MAX_DEPTH 32
+#define PP_MAX_EXPANSION ((size_t)4 << 20)
+
+typedef Vec(char *) StrVec;
+
+typedef struct {
+    char *name;
+    int fn, nparams;
+    char **params;
+    char *body; /* a real '\n' marks a line break */
+    Span def;
+} Macro;
+
+typedef struct {
+    int parent_active, taking, taken, seen_else;
+    Span sp;
+} Cond;
+
+typedef struct Active {
+    const Macro *m;
+    const struct Active *next;
+} Active;
+
+typedef struct {
+    Reporter *rep;
+    const PpOptions *opt;
+    StrMap macros;
+    SrcVec *out;
+    Vec(Cond) conds;
+    const char *file; /* file being read */
+    int line;         /* its current logical line */
+    int depth;
+    /* state of the line being expanded */
+    Span use;
+    const Macro *first;
+    size_t produced;
+    int too_big;
+    /* trailing comma check */
+    int comma;
+} Pp;
+
+/* ---- lexical helpers --------------------------------------------------- */
+
+/* end of the identifier (or number) starting at s[i]; "##" ends it */
+static size_t ident_end(const char *s, size_t i) {
+    size_t j = i;
+    if (s[j] == '#' && s[j + 1] == '#') return j;
+    if (is_sym_char((unsigned char)s[j])) j++;
+    while (is_sym_char((unsigned char)s[j]) && !(s[j] == '#' && s[j + 1] == '#')) j++;
+    return j;
+}
+
+static const char *skip_blanks(const char *s) {
+    while (is_blank((unsigned char)*s)) s++;
+    return s;
+}
+
+static char *rtrim_dup(const char *s) {
+    size_t n = strlen(s);
+    while (n > 0 && (is_blank((unsigned char)s[n - 1]) || s[n - 1] == '\r')) n--;
+    return xstrndup(s, n);
+}
+
+static Span line_span(const Pp *pp, const char *text) {
+    return span_make(pp->file, pp->line, 1, (int)strlen(text));
+}
+
+static int active(const Pp *pp) {
+    return pp->conds.n == 0 || pp->conds.v[pp->conds.n - 1].taking;
+}
+
+static int in_active(const Active *a, const Macro *m) {
+    for (; a; a = a->next)
+        if (a->m == m) return 1;
+    return 0;
+}
+
+/* ---- macro expansion --------------------------------------------------- */
+
+static char *expand(Pp *pp, const char *s, const Active *act);
+
+/* s[i] is '('; collect the comma separated arguments; returns the index of
+ * the closing ')' or -1 */
+static long parse_args(const char *s, size_t i, StrVec *args) {
+    int depth = 0;
+    size_t j, start = i + 1;
+    for (j = i; s[j]; j++) {
+        char c = s[j];
+        if (c == '\'' && !is_attr_quote(s, j)) {
+            long q = close_quote(s, j);
+            if (q < 0) return -1;
+            j = (size_t)q;
+        } else if (c == '(') {
+            depth++;
+        } else if (c == ')') {
+            if (--depth == 0) {
+                char *a = xstrndup(s + start, j - start);
+                char *t = str_trim(a);
+                free(a);
+                vec_push(args, t);
+                return (long)j;
+            }
+        } else if (c == ',' && depth == 1) {
+            char *a = xstrndup(s + start, j - start);
+            char *t = str_trim(a);
+            free(a);
+            vec_push(args, t);
+            start = j + 1;
+        }
+    }
+    return -1;
+}
+
+/* Replace the parameters in the body (outside quotes) and apply "##". */
+static char *substitute(const Macro *m, char **raw, char **exp) {
+    Buf out = {0};
+    const char *b = m->body;
+    size_t i = 0, n = strlen(b);
+    int paste_prev = 0;
+    while (i < n) {
+        unsigned char c = (unsigned char)b[i];
+        if (c == '#' && b[i + 1] == '#') {
+            while (out.len > 0 && is_blank((unsigned char)out.p[out.len - 1])) out.len--;
+            i += 2;
+            while (is_blank((unsigned char)b[i])) i++;
+            paste_prev = 1;
+            continue;
+        }
+        if (c == '\'' && !is_attr_quote(b, i)) {
+            long q = close_quote(b, i);
+            size_t e = q < 0 ? n : (size_t)q + 1;
+            buf_write(&out, b + i, e - i);
+            i = e;
+        } else if (c == '\'') {
+            buf_putc(&out, c);
+            i++;
+        } else if (za_isdigit(c) || is_sym_start(c)) {
+            size_t j = ident_end(b, i), k;
+            int p = -1, paste_next;
+            if (is_sym_start(c) && b[j] != '\'') {
+                char *id = xstrndup(b + i, j - i);
+                int q;
+                for (q = 0; q < m->nparams; q++)
+                    if (!strcmp(m->params[q], id)) p = q;
+                free(id);
+            }
+            k = j;
+            while (is_blank((unsigned char)b[k])) k++;
+            paste_next = b[k] == '#' && b[k + 1] == '#';
+            if (p >= 0)
+                buf_puts(&out, (paste_prev || paste_next) ? raw[p] : exp[p]);
+            else
+                buf_write(&out, b + i, j - i);
+            i = j;
+        } else {
+            buf_putc(&out, c);
+            i++;
+        }
+        paste_prev = 0;
+    }
+    return xstrdup(buf_cstr(&out));
+}
+
+static char *expand(Pp *pp, const char *s, const Active *act) {
+    Buf out = {0};
+    size_t i = 0, n = strlen(s);
+    while (i < n && !pp->too_big) {
+        unsigned char c = (unsigned char)s[i];
+        if (c == '\'') {
+            if (is_attr_quote(s, i)) {
+                buf_putc(&out, c);
+                i++;
+            } else {
+                long q = close_quote(s, i);
+                size_t e = q < 0 ? n : (size_t)q + 1;
+                buf_write(&out, s + i, e - i);
+                i = e;
+            }
+        } else if (za_isdigit(c)) {
+            size_t j = ident_end(s, i);
+            buf_write(&out, s + i, j - i);
+            i = j;
+        } else if (is_sym_start(c) && !(c == '#' && s[i + 1] == '#')) {
+            size_t j = ident_end(s, i);
+            char *id = xstrndup(s + i, j - i);
+            const Macro *m = NULL;
+            if (!act) pp->use = span_make(pp->file, pp->line, (int)i + 1, (int)(j - i));
+            if (s[j] == '\'') { /* L'X, C'..': a prefix, not a name */
+                buf_puts(&out, id);
+                i = j;
+            } else if (!strcmp(id, "__FILE__")) {
+                buf_puts(&out, pp->file);
+                i = j;
+            } else if (!strcmp(id, "__LINE__")) {
+                buf_printf(&out, "%d", pp->line);
+                i = j;
+            } else if ((m = strmap_get(&pp->macros, id)) == NULL || in_active(act, m)) {
+                buf_puts(&out, id);
+                i = j;
+            } else {
+                char *body = NULL;
+                size_t next = j;
+                if (m->fn) {
+                    StrVec args = {0};
+                    long end;
+                    if (s[j] != '(') {
+                        buf_puts(&out, id);
+                        i = j;
+                        free(id);
+                        continue;
+                    }
+                    end = parse_args(s, j, &args);
+                    if (end < 0) {
+                        diag_help(rep_errorf(pp->rep, "ZA4041", pp->use,
+                                             "unterminated argument list in call of macro \"%s\"",
+                                             id),
+                                  "a macro call must be closed on the same line");
+                        buf_puts(&out, id);
+                        i = j;
+                        free(id);
+                        continue;
+                    }
+                    next = (size_t)end + 1;
+                    if ((int)args.n != m->nparams && !(m->nparams == 0 && args.n == 1 &&
+                                                       args.v[0][0] == 0)) {
+                        Diag *d = rep_errorf(pp->rep, "ZA4040", pp->use,
+                                             "macro \"%s\" takes %d argument%s, %d given", id,
+                                             m->nparams, m->nparams == 1 ? "" : "s", (int)args.n);
+                        diag_note(d, m->def, "macro \"%s\" is defined here", id);
+                        buf_write(&out, s + i, next - i);
+                        i = next;
+                        free(id);
+                        continue;
+                    }
+                    {
+                        char **raw = args.v, **exp = xmalloc((args.n + 1) * sizeof *exp);
+                        size_t q;
+                        for (q = 0; q < args.n; q++) exp[q] = expand(pp, args.v[q], act);
+                        body = substitute(m, raw, exp);
+                    }
+                } else {
+                    body = substitute(m, NULL, NULL);
+                }
+                if (!pp->first) pp->first = m;
+                {
+                    Active na;
+                    char *r;
+                    na.m = m;
+                    na.next = act;
+                    r = expand(pp, body, &na);
+                    pp->produced += strlen(r);
+                    if (pp->produced > PP_MAX_EXPANSION) {
+                        rep_errorf(pp->rep, "ZA4042", pp->use,
+                                   "the expansion of macro \"%s\" is too large", id);
+                        pp->too_big = 1;
+                    }
+                    buf_puts(&out, r);
+                    free(r);
+                }
+                free(body);
+                i = next;
+            }
+            free(id);
+        } else {
+            buf_putc(&out, c);
+            i++;
+        }
+    }
+    if (pp->too_big && i < n) buf_puts(&out, s + i);
+    return xstrdup(buf_cstr(&out));
+}
+
+/* ---- macro definition -------------------------------------------------- */
+
+/* "\n" outside quotes becomes a real line break */
+static char *convert_breaks(const char *b) {
+    Buf out = {0};
+    size_t i = 0, n = strlen(b);
+    while (i < n) {
+        if (b[i] == '\'' && !is_attr_quote(b, i)) {
+            long q = close_quote(b, i);
+            size_t e = q < 0 ? n : (size_t)q + 1;
+            buf_write(&out, b + i, e - i);
+            i = e;
+        } else if (b[i] == '\\' && b[i + 1] == 'n') {
+            buf_putc(&out, '\n');
+            i += 2;
+        } else {
+            buf_putc(&out, b[i++]);
+        }
+    }
+    return xstrdup(buf_cstr(&out));
+}
+
+static int same_macro(const Macro *a, const Macro *b) {
+    int i;
+    if (a->fn != b->fn || a->nparams != b->nparams || strcmp(a->body, b->body)) return 0;
+    for (i = 0; i < a->nparams; i++)
+        if (strcmp(a->params[i], b->params[i])) return 0;
+    return 1;
+}
+
+/* p: the text after "#define" */
+static void do_define(Pp *pp, const char *p, Span sp) {
+    const char *name_p;
+    size_t j;
+    Macro *m;
+    char *trimmed;
+    const Macro *old;
+    p = skip_blanks(p);
+    name_p = p;
+    j = is_sym_start((unsigned char)*p) ? ident_end(p, 0) : 0;
+    if (j == 0) {
+        diag_help(rep_errorf(pp->rep, "ZA4020", sp, "#define needs a macro name"),
+                  "for example: #define COUNT 10   or   #define SAVE(r) STM r,r,0(13)");
+        return;
+    }
+    m = xcalloc(sizeof *m);
+    m->name = xstrndup(name_p, j);
+    m->def = sp;
+    if (!strcmp(m->name, "__FILE__") || !strcmp(m->name, "__LINE__") ||
+        !strcmp(m->name, "defined")) {
+        rep_errorf(pp->rep, "ZA4021", sp, "\"%s\" cannot be defined as a macro", m->name);
+        return;
+    }
+    p += j;
+    if (*p == '(') { /* function-like: the '(' follows the name directly */
+        StrVec ps = {0};
+        m->fn = 1;
+        p++;
+        p = skip_blanks(p);
+        if (*p != ')') {
+            for (;;) {
+                size_t e;
+                p = skip_blanks(p);
+                e = is_sym_start((unsigned char)*p) ? ident_end(p, 0) : 0;
+                if (e == 0) {
+                    diag_help(rep_errorf(pp->rep, "ZA4022", sp, "bad parameter list of macro \"%s\"",
+                                         m->name),
+                              "parameters are names separated by commas");
+                    return;
+                }
+                vec_push(&ps, xstrndup(p, e));
+                p = skip_blanks(p + e);
+                if (*p == ',') {
+                    p++;
+                    continue;
+                }
+                break;
+            }
+        }
+        if (*p != ')') {
+            diag_help(rep_errorf(pp->rep, "ZA4022", sp, "bad parameter list of macro \"%s\"",
+                                 m->name),
+                      "the parameter list must end with ')'");
+            return;
+        }
+        p++;
+        m->nparams = (int)ps.n;
+        m->params = ps.v;
+    }
+    p = skip_blanks(p);
+    trimmed = rtrim_dup(p);
+    m->body = convert_breaks(trimmed);
+    free(trimmed);
+    old = strmap_get(&pp->macros, m->name);
+    if (old && !same_macro(old, m)) {
+        Diag *d = rep_warnf(pp->rep, "ZA4023", sp, "macro \"%s\" is redefined", m->name);
+        diag_note(d, old->def, "previous definition");
+    }
+    strmap_put(&pp->macros, m->name, m);
+}
+
+/* ---- #if expressions ---------------------------------------------------- */
+
+typedef struct {
+    Pp *pp;
+    Span sp;
+    const char *s;
+    size_t i;
+    int bad, quiet;
+} Ev;
+
+static void ev_fail(Ev *e, const char *code, const char *msg) {
+    if (!e->bad && !e->quiet) {
+        e->bad = 1;
+        rep_errorf(e->pp->rep, code, e->sp, "%s", msg);
+    }
+    e->bad = 1;
+}
+
+static void ev_ws(Ev *e) {
+    while (is_blank((unsigned char)e->s[e->i])) e->i++;
+}
+
+static int64_t ev_bin(Ev *e, int level);
+
+static int64_t ev_unary(Ev *e) {
+    int64_t v;
+    ev_ws(e);
+    switch (e->s[e->i]) {
+    case '!':
+        e->i++;
+        return !ev_unary(e);
+    case '-':
+        e->i++;
+        return -ev_unary(e);
+    case '+':
+        e->i++;
+        return ev_unary(e);
+    case '~':
+        e->i++;
+        return ~ev_unary(e);
+    case '(':
+        e->i++;
+        v = ev_bin(e, 1);
+        ev_ws(e);
+        if (e->s[e->i] != ')') {
+            ev_fail(e, "ZA4030", "missing ')' in the #if expression");
+            return 0;
+        }
+        e->i++;
+        return v;
+    }
+    if (za_isdigit((unsigned char)e->s[e->i])) {
+        size_t j = e->i;
+        int64_t n = 0;
+        if (e->s[j] == '0' && (e->s[j + 1] == 'x' || e->s[j + 1] == 'X')) {
+            j += 2;
+            if (!za_isxdigit((unsigned char)e->s[j])) {
+                ev_fail(e, "ZA4030", "invalid number in the #if expression");
+                return 0;
+            }
+            for (; za_isxdigit((unsigned char)e->s[j]); j++) {
+                int d = za_isdigit((unsigned char)e->s[j]) ? e->s[j] - '0'
+                                                            : za_toupper(e->s[j]) - 'A' + 10;
+                n = n * 16 + d;
+            }
+        } else {
+            for (; za_isdigit((unsigned char)e->s[j]); j++) n = n * 10 + (e->s[j] - '0');
+        }
+        if (is_sym_char((unsigned char)e->s[j])) {
+            ev_fail(e, "ZA4030", "invalid number in the #if expression");
+            return 0;
+        }
+        e->i = j;
+        return n;
+    }
+    if (is_sym_start((unsigned char)e->s[e->i])) { /* an unknown name is 0 */
+        e->i = e->i + ident_end(e->s + e->i, 0);
+        return 0;
+    }
+    ev_fail(e, "ZA4030", e->s[e->i] ? "unexpected text in the #if expression"
+                                    : "the #if expression is incomplete");
+    return 0;
+}
+
+static int match_op(Ev *e, const char *op) {
+    size_t n = strlen(op);
+    ev_ws(e);
+    if (strncmp(e->s + e->i, op, n)) return 0;
+    /* '<' must not take the first character of "<=" etc. */
+    e->i += n;
+    return 1;
+}
+
+static int64_t ev_bin(Ev *e, int level) {
+    int64_t l, r;
+    if (level > 6) return ev_unary(e);
+    l = ev_bin(e, level + 1);
+    for (;;) {
+        ev_ws(e);
+        switch (level) {
+        case 1:
+            if (match_op(e, "||")) {
+                int sq = e->quiet;
+                if (l) e->quiet = 1;
+                r = ev_bin(e, 2);
+                e->quiet = sq;
+                l = l || r;
+                continue;
+            }
+            break;
+        case 2:
+            if (match_op(e, "&&")) {
+                int sq = e->quiet;
+                if (!l) e->quiet = 1;
+                r = ev_bin(e, 3);
+                e->quiet = sq;
+                l = l && r;
+                continue;
+            }
+            break;
+        case 3:
+            if (match_op(e, "==")) {
+                l = l == ev_bin(e, 4);
+                continue;
+            }
+            if (match_op(e, "!=")) {
+                l = l != ev_bin(e, 4);
+                continue;
+            }
+            break;
+        case 4:
+            if (match_op(e, "<=")) {
+                l = l <= ev_bin(e, 5);
+                continue;
+            }
+            if (match_op(e, ">=")) {
+                l = l >= ev_bin(e, 5);
+                continue;
+            }
+            if (match_op(e, "<")) {
+                l = l < ev_bin(e, 5);
+                continue;
+            }
+            if (match_op(e, ">")) {
+                l = l > ev_bin(e, 5);
+                continue;
+            }
+            break;
+        case 5:
+            if (match_op(e, "+")) {
+                l = l + ev_bin(e, 6);
+                continue;
+            }
+            if (match_op(e, "-")) {
+                l = l - ev_bin(e, 6);
+                continue;
+            }
+            break;
+        case 6:
+            if (match_op(e, "*")) {
+                l = l * ev_bin(e, 7);
+                continue;
+            }
+            if (match_op(e, "/") || match_op(e, "%")) {
+                int is_div = e->s[e->i - 1] == '/';
+                r = ev_bin(e, 7);
+                if (r == 0) {
+                    ev_fail(e, "ZA4034", "division by zero in the #if expression");
+                    l = 0;
+                } else {
+                    l = is_div ? l / r : l % r;
+                }
+                continue;
+            }
+            break;
+        }
+        return l;
+    }
+}
+
+/* replace defined(X) / defined X by 1 or 0 */
+static char *replace_defined(Pp *pp, const char *s) {
+    Buf out = {0};
+    size_t i = 0, n = strlen(s);
+    while (i < n) {
+        if (is_sym_start((unsigned char)s[i])) {
+            size_t j = ident_end(s, i);
+            if (j - i == 7 && !strncmp(s + i, "defined", 7)) {
+                size_t k = j;
+                int paren = 0;
+                char *id;
+                while (is_blank((unsigned char)s[k])) k++;
+                if (s[k] == '(') {
+                    paren = 1;
+                    k++;
+                    while (is_blank((unsigned char)s[k])) k++;
+                }
+                j = is_sym_start((unsigned char)s[k]) ? ident_end(s, k) : k;
+                if (j > k) {
+                    id = xstrndup(s + k, j - k);
+                    buf_puts(&out, strmap_get(&pp->macros, id) ? "1" : "0");
+                    free(id);
+                    if (paren) {
+                        while (is_blank((unsigned char)s[j])) j++;
+                        if (s[j] == ')') j++;
+                    }
+                    i = j;
+                    continue;
+                }
+            }
+            buf_write(&out, s + i, j - i);
+            i = j;
+        } else {
+            buf_putc(&out, s[i++]);
+        }
+    }
+    return xstrdup(buf_cstr(&out));
+}
+
+/* evaluates the controlling expression; *ok is 0 after an error */
+static int64_t eval_if(Pp *pp, const char *text, Span sp, int *ok) {
+    char *a, *b;
+    Ev e;
+    int64_t v;
+    pp->use = sp;
+    pp->first = NULL;
+    pp->produced = 0;
+    pp->too_big = 0;
+    a = replace_defined(pp, text);
+    b = expand(pp, a, NULL);
+    memset(&e, 0, sizeof e);
+    e.pp = pp;
+    e.sp = sp;
+    e.s = b;
+    v = ev_bin(&e, 1);
+    ev_ws(&e);
+    if (!e.bad && e.s[e.i]) ev_fail(&e, "ZA4030", "unexpected text in the #if expression");
+    free(a);
+    free(b);
+    *ok = !e.bad;
+    return v;
+}
+
+/* ---- directives -------------------------------------------------------- */
+
+static const char *const directive_names[] = {"define", "elif",    "else",  "endif", "error",  "if",
+                                              "ifdef",  "ifndef",  "include", "pragma", "undef", "warning"};
+
+/* Recognise "#name"; only these names are directives, so a label such as
+ * #COUNT is not affected. */
+static const char *directive_of(const char *t, const char **rest) {
+    const char *p;
+    size_t i, n;
+    if (t[0] != '#') return NULL;
+    p = skip_blanks(t + 1);
+    for (n = 0; za_isalpha((unsigned char)p[n]) && p[n] >= 'a' && p[n] <= 'z'; n++) {
+    }
+    if (is_sym_char((unsigned char)p[n])) return NULL;
+    for (i = 0; i < sizeof directive_names / sizeof directive_names[0]; i++)
+        if (strlen(directive_names[i]) == n && !strncmp(directive_names[i], p, n)) {
+            *rest = p + n;
+            return directive_names[i];
+        }
+    return NULL;
+}
+
+static void push_cond(Pp *pp, int taking, Span sp) {
+    Cond c;
+    int pa = active(pp);
+    c.parent_active = pa;
+    c.taking = pa && taking;
+    c.taken = c.taking;
+    c.seen_else = 0;
+    c.sp = sp;
+    vec_push(&pp->conds, c);
+}
+
+static char *join_path(const char *dir, const char *name) {
+    size_t n = strlen(dir);
+    if (name[0] == '/' || n == 0) return xstrdup(name);
+    if (dir[n - 1] == '/') return xasprintf("%s%s", dir, name);
+    return xasprintf("%s/%s", dir, name);
+}
+
+static void pp_file(Pp *pp, const char *file, const char *text, size_t len);
+
+static void do_include(Pp *pp, const char *rest, Span sp) {
+    const char *p = skip_blanks(rest), *e;
+    char open = *p, close;
+    char *name, *path = NULL, *src = NULL;
+    size_t srclen = 0, i;
+    StrVec tried = {0};
+    if (open != '"' && open != '<') {
+        diag_help(rep_errorf(pp->rep, "ZA4010", sp, "#include needs a file name"),
+                  "write #include \"file\" or #include <file>");
+        return;
+    }
+    close = open == '"' ? '"' : '>';
+    e = strchr(p + 1, close);
+    if (!e || e == p + 1) {
+        diag_help(rep_errorf(pp->rep, "ZA4010", sp, "#include needs a file name"),
+                  "write #include \"file\" or #include <file>");
+        return;
+    }
+    name = xstrndup(p + 1, (size_t)(e - p - 1));
+    if (pp->depth >= PP_MAX_DEPTH) {
+        rep_errorf(pp->rep, "ZA4012", sp, "#include nested too deeply (recursive include?)");
+        return;
+    }
+    if (open == '"' && name[0] != '/') { /* the directory of the including file first */
+        const char *sl = strrchr(pp->file, '/');
+        char *dir = sl ? xstrndup(pp->file, (size_t)(sl - pp->file + 1)) : xstrdup("");
+        vec_push(&tried, join_path(dir, name));
+        free(dir);
+    }
+    for (i = 0; i < pp->opt->include_dirs.n; i++)
+        vec_push(&tried, join_path(pp->opt->include_dirs.v[i], name));
+    for (i = 0; i < tried.n && !src; i++) {
+        src = read_file(tried.v[i], &srclen);
+        if (src) path = tried.v[i];
+    }
+    if (!src) {
+        Diag *d = rep_errorf(pp->rep, "ZA4011", sp, "cannot open include file \"%s\"", name);
+        if (tried.n > 0) {
+            Buf b = {0};
+            for (i = 0; i < tried.n; i++) buf_printf(&b, "%s%s", i ? ", " : "", tried.v[i]);
+            diag_help(d, "searched: %s", buf_cstr(&b));
+        } else {
+            diag_help(d, "no directory to search; add one with -Idir");
+        }
+        return;
+    }
+    rep_add_source(pp->rep, path, src, srclen);
+    pp->depth++;
+    pp_file(pp, path, src, srclen);
+    pp->depth--;
+}
+
+static void do_pragma(Pp *pp, const char *rest, Span sp) {
+    char *r = str_trim(rest), *word, *arg;
+    size_t n = 0;
+    while (r[n] && !is_blank((unsigned char)r[n])) n++;
+    word = za_strlower(xstrndup(r, n));
+    arg = str_trim(r + n);
+    if (!strcmp(word, "title")) {
+        size_t l = strlen(arg);
+        if (l < 2 || (arg[0] != '"' && arg[0] != '\'') || arg[l - 1] != arg[0])
+            diag_help(rep_errorf(pp->rep, "ZA4061", sp, "#pragma title needs a quoted text"),
+                      "for example: #pragma title \"my program\"");
+    } else if (!strcmp(word, "eject")) {
+        if (*arg) rep_errorf(pp->rep, "ZA4061", sp, "#pragma eject takes no operand");
+    } else if (!strcmp(word, "space")) {
+        size_t k;
+        for (k = 0; arg[k] && za_isdigit((unsigned char)arg[k]); k++) {
+        }
+        if (arg[k]) rep_errorf(pp->rep, "ZA4061", sp, "#pragma space takes a number of lines");
+    } else if (!strcmp(word, "print")) {
+        if (strcmp(arg, "on") && strcmp(arg, "off"))
+            diag_help(rep_errorf(pp->rep, "ZA4061", sp, "#pragma print needs \"on\" or \"off\""),
+                      "for example: #pragma print off");
+    } else {
+        Diag *d = rep_warnf(pp->rep, "ZA4060", sp, "unknown #pragma \"%s\" is ignored", word);
+        const char *const known[] = {"title", "eject", "space", "print"};
+        const char *c = diag_closest(word, known, 4);
+        if (c) diag_help(d, "did you mean \"%s\"?", c);
+    }
+}
+
+static void do_directive(Pp *pp, const char *dir, const char *rest, const char *text) {
+    Span sp = line_span(pp, text);
+    int is_cond = !strcmp(dir, "if") || !strcmp(dir, "ifdef") || !strcmp(dir, "ifndef") ||
+                  !strcmp(dir, "elif") || !strcmp(dir, "else") || !strcmp(dir, "endif");
+    if (!is_cond && !active(pp)) return;
+
+    if (!strcmp(dir, "define")) {
+        do_define(pp, rest, sp);
+    } else if (!strcmp(dir, "undef")) {
+        const char *p = skip_blanks(rest);
+        size_t j = is_sym_start((unsigned char)*p) ? ident_end(p, 0) : 0;
+        if (j == 0) {
+            rep_errorf(pp->rep, "ZA4020", sp, "#undef needs a macro name");
+        } else {
+            char *id = xstrndup(p, j);
+            if (strmap_get(&pp->macros, id)) strmap_put(&pp->macros, id, NULL);
+            free(id);
+        }
+    } else if (!strcmp(dir, "include")) {
+        do_include(pp, rest, sp);
+    } else if (!strcmp(dir, "if")) {
+        int ok = 1, v = 0;
+        if (active(pp)) v = eval_if(pp, rest, sp, &ok) != 0;
+        push_cond(pp, ok && v, sp);
+    } else if (!strcmp(dir, "ifdef") || !strcmp(dir, "ifndef")) {
+        const char *p = skip_blanks(rest);
+        size_t j = is_sym_start((unsigned char)*p) ? ident_end(p, 0) : 0;
+        int def = 0;
+        if (j == 0) {
+            if (active(pp)) rep_errorf(pp->rep, "ZA4030", sp, "#%s needs a macro name", dir);
+        } else {
+            char *id = xstrndup(p, j);
+            def = strmap_get(&pp->macros, id) != NULL;
+            free(id);
+        }
+        push_cond(pp, !strcmp(dir, "ifdef") ? def : !def, sp);
+    } else if (!strcmp(dir, "elif") || !strcmp(dir, "else")) {
+        Cond *c;
+        if (pp->conds.n == 0) {
+            rep_errorf(pp->rep, "ZA4031", sp, "#%s without a matching #if", dir);
+            return;
+        }
+        c = &pp->conds.v[pp->conds.n - 1];
+        if (c->seen_else) {
+            Diag *d = rep_errorf(pp->rep, "ZA4032", sp, "#%s after #else", dir);
+            diag_note(d, c->sp, "the conditional was opened here");
+            return;
+        }
+        if (!strcmp(dir, "else")) {
+            c->seen_else = 1;
+            c->taking = c->parent_active && !c->taken;
+            c->taken = 1;
+        } else if (c->parent_active && !c->taken) {
+            int ok = 1;
+            int64_t v = eval_if(pp, rest, sp, &ok);
+            c->taking = ok && v != 0;
+            c->taken = c->taking;
+        } else {
+            c->taking = 0;
+        }
+    } else if (!strcmp(dir, "endif")) {
+        if (pp->conds.n == 0)
+            rep_errorf(pp->rep, "ZA4031", sp, "#endif without a matching #if");
+        else
+            pp->conds.n--;
+    } else if (!strcmp(dir, "error")) {
+        char *m = str_trim(rest);
+        rep_errorf(pp->rep, "ZA4050", sp, "#error %s", m);
+        free(m);
+    } else if (!strcmp(dir, "warning")) {
+        char *m = str_trim(rest);
+        rep_warnf(pp->rep, "ZA4051", sp, "#warning %s", m);
+        free(m);
+    } else if (!strcmp(dir, "pragma")) {
+        do_pragma(pp, rest, sp);
+    }
+}
+
+/* ---- ordinary lines ----------------------------------------------------- */
+
+/* where the remark of a line starts; text before is subject to expansion */
+static size_t remark_start(const char *s) {
+    size_t p = 0, n = strlen(s), end;
+    if (s[0] == '*' || s[0] == ';') return 0;
+    while (s[p] && !is_blank((unsigned char)s[p])) p++; /* name */
+    while (is_blank((unsigned char)s[p])) p++;
+    if (!s[p]) return n;
+    if (!scan_operand_end(s, p, &end)) return n; /* operation, may be NAME(a, b) */
+    p = end;
+    while (is_blank((unsigned char)s[p])) p++;
+    if (!s[p]) return n;
+    if (!scan_operand_end(s, p, &end)) return n;
+    return end;
+}
+
+static int is_comment_or_blank(const char *s) {
+    if (s[0] == '*' || s[0] == ';') return 1;
+    return *skip_blanks(s) == 0;
+}
+
+/* trailing comma check on one output line */
+static void check_comma(Pp *pp, const char *part, int line) {
+    size_t p = 0, end;
+    int continuation = pp->comma;
+    if (is_comment_or_blank(part)) return;
+    if (pp->comma && !is_blank((unsigned char)part[0]))
+        diag_help(rep_warnf(pp->rep, "ZA4070", span_make(pp->file, line, 1, 1),
+                            "the previous line ends with a comma, so this line is read as its "
+                            "continuation"),
+                  "a continuation line should start with a blank; remove the trailing comma if "
+                  "this is a new statement");
+    pp->comma = 0;
+    if (continuation) {
+        while (is_blank((unsigned char)part[p])) p++;
+    } else {
+        while (part[p] && !is_blank((unsigned char)part[p])) p++;
+        while (is_blank((unsigned char)part[p])) p++;
+        if (!part[p]) return;
+        if (!scan_operand_end(part, p, &end)) return;
+        p = end;
+        while (is_blank((unsigned char)part[p])) p++;
+        if (!part[p]) return;
+    }
+    if (scan_operand_end(part, p, &end) && end > p && part[end - 1] == ',') pp->comma = 1;
+}
+
+static void emit_part(Pp *pp, const char *part) {
+    SrcLine l;
+    l.file = pp->file;
+    l.line = pp->line;
+    l.text = xstrdup(part);
+    vec_push(pp->out, l);
+    check_comma(pp, part, pp->line);
+}
+
+static void emit_line(Pp *pp, const char *text) {
+    size_t rs = remark_start(text);
+    char *head, *exp, *full, *p, *nl;
+    int changed;
+    if (rs == 0) { /* comment line */
+        emit_part(pp, text);
+        return;
+    }
+    head = xstrndup(text, rs);
+    pp->first = NULL;
+    pp->produced = 0;
+    pp->too_big = 0;
+    exp = expand(pp, head, NULL);
+    changed = strcmp(exp, head) != 0;
+    full = xasprintf("%s%s", exp, text + rs);
+    if (changed && pp->first) {
+        char *first_line = xstrdup(full);
+        char *brk = strchr(first_line, '\n');
+        if (brk) *brk = 0;
+        rep_add_expansion(pp->rep, pp->file, pp->line, first_line, pp->first->name, pp->first->def);
+        free(first_line);
+    }
+    for (p = full;; p = nl + 1) {
+        nl = strchr(p, '\n');
+        if (nl) *nl = 0;
+        emit_part(pp, p);
+        if (!nl) break;
+    }
+    free(head);
+    free(exp);
+    free(full);
+}
+
+static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
+    SrcVec lines = {0};
+    size_t i = 0, base = pp->conds.n;
+    const char *save_file = pp->file;
+    int save_line = pp->line;
+    src_split(&lines, file, text, len);
+    /* the empty segment after the final newline is not a line */
+    if (lines.n > 1 && lines.v[lines.n - 1].text[0] == 0 && len > 0 && text[len - 1] == '\n') lines.n--;
+    pp->file = file;
+    while (i < lines.n) {
+        const char *t = lines.v[i].text;
+        int ln = lines.v[i].line;
+        size_t n = strlen(t), k = i;
+        const char *dir, *rest;
+        /* a backslash at the end of a line joins it with the next one */
+        if (n > 0 && t[n - 1] == '\\' && k + 1 < lines.n) {
+            Buf b = {0};
+            for (;;) {
+                const char *u = lines.v[k].text;
+                size_t un = strlen(u);
+                if (un > 0 && u[un - 1] == '\\' && k + 1 < lines.n) {
+                    buf_write(&b, u, un - 1);
+                    k++;
+                } else {
+                    buf_puts(&b, u);
+                    break;
+                }
+            }
+            t = xstrdup(buf_cstr(&b));
+        }
+        pp->line = ln;
+        dir = directive_of(t, &rest);
+        if (dir)
+            do_directive(pp, dir, rest, t);
+        else if (active(pp))
+            emit_line(pp, t);
+        i = k + 1;
+    }
+    while (pp->conds.n > base) {
+        Cond *c = &pp->conds.v[--pp->conds.n];
+        rep_errorf(pp->rep, "ZA4033", c->sp, "unterminated #if (no #endif before the end of the file)");
+    }
+    pp->file = save_file;
+    pp->line = save_line;
+}
+
+void pp_run(const char *file, const char *text, size_t len, const PpOptions *opt, Reporter *rep,
+            SrcVec *out) {
+    Pp *pp = xcalloc(sizeof *pp);
+    size_t i;
+    pp->rep = rep;
+    pp->opt = opt;
+    pp->out = out;
+    pp->file = file;
+    for (i = 0; i < opt->defines.n; i++) {
+        char *d = xstrdup(opt->defines.v[i]);
+        char *eq = strchr(d, '=');
+        char *def;
+        if (eq) {
+            *eq = ' ';
+            def = d;
+        } else {
+            def = xasprintf("%s 1", d);
+        }
+        do_define(pp, def, span_make("<command line>", 0, 0, 0));
+    }
+    pp_file(pp, file, text, len);
+}

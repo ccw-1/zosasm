@@ -1,0 +1,25 @@
+* A small program: save area, base register, a constant table.
+HELLO    CSECT
+HELLO    AMODE 31
+HELLO    RMODE ANY
+         STM   14,12,12(13)
+         LR    12,15
+         USING HELLO,12
+         LA    2,MSG
+         L     4,COUNT
+         MVC   BUF(8),MSG
+         MVC   BUF,MSG
+         BAS   14,SUB1
+         BRAS  14,SUB1
+         J     DONE
+SUB1     DS    0H
+         BR    14
+DONE     LM    14,12,12(13)
+         BR    14
+COUNT    DC    F'42'
+MSG      DC    CL8'HELLO'
+BUF      DS    CL8
+TAB      DC    A(SUB1,DONE),V(EXTFN)
+         DC    AD(TAB)
+         DC    P'-123',Z'45',X'F1F2',B'101'
+         END   HELLO

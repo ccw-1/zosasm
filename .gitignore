@@ -1,0 +1,45 @@
+# build output
+/build/
+/bin/
+/zosasm
+/isagen
+
+# objects, libraries, executables
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
+*.gcno
+*.gcda
+*.gcov
+*.d
+
+# assembler listings and dumps produced by the tests
+*.lst
+*.dump
+
+# sanitizer / profiler / core files
+core
+core.*
+*.profraw
+*.profdata
+vgcore.*
+
+# python
+__pycache__/
+*.pyc
+
+# editors and OS
+*~
+*.swp
+*.swo
+.DS_Store
+.vscode/
+.idea/
+compile_commands.json
+.cache/

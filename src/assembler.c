@@ -1,0 +1,733 @@
+/* assembler.c - the two-pass driver, symbols, expression evaluation,
+ * location counter handling and layout. */
+#include <stdarg.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "asm.h"
+#include "ebcdic.h"
+#include "goff.h"
+
+const char *sectkind_name(SectKind k) {
+    static const char *const n[] = {"CSECT", "RSECT", "DSECT", "COM"};
+    return n[k];
+}
+
+int64_t piece_len(const Piece *p) { return p->loc > p->max ? p->loc : p->max; }
+
+Symbol *module_symbol(const Module *m, const char *name) { return strmap_get(&m->symbols, name); }
+
+char *str_trim(const char *s) {
+    size_t n;
+    while (*s && za_isspace((unsigned char)*s)) s++;
+    n = strlen(s);
+    while (n > 0 && za_isspace((unsigned char)s[n - 1])) n--;
+    return xstrndup(s, n);
+}
+
+/* ---- directive table --------------------------------------------------- */
+
+typedef struct {
+    const char *name;
+    Handler fn;
+} DirEntry;
+
+static const DirEntry directive_tab[] = {
+    {"AMODE", dir_mode},   {"CATTR", dir_cattr},   {"CNOP", dir_cnop},   {"COM", dir_section},
+    {"COPY", dir_copy},    {"CSECT", dir_section}, {"DC", dir_dc},       {"DROP", dir_drop},
+    {"DS", dir_dc},        {"DSECT", dir_section}, {"EJECT", dir_ignore}, {"END", dir_end},
+    {"ENTRY", dir_entry},  {"EQU", dir_equ},      {"EXTRN", dir_extrn}, {"ICTL", dir_ignore},
+    {"ISEQ", dir_ignore},  {"LOCTR", dir_loctr},  {"LTORG", dir_ltorg}, {"ORG", dir_org},
+    {"PRINT", dir_ignore}, {"PUNCH", dir_ignore}, {"RMODE", dir_mode},  {"RSECT", dir_section},
+    {"SPACE", dir_ignore}, {"START", dir_section}, {"TITLE", dir_ignore}, {"USING", dir_using},
+    {"WXTRN", dir_extrn},  {"XATTR", dir_xattr},
+};
+
+#define NDIRS (sizeof directive_tab / sizeof directive_tab[0])
+
+size_t asm_directive_names(const char *const **names) {
+    static const char *list[NDIRS];
+    size_t i;
+    for (i = 0; i < NDIRS; i++) list[i] = directive_tab[i].name;
+    *names = list;
+    return NDIRS;
+}
+
+static Handler find_directive(const char *upper_op) {
+    size_t lo = 0, hi = NDIRS;
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        int c = strcmp(upper_op, directive_tab[mid].name);
+        if (c == 0) return directive_tab[mid].fn;
+        if (c < 0)
+            hi = mid;
+        else
+            lo = mid + 1;
+    }
+    return NULL;
+}
+
+void dir_ignore(Asm *a, Stmt *st) {
+    (void)a;
+    (void)st;
+}
+
+void dir_copy(Asm *a, Stmt *st) {
+    if (a->pass == 1) {
+        diag_help(rep_errorf(a->rep, "ZA9001", st->op_span, "COPY is not supported"),
+                  "use the preprocessor: #include \"file\"");
+        st->bad = 1;
+    }
+}
+
+/* ---- statements -------------------------------------------------------- */
+
+static void unknown_op(Asm *a, Stmt *st) {
+    const char *const *dn, *const *mn;
+    const char **cands;
+    size_t nd, nm, i, n = 0;
+    Diag *d;
+    const char *s;
+    char *up;
+    if (a->pass != 1) return;
+    nd = asm_directive_names(&dn);
+    mn = isa_mnemonics(&nm);
+    cands = xmalloc((nd + nm) * sizeof *cands);
+    for (i = 0; i < nd; i++) cands[n++] = dn[i];
+    for (i = 0; i < nm; i++) cands[n++] = mn[i];
+    d = diag_label(rep_errorf(a->rep, "ZA2001", st->op_span, "unknown operation \"%s\"", st->op),
+                   "not an instruction or directive");
+    s = diag_closest(st->op, cands, n);
+    if (s) {
+        up = za_strupper(s);
+        diag_help(d, "did you mean \"%s\"?", up);
+    } else if (!st->name[0] && st->op[0] == '&') {
+        diag_help(d, "the macro/conditional-assembly language is not supported");
+    }
+    if (!st->name[0] && st->op_span.pos.col > 1 && is_symbol_like(st->op))
+        diag_help(d,
+                  "labels must start in column 1; if \"%s\" was meant as a label, move it to "
+                  "column 1",
+                  st->op);
+    free(cands);
+    st->bad = 1;
+}
+
+void asm_stmt(Asm *a, Stmt *st) {
+    size_t n;
+    char *up = za_strupper(st->op);
+    Handler h = find_directive(up);
+    free(up);
+    if (h) {
+        h(a, st);
+        return;
+    }
+    isa_lookup(st->op, &n);
+    if (n > 0) {
+        asm_instr(a, st);
+        return;
+    }
+    unknown_op(a, st);
+}
+
+/* ---- symbols ----------------------------------------------------------- */
+
+Symbol *asm_lookup(Asm *a, const char *name) { return module_symbol(a->mod, name); }
+
+Symbol *asm_define(Asm *a, Stmt *st, const char *name, Span sp, int *created) {
+    Symbol *old = asm_lookup(a, name), *s;
+    if (old) {
+        if (a->pass == 1) {
+            diag_note(rep_errorf(a->rep, "ZA1020", sp, "symbol \"%s\" is already defined", name),
+                      old->def, "\"%s\" was first defined here", name);
+            st->bad = 1;
+        }
+        if (created) *created = 0;
+        return old;
+    }
+    s = xcalloc(sizeof *s);
+    s->name = xstrdup(name);
+    s->def = sp;
+    s->def_idx = a->cur_idx;
+    strmap_put(&a->mod->symbols, name, s);
+    vec_push(&a->mod->sym_order, s);
+    if (created) *created = 1;
+    return s;
+}
+
+int asm_valid_name(const char *n) {
+    size_t len = strlen(n);
+    return len > 0 && len <= 32767 && is_symbol_like(n);
+}
+
+int asm_need_section(Asm *a, Stmt *st) {
+    char *up;
+    if (a->cur) return 1;
+    if (a->pass == 1) {
+        up = za_strupper(st->op);
+        diag_help(rep_errorf(a->rep, "ZA3001", stmt_span(st), "no active section for %s", up),
+                  "start the code with a CSECT, RSECT or START statement, or a DSECT for a dummy "
+                  "section");
+        st->bad = 1;
+    }
+    return 0;
+}
+
+/* Define the statement's name field as an address in the current location
+ * counter. */
+void asm_define_label(Asm *a, Stmt *st, int64_t length, char typ) {
+    Piece *piece;
+    int64_t off;
+    int created;
+    Symbol *s;
+    if (!st->name[0] || a->pass != 1) return;
+    if (!asm_need_section(a, st)) return;
+    if (!asm_valid_name(st->name)) {
+        diag_help(rep_errorf(a->rep, "ZA1021", st->name_span, "\"%s\" is not a valid symbol name",
+                             st->name),
+                  "symbols start with a letter or one of @ # $ _ and continue with letters, digits "
+                  "or those characters");
+        st->bad = 1;
+        return;
+    }
+    piece = a->cur;
+    off = a->cur->loc;
+    s = asm_define(a, st, st->name, st->name_span, &created);
+    if (created) {
+        s->kind = SYM_LABEL;
+        s->piece = piece;
+        s->off = off;
+        s->len = length;
+        s->type = typ;
+        s->sect = a->sect;
+    }
+}
+
+/* ---- operands and expressions ------------------------------------------ */
+
+int asm_ops(Asm *a, Stmt *st, int min, int max, OperandVec *out) {
+    int n;
+    OperandVec tmp = {0};
+    if (!out) out = &tmp;
+    split_operands(out, st->operands);
+    n = (int)out->n;
+    if (n >= min && (max < 0 || n <= max)) return 1;
+    if (a->pass == 1) {
+        Span sp = st->op_span;
+        char *want, *up = za_strupper(st->op);
+        if (n > 0) sp = stmt_operand_span(st, 0, (int)strlen(st->operands));
+        if (max < 0)
+            want = xasprintf("at least %d", min);
+        else if (min == max)
+            want = xasprintf("%d", min);
+        else
+            want = xasprintf("%d to %d", min, max);
+        rep_errorf(a->rep, "ZA0010", sp, "%s needs %s operand(s), found %d", up, want, n);
+        st->bad = 1;
+    }
+    return 0;
+}
+
+Expr *asm_expr(Asm *a, Stmt *st, Operand o) {
+    Expr *e;
+    if (a->pass != 1) /* pass 2 re-parses silently; errors were found in pass 1 */
+        return parse_expr(st, o.text, o.off, a->scratch);
+    e = parse_expr(st, o.text, o.off, a->rep);
+    if (!e) st->bad = 1;
+    return e;
+}
+
+Span asm_op_span(Stmt *st, Operand o) {
+    return stmt_operand_span(st, o.off, (int)strlen(o.text));
+}
+
+void asm_expr_err(Asm *a, Stmt *st, Span sp, const char *code, const char *fmt, ...) {
+    if (a->pass == 1 || a->laid) {
+        va_list ap;
+        char *msg;
+        va_start(ap, fmt);
+        msg = xvasprintf(fmt, ap);
+        va_end(ap);
+        rep_errorf(a->rep, code, sp, "%s", msg);
+        free(msg);
+        st->bad = 1;
+    }
+}
+
+Value asm_addr_value(Asm *a, Piece *p, int64_t off) {
+    Value v;
+    v.defined = 1;
+    v.nterms = 1;
+    v.terms = xmalloc(sizeof(Term));
+    v.terms[0].coef = 1;
+    if (a->laid && p->cls->sect->kind != K_DSECT) {
+        v.abs = p->start + off;
+        v.terms[0].base = base_class(p->cls);
+    } else {
+        v.abs = off;
+        v.terms[0].base = base_piece(p);
+    }
+    return v;
+}
+
+static Value undefined_value(void) {
+    Value v = value_abs(0);
+    v.defined = 0;
+    return v;
+}
+
+static int sym_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
+    Symbol *s = asm_lookup(a, x->name);
+    if (!s) {
+        if (a->pass == 1 && !need) {
+            *out = undefined_value();
+            return 1;
+        }
+        if (a->pass == 1) {
+            diag_help(diag_label(rep_errorf(a->rep, "ZA1010", x->sp,
+                                            "symbol \"%s\" must be defined before this statement",
+                                            x->name),
+                                 "not defined yet"),
+                      "forward references are only allowed where the value is not needed to size "
+                      "the statement (for example in A-type constants and branches)");
+            st->bad = 1;
+            return 0;
+        }
+        {
+            Diag *d = rep_errorf(a->rep, "ZA1011", x->sp, "undefined symbol \"%s\"", x->name);
+            size_t i;
+            const char **names = xmalloc((a->mod->sym_order.n + 1) * sizeof *names);
+            const char *c;
+            for (i = 0; i < a->mod->sym_order.n; i++) names[i] = a->mod->sym_order.v[i]->name;
+            c = diag_closest(x->name, names, a->mod->sym_order.n);
+            if (c) diag_help(d, "did you mean \"%s\"?", c);
+            free(names);
+        }
+        st->bad = 1;
+        return 0;
+    }
+    s->used = 1;
+    switch (s->kind) {
+    case SYM_LABEL:
+        *out = asm_addr_value(a, s->piece, s->off);
+        return 1;
+    case SYM_ABS:
+    case SYM_REL:
+        *out = s->val;
+        return 1;
+    case SYM_EXT:
+        out->abs = 0;
+        out->defined = 1;
+        out->nterms = 1;
+        out->terms = xmalloc(sizeof(Term));
+        out->terms[0].base = base_sym(s);
+        out->terms[0].coef = 1;
+        return 1;
+    case SYM_SECT:
+        *out = asm_addr_value(a, s->piece, 0);
+        return 1;
+    }
+    return 0;
+}
+
+/* Integer attribute I' (DESIGN.md 7): the number of digits (bits for fixed
+ * point) left of the decimal point; 0 for types without a scale. */
+static int64_t integer_attr(const Symbol *s) {
+    int64_t l = s->len > 0 ? s->len : 1, sc = s->scale > 0 ? s->scale : 0;
+    switch (s->type) {
+    case 'F':
+    case 'H':
+        return 8 * l - sc - 1;
+    case 'P':
+        return 2 * l - sc - 1;
+    case 'Z':
+        return l - sc;
+    case 'E':
+    case 'D':
+    case 'L':
+        return 2 * (l - 1) - sc;
+    }
+    return 0;
+}
+
+/* Type attribute T' as a letter. */
+static char type_attr(const Symbol *s) {
+    switch (s->kind) {
+    case SYM_EXT:
+        return 'T';
+    case SYM_SECT:
+        return 'J';
+    default:
+        return s->type ? s->type : 'U';
+    }
+}
+
+static int attr_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
+    Symbol *s;
+    int64_t n = 0;
+    if (x->attr == 'K' || x->attr == 'N') {
+        diag_help(rep_errorf(a->rep, "ZA1032", x->sp, "the %c' attribute belongs to the macro language",
+                             x->attr),
+                  "zosasm has no macro language; use the preprocessor (#define) instead");
+        st->bad = 1;
+        return 0;
+    }
+    if (x->attr == 'O') { /* operation code attribute of a name */
+        size_t cnt = 0;
+        char *up = za_strupper(x->name);
+        char c = 'U';
+        isa_lookup(x->name, &cnt);
+        if (find_directive(up))
+            c = 'A';
+        else if (cnt > 0)
+            c = 'O';
+        free(up);
+        *out = value_abs(ZA_E(c));
+        return 1;
+    }
+    if (x->loc) {
+        if (x->attr != 'L' || a->star_len <= 0) {
+            diag_help(rep_errorf(a->rep, "ZA1031", x->sp, "%c'* is not available here", x->attr),
+                      "L'* is the length of the current machine instruction or of a DC/DS whose "
+                      "first operand has an explicit length or a fixed-length type");
+            st->bad = 1;
+            return 0;
+        }
+        *out = value_abs(a->star_len);
+        return 1;
+    }
+    s = asm_lookup(a, x->name);
+    if (x->attr == 'D') { /* defined before this statement */
+        int d = s && (a->pass == 1 || s->def_idx < a->cur_idx);
+        *out = value_abs(d ? 1 : 0);
+        return 1;
+    }
+    if (!s) {
+        if (x->attr == 'T') { /* an unknown name has type U */
+            *out = value_abs(ZA_E('U'));
+            return 1;
+        }
+        if (a->pass == 1 && !need) {
+            *out = undefined_value();
+            return 1;
+        }
+        asm_expr_err(a, st, x->sp, "ZA1011", "undefined symbol \"%s\" in attribute reference",
+                     x->name);
+        return 0;
+    }
+    switch (x->attr) {
+    case 'L':
+        n = s->len ? s->len : 1;
+        break;
+    case 'S':
+        n = s->scale;
+        break;
+    case 'I':
+        n = integer_attr(s);
+        break;
+    case 'T':
+        n = ZA_E(type_attr(s));
+        break;
+    }
+    *out = value_abs(n);
+    return 1;
+}
+
+int asm_eval(Asm *a, Stmt *st, const Expr *e, int need, Value *out) {
+    switch (e->kind) {
+    case EX_NUM:
+        *out = value_abs(e->num);
+        return 1;
+    case EX_LOC:
+        if (!asm_need_section(a, st)) return 0;
+        *out = asm_addr_value(a, a->cur, a->cur->loc);
+        return 1;
+    case EX_SYM:
+        return sym_value(a, st, e, need, out);
+    case EX_ATTR:
+        return attr_value(a, st, e, need, out);
+    case EX_UN: {
+        Value v;
+        if (!asm_eval(a, st, e->l, need, &v)) return 0;
+        *out = e->op == '-' ? value_neg(v) : v;
+        return 1;
+    }
+    case EX_BIN: {
+        Value l, r;
+        int ok1 = asm_eval(a, st, e->l, need, &l);
+        int ok2 = asm_eval(a, st, e->r, need, &r);
+        if (!ok1 || !ok2) return 0;
+        if (e->op == '+') {
+            *out = value_add(l, r, 1);
+            return 1;
+        }
+        if (e->op == '-') {
+            *out = value_add(l, r, -1);
+            return 1;
+        }
+        if (!value_is_abs(&l) || !value_is_abs(&r)) {
+            asm_expr_err(a, st, e->sp, "ZA1012", "operands of \"%c\" must be absolute values",
+                         e->op);
+            return 0;
+        }
+        if (e->op == '*') {
+            *out = value_abs(l.abs * r.abs);
+            out->defined = l.defined && r.defined;
+            return 1;
+        }
+        if (r.abs == 0) {
+            if (!r.defined) {
+                *out = undefined_value();
+                return 1;
+            }
+            asm_expr_err(a, st, e->sp, "ZA1014", "division by zero");
+            return 0;
+        }
+        *out = value_abs(l.abs / r.abs);
+        out->defined = l.defined && r.defined;
+        return 1;
+    }
+    }
+    return 0;
+}
+
+int asm_abs_expr(Asm *a, Stmt *st, Operand o, const char *what, int64_t *out) {
+    Expr *e = asm_expr(a, st, o);
+    Value v;
+    if (!e) return 0;
+    if (!asm_eval(a, st, e, 1, &v)) return 0;
+    if (!value_is_abs(&v)) {
+        if (a->pass == 1 || a->laid) {
+            diag_label(rep_errorf(a->rep, "ZA1013", e->sp, "%s must be an absolute value", what),
+                       "this is a relocatable address");
+            st->bad = 1;
+        }
+        return 0;
+    }
+    *out = v.abs;
+    return 1;
+}
+
+/* ---- location counter and storage -------------------------------------- */
+
+void asm_advance(Asm *a, int64_t n) {
+    a->cur->loc += n;
+    if (a->cur->loc > a->cur->max) a->cur->max = a->cur->loc;
+}
+
+void asm_align(Asm *a, int64_t n) {
+    if (!a->cur || n <= 1) return;
+    asm_advance(a, (n - a->cur->loc % n) % n);
+}
+
+void asm_put(Asm *a, const uint8_t *b, size_t n) {
+    if (a->pass == 2 && a->cur->cls->sect->kind != K_DSECT) {
+        Class *c = a->cur->cls;
+        int64_t at = a->cur->start + a->cur->loc;
+        if (at >= 0 && at + (int64_t)n <= c->len) memcpy(c->data + at, b, n);
+    }
+    asm_advance(a, (int64_t)n);
+}
+
+void asm_reloc(Asm *a, int n, Symbol *target, Class *cls, RelocKind kind) {
+    Class *c;
+    Reloc r;
+    if (a->pass != 2 || a->cur->cls->sect->kind == K_DSECT) return;
+    c = a->cur->cls;
+    memset(&r, 0, sizeof r);
+    r.off = a->cur->start + a->cur->loc;
+    r.len = n;
+    r.target = target;
+    r.cls = cls;
+    r.kind = kind;
+    vec_push(&c->relocs, r);
+}
+
+/* Assign offsets to pieces and size the class data buffers. */
+static Value relayout(Value v) {
+    Value r = value_abs(v.abs);
+    int i;
+    r.defined = v.defined;
+    for (i = 0; i < v.nterms; i++) {
+        Term t = v.terms[i];
+        Value one = value_abs(0);
+        Term single;
+        if (t.base.kind == B_PIECE) {
+            Piece *p = t.base.p;
+            if (p->cls->sect->kind != K_DSECT) {
+                r.abs += (int64_t)t.coef * p->start;
+                t.base = base_class(p->cls);
+            }
+        }
+        single = t;
+        one.terms = &single;
+        one.nterms = 1;
+        r = value_add(r, one, 1);
+    }
+    return r;
+}
+
+static void layout(Asm *a) {
+    size_t si, ci, pi;
+    for (si = 0; si < a->mod->sections.n; si++) {
+        Section *s = a->mod->sections.v[si];
+        s->cur = s->classes.v[0]->pieces.v[0];
+        for (ci = 0; ci < s->classes.n; ci++) {
+            Class *c = s->classes.v[ci];
+            int64_t off = 0;
+            for (pi = 0; pi < c->pieces.n; pi++) {
+                Piece *p = c->pieces.v[pi];
+                if (s->kind != K_DSECT && off % 8 != 0) off += 8 - off % 8;
+                p->start = off;
+                if (s->kind == K_DSECT) p->start = 0;
+                off = p->start + piece_len(p);
+            }
+            c->len = off;
+            if (s->kind != K_DSECT) {
+                c->data = xcalloc((size_t)c->len + 1);
+                if (c->attr.fill >= 0) memset(c->data, c->attr.fill, (size_t)c->len);
+            }
+            for (pi = 0; pi < c->pieces.n; pi++) {
+                c->pieces.v[pi]->loc = 0;
+                c->pieces.v[pi]->max = 0;
+            }
+        }
+    }
+    /* relocatable EQUs: piece bases become class bases */
+    for (si = 0; si < a->mod->sym_order.n; si++) {
+        Symbol *s = a->mod->sym_order.v[si];
+        if (s->kind == SYM_REL) s->val = relayout(s->val);
+    }
+}
+
+/* ---- the passes -------------------------------------------------------- */
+
+static void each(Asm *a) {
+    size_t i;
+    a->cur = NULL;
+    a->sect = NULL;
+    a->ended = 0;
+    a->usings.n = 0;
+    a->pool_no = 0;
+    for (i = 0; i < a->stmts.n; i++) {
+        Stmt *st = a->stmts.v[i];
+        if (rep_too_many(a->rep)) return;
+        if (a->ended) break;
+        if (st->bad) continue;
+        a->cur_idx = i;
+        a->star_len = 0;
+        asm_stmt(a, st);
+    }
+    asm_end_pool(a);
+}
+
+/* end-of-assembly checks */
+static void finish(Asm *a) {
+    size_t i;
+    for (i = 0; i < a->entries.n; i++) {
+        EntryRef *e = &a->entries.v[i];
+        Symbol *s = asm_lookup(a, e->name);
+        if (!s || (s->kind != SYM_LABEL && s->kind != SYM_SECT)) {
+            rep_errorf(a->rep, "ZA3010", e->sp,
+                       "ENTRY symbol \"%s\" is not defined as a label in this module", e->name);
+            continue;
+        }
+        s->entry = 1;
+    }
+    if (a->end_entry) {
+        Symbol *s = asm_lookup(a, a->end_entry);
+        if (!s || (s->kind != SYM_LABEL && s->kind != SYM_SECT && s->kind != SYM_EXT)) {
+            rep_errorf(a->rep, "ZA3011", a->end_span,
+                       "END entry point \"%s\" is not a label or external symbol", a->end_entry);
+        } else {
+            a->mod->entry = a->end_entry;
+            a->mod->entry_def = a->end_span;
+        }
+    }
+    for (i = 0; i < a->xattrs.n; i++) {
+        XattrStmt *x = a->xattrs.v[i];
+        Symbol *s = asm_lookup(a, x->name);
+        XAttr *xa;
+        if (!s) {
+            diag_help(rep_errorf(a->rep, "ZA3020", x->st->name_span,
+                                 "XATTR names \"%s\", which is not defined", x->name),
+                      "XATTR applies to an EXTRN/WXTRN symbol, an ENTRY label or a CATTR PART "
+                      "name");
+            continue;
+        }
+        xa = xmalloc(sizeof *xa);
+        *xa = x->attr;
+        s->xattr = xa;
+    }
+    if (a->mod->sections.n == 0 && rep_error_count(a->rep) == 0) {
+        diag_help(rep_errorf(a->rep, "ZA3002", span_make(a->mod->name, 0, 0, 0),
+                             "the source defines no control section"),
+                  "add at least one CSECT");
+    }
+}
+
+static void run(Asm *a) {
+    a->pass = 1;
+    each(a);
+    if (rep_too_many(a->rep)) return;
+    layout(a);
+    a->pass = 2;
+    a->laid = 1;
+    each(a);
+    finish(a);
+}
+
+Module *asm_assemble(const SrcLine *lines, size_t n, const char *name, Reporter *rep) {
+    Asm *a = xcalloc(sizeof *a);
+    a->rep = rep;
+    a->scratch = rep_new(0);
+    a->mod = xcalloc(sizeof *a->mod);
+    a->mod->name = xstrdup(name);
+    read_statements(&a->stmts, lines, n, rep);
+    run(a);
+    if (rep_error_count(rep) > 0) return NULL;
+    return a->mod;
+}
+
+Module *asm_assemble_text(const char *file, const char *text, size_t len, Reporter *rep) {
+    SrcVec lines = {0};
+    rep_add_source(rep, file, text, len);
+    src_split(&lines, file, text, len);
+    return asm_assemble(lines.v, lines.n, file, rep);
+}
+
+/* ---- goff attribute helpers --------------------------------------------- */
+
+int amode_byte(const char *s, uint8_t *out) {
+    char *u = za_strupper(s);
+    int ok = 1;
+    if (!strcmp(u, "24"))
+        *out = GOFF_AMODE_24;
+    else if (!strcmp(u, "31"))
+        *out = GOFF_AMODE_31;
+    else if (!strcmp(u, "64"))
+        *out = GOFF_AMODE_64;
+    else if (!strcmp(u, "ANY"))
+        *out = GOFF_AMODE_ANY;
+    else if (!strcmp(u, "MIN"))
+        *out = GOFF_AMODE_MIN;
+    else
+        ok = 0;
+    free(u);
+    return ok;
+}
+
+int rmode_byte(const char *s, uint8_t *out) {
+    char *u = za_strupper(s);
+    int ok = 1;
+    if (!strcmp(u, "24"))
+        *out = GOFF_RMODE_24;
+    else if (!strcmp(u, "31") || !strcmp(u, "ANY"))
+        *out = GOFF_RMODE_31;
+    else if (!strcmp(u, "64"))
+        *out = GOFF_RMODE_64;
+    else
+        ok = 0;
+    free(u);
+    return ok;
+}
