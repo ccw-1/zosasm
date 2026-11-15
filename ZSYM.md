@@ -212,8 +212,8 @@ assembly time, recorded as `CALL` nodes, written back as such by `-disasm`.
   `DXD`/`CXD`), the compile-time `sizeof` is for everything else.
 * **Relocatable difference** `A(X-Y)` across sections (RLD action SUB): the one
   case where the binder, not the assembler, has to compute the number. It is
-  already listed as not implemented in DESIGN.md 10; ZSYM must be able to
-  describe it, and it is needed before the smart reversal is complete.
+  implemented (DESIGN.md 13); the ZSYM statement is the source line, so the
+  smart reversal needs nothing more.
 
 ## 8. Phases
 

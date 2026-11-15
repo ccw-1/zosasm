@@ -55,6 +55,9 @@ typedef struct {
     int64_t base; /* offset of the label (LD) the relocation names */
     int vcon;
     int used;
+    int hassub;     /* A(P-S+val): a second relocation item subtracts er2 / cls2 */
+    DEr *er2;
+    DClass *cls2;
 } DRel;
 
 typedef struct {
@@ -453,9 +456,23 @@ static int xcon_reloc(Ctx *x, const GoffReloc *r, DRel *d) {
     return 1;
 }
 
+/* is there a subtracting item for the same field as r? */
+static int has_sub_at(const GoffModule *m, const GoffReloc *r) {
+    size_t k;
+    for (k = 0; k < m->relocs.n; k++) {
+        const GoffReloc *o = &m->relocs.v[k];
+        if (o->action == GOFF_ACTION_SUB && o->pid == r->pid && o->offset == r->offset &&
+            o->length == r->length)
+            return 1;
+    }
+    return 0;
+}
+
 static int load_relocs(Ctx *x) {
     const GoffModule *m = x->m;
     size_t i, b;
+    int pass;
+    for (pass = 0; pass < 2; pass++)
     for (i = 0; i < m->relocs.n; i++) {
         const GoffReloc *r = &m->relocs.v[i];
         DClass *c = class_of(x, r->pid);
@@ -463,8 +480,52 @@ static int load_relocs(Ctx *x) {
         int n = r->length, ri = r->reference == GOFF_REF_RELIMM;
         int xk;
         const IdInfo *t;
+        if ((r->action == GOFF_ACTION_SUB) != pass) continue; /* additions first */
         if (!c) {
-            warnf(x, "relocation in ESD %u is ignored (not a class)", r->pid);
+            if (!pass) warnf(x, "relocation in ESD %u is ignored (not a class)", r->pid);
+            continue;
+        }
+        if (pass) { /* the subtrahend of an address constant */
+            int32_t at = r->offset < c->len ? c->rel_at[r->offset] : 0;
+            DRel *p = at ? &c->rels[at - 1] : NULL;
+            int64_t base2 = 0;
+            t = r->rid && r->rid <= m->esds.n ? &x->by_id[r->rid] : NULL;
+            if (!p && !r->store && r->reference == GOFF_REF_ADDRESS && !r->bit_length &&
+                !r->bit_offset && !r->cond_seq && (n == 3 || n == 4 || n == 8) &&
+                (uint64_t)r->offset + (uint64_t)n <= c->len && t &&
+                (t->kind == 'E' || t->kind == 'C' || t->kind == 'L')) {
+                for (b = 0; b < (size_t)n; b++)
+                    if (c->occ[r->offset + b]) break;
+                if (b == (size_t)n) { /* A(-S+k): nothing is added */
+                    memset(&d, 0, sizeof d);
+                    d.off = r->offset;
+                    d.len = n;
+                    d.hassub = 1;
+                    if (t->kind == 'E') {
+                        d.er2 = t->p;
+                    } else {
+                        d.cls2 = t->kind == 'C' ? t->p : t->cls;
+                        base2 = t->kind == 'L' ? t->off : 0;
+                    }
+                    d.val = stored_value(c->data + r->offset, n) - base2;
+                    goto push;
+                }
+            }
+            if (!p || p->ri || p->xk || p->len != n || p->hassub || p->vcon || r->store ||
+                r->reference != GOFF_REF_ADDRESS || r->bit_length || r->bit_offset ||
+                r->cond_seq || !t || (t->kind != 'E' && t->kind != 'C' && t->kind != 'L')) {
+                warnf(x, "relocation of type %d/%d at %s+%u is not supported and is ignored",
+                      r->reference, r->action, c->name, r->offset);
+                continue;
+            }
+            if (t->kind == 'E') {
+                p->er2 = t->p;
+            } else {
+                p->cls2 = t->kind == 'C' ? t->p : t->cls;
+                base2 = t->kind == 'L' ? t->off : 0;
+            }
+            p->hassub = 1;
+            p->val = stored_value(c->data + r->offset, n) + p->base - base2;
             continue;
         }
         xk = r->action == GOFF_ACTION_ADD && !r->bit_length && !r->bit_offset && !r->cond_seq &&
@@ -529,7 +590,7 @@ static int load_relocs(Ctx *x) {
             } else {
                 d.val = sv + d.base;
                 d.vcon = 0;
-                if (d.val < 0 || d.val > (int64_t)d.cls->len) {
+                if ((d.val < 0 || d.val > (int64_t)d.cls->len) && !has_sub_at(m, r)) {
                     warnf(x, "address constant at %s+%u points outside class %s; relocation ignored",
                           c->name, r->offset, d.cls->name);
                     continue;
@@ -560,7 +621,8 @@ static void mark_adcon_targets(Ctx *x) {
         DClass *c = x->classes.v[ci];
         for (k = 0; k < c->nrels; k++) {
             const DRel *r = &c->rels[k];
-            if (!r->ri && r->cls && c->rel_at[r->off]) r->cls->lab[r->val] |= 8;
+            if (!r->ri && r->cls && c->rel_at[r->off]) r->cls->lab[r->hassub ? 0 : r->val] |= 8;
+            if (!r->ri && r->cls2 && c->rel_at[r->off]) r->cls2->lab[0] |= 8;
         }
     }
 }
@@ -982,13 +1044,26 @@ static void emit_adcon(Ctx *x, const DRel *r, const char *label) {
         emit_xcon(x, r, label);
         return;
     }
-    if (r->er) {
+    if (!r->er && !r->cls) {
+        /* only a subtraction: A(-S+k) */
+    } else if (r->er) {
         buf_puts(&ops, r->er->name);
-        if (!r->vcon) addend_text(&ops, r->val);
+        if (!r->vcon && !r->hassub) addend_text(&ops, r->val);
     } else {
-        char *l = label_ref(x, r->cls, r->val);
+        char *l = label_ref(x, r->cls, r->hassub ? 0 : r->val);
         buf_puts(&ops, l);
         free(l);
+    }
+    if (r->hassub) {
+        buf_putc(&ops, '-');
+        if (r->er2) {
+            buf_puts(&ops, r->er2->name);
+        } else {
+            char *l = label_ref(x, r->cls2, 0);
+            buf_puts(&ops, l);
+            free(l);
+        }
+        addend_text(&ops, r->val);
     }
     o2 = xasprintf("%cL%d(%s)", r->vcon ? 'V' : 'A', r->len, buf_cstr(&ops));
     stmt(&x->out, label, "DC", o2);
@@ -1481,6 +1556,7 @@ char *disasm_ex(const GoffModule *m, int flags, FILE *warn, int *nwarn, int *sma
         for (k = 0; k < c->nrels; k++) {
             const DRel *r = &c->rels[k];
             if (r->er && (r->ri ? r->used : c->rel_at[r->off])) r->er->used = 1;
+            if (r->er2 && c->rel_at[r->off]) r->er2->used = 1;
         }
     }
     if (x.end_er) x.end_er->used = 1;

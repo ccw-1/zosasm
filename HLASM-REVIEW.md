@@ -46,7 +46,7 @@ Proposed verdict is in the last column; "?" marks a question for you.
 | Scale `S`, exponent `E` modifiers | `FS8'35.92'`, `EE3'3.414'`, fixed/float scaling. | **Done** (DESIGN.md 13). |
 | Decimal float `DD ED LD` (and `DB EB LB` binary float) | Hex float (E D L) exists; the other formats do not. | **Done** (DD ED LD with all rounding modes, special values, LQ; DESIGN.md 13). |
 | Program type `P(...)` in DC and `EQU` | A 32 bit user tag on a symbol, no effect on code. | **Skip** (ZSYM can carry such tags if wanted). |
-| Relocatable difference `A(X-Y)` between sections | Needs RLD action SUB for the binder. | **Do**; also needed for the complete reversal (ZSYM.md 7). |
+| Relocatable difference `A(X-Y)` between sections | Needs RLD action SUB for the binder. | **Done** (DESIGN.md 13). |
 | `XATTR ATTRIBUTES(label)` | Points the ESD at extra attribute data (ESDID+offset of a label). | **Maybe**. |
 | `XATTR REFERENCE(DIRECT\|INDIRECT)` | The "indirect reference" attribute bit. | **Do** (one flag). |
 | `COM` | Common section: no object code, size is the maximum over modules. | Exists; check behaviour against the manual text (location counter continuation). |

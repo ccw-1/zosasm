@@ -54,7 +54,8 @@ Status key: [x] done, [-] in progress, [ ] open.
       built-ins, `#(x)` stringify, `-reproducible` (DESIGN.md 12, 8)
 - [x] scale/exponent modifiers, CU, CCW/CCW0/CCW1, decimal float, rounding modes and special
       values (DESIGN.md 13; not checked against IBM `as` yet)
-- [ ] `A(X-Y)` (RLD SUB), bit-length modifiers
+- [x] `A(X-Y)` (RLD SUB items, also in `-disasm`; not checked against IBM `as` yet)
+- [ ] bit-length modifiers (`L.n`)
 
 ## Phase 3 - quality
 

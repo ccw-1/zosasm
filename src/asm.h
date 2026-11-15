@@ -45,6 +45,7 @@ typedef struct {
     Class *cls;     /* class origin when target is NULL */
     RelocKind kind;
     int amode;
+    int sub; /* the target is subtracted (RLD action SUB) */
 } Reloc;
 
 /* One location counter (LOCTR) of a class; the first piece of a class
@@ -428,7 +429,7 @@ void asm_stmt(Asm *a, Stmt *st);
 void asm_align(Asm *a, int64_t n);
 void asm_advance(Asm *a, int64_t n);
 void asm_put(Asm *a, const uint8_t *b, size_t n);
-void asm_reloc(Asm *a, int n, Symbol *target, Class *cls, RelocKind kind);
+void asm_reloc(Asm *a, int n, Symbol *target, Class *cls, RelocKind kind, int sub);
 Value asm_addr_value(Asm *a, Piece *p, int64_t off);
 int amode_byte(const char *s, uint8_t *out);
 int rmode_byte(const char *s, uint8_t *out);
@@ -470,6 +471,13 @@ typedef struct {
     int off, n; /* the operand inside Stmt.operands */
 } DcSpec;
 
+/* a further relocation item on the same field (A(X-Y), A(X+Y-Z)) */
+typedef struct {
+    Symbol *target;
+    Class *cls;
+    int sub;
+} DcRelTerm;
+
 typedef struct {
     uint8_t *b;
     size_t n;
@@ -477,9 +485,15 @@ typedef struct {
     Symbol *target;
     Class *cls;
     RelocKind kind;
+    int sub;
+    DcRelTerm more[4];
+    int nmore;
 } DcVal;
 
 typedef Vec(DcVal) DcVec;
+
+void asm_put_val(Asm *a, const DcVal *v);
+
 
 int64_t dc_alignment(const DcSpec *sp);
 int64_t dc_deflen(const DcSpec *sp);

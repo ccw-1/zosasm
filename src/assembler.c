@@ -702,7 +702,7 @@ void asm_put(Asm *a, const uint8_t *b, size_t n) {
     asm_advance(a, (int64_t)n);
 }
 
-void asm_reloc(Asm *a, int n, Symbol *target, Class *cls, RelocKind kind) {
+void asm_reloc(Asm *a, int n, Symbol *target, Class *cls, RelocKind kind, int sub) {
     Class *c;
     Reloc r;
     if (a->pass != 2 || a->cur->cls->sect->kind == K_DSECT) return;
@@ -713,7 +713,19 @@ void asm_reloc(Asm *a, int n, Symbol *target, Class *cls, RelocKind kind) {
     r.target = target;
     r.cls = cls;
     r.kind = kind;
+    r.sub = sub;
     vec_push(&c->relocs, r);
+}
+
+/* the bytes of a constant with all its relocation items */
+void asm_put_val(Asm *a, const DcVal *v) {
+    int k;
+    if (v->has_rel) {
+        asm_reloc(a, (int)v->n, v->target, v->cls, v->kind, v->sub);
+        for (k = 0; k < v->nmore; k++)
+            asm_reloc(a, (int)v->n, v->more[k].target, v->more[k].cls, v->kind, v->more[k].sub);
+    }
+    asm_put(a, v->b, v->n);
 }
 
 /* Assign offsets to pieces and size the class data buffers. */

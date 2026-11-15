@@ -223,7 +223,7 @@ static int reloc_item(const Class *c, const Reloc *r, GoffReloc *g, char *err, s
     g->pid = class_target(c);
     g->offset = (uint32_t)r->off;
     g->length = (uint8_t)r->len;
-    g->action = GOFF_ACTION_ADD;
+    g->action = r->sub ? GOFF_ACTION_SUB : GOFF_ACTION_ADD;
     switch (r->kind) {
     case REL_Q:
     case REL_CXD:

@@ -503,7 +503,7 @@ labels are `L%05X`, or `L<class>_%05X` for classes other than the first.
 * Objects from other producers are best effort. The clang object
   `dev/src/debug/goff/testdata/hello.goff` still fails cleanly: its names
   (`hello.c50332088#hello#C`, `.&ppa2`) are written as quoted symbols, but it
-  uses RLD action SUB, reference type 7, several SDs and ED/PR combinations.
+  uses reference type 7, several SDs and ED/PR combinations.
 * Warnings mean the object could not have been written by the assembler;
   then only valid source and equal text bytes are guaranteed, not a fixed
   point.
@@ -511,7 +511,7 @@ labels are `L%05X`, or `L<class>_%05X` for classes other than the first.
 * `CATTR` cannot change the existing `B_TEXT`; `RSECT` stands for read-only.
 * Not implemented (reader, writer or both): `ADAEsdId` of an LD,
   extended-attribute ESDID, SD tasking and binding scope, ER indirect bit,
-  action SUB relocation pairs (`A(X-Y)`), reference type 7, LEN records from
+  reference type 7, LEN records from
   source, the amode-sensitive bit of V-constants.
 
 **GOFF study (LLVM `GOFFObjectWriter`/`GOFFObjectFile`, Go `GOFF-tool`).**
@@ -767,6 +767,21 @@ scale, ...)` returns 1 ok, 2 ok with a warning (`ZA2066`), 0 not a number
   more digits than the format has are rounded by the mode; an exponent too
   large with spare digits is folded down (`ED'1E96'` is 1000000E90); too
   small becomes subnormal. Short 7 digits, long 16, extended 34.
+
+**Relocatable differences `A(X-Y)`.** An A-type constant (3, 4 or 8 bytes)
+may hold up to five relocatable terms, each with coefficient +1 or -1; every
+term is one RLD item on the same field, additions first, then subtractions
+(`A(EXTA-*)` is +EXTA -class of the statement; `AL3(-B1)` is a lone SUB).
+The constant holds the absolute part (the offsets inside the classes), the
+binder adds and subtracts the origins. Items use fetch (not store), action
+`GOFF_ACTION_ADD` or `GOFF_ACTION_SUB` (flag byte `X'0002'` for SUB, as
+the GOFF reference lists for "A-con with subtraction"). Terms with the same
+base cancel before this (two labels of one class give an absolute value).
+`-disasm` joins an ADD and a SUB at the same field into `A(P-S+k)` with
+labels at the class origins, or `A(-S+k)` for a lone SUB; the object is the
+same afterwards. A SUB on a V, Q, R or X constant, or one with bit lengths,
+is still ignored with a warning. Other binder producers may order the items
+differently: the reader takes additions first, whatever the order.
 
 **Not done.** Bit-length modifiers (`L.n`), `QY`, `S`/`SY`, `G`, the `CU`
 code page options, and the exponent modifier warning for values that are not

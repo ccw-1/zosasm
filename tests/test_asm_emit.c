@@ -259,7 +259,45 @@ static void test_literal_errors(void) {
     CHECK(has_code("M CSECT\n BASR 12,0\n USING *,12\nD DSECT\n L 1,=F'1'\n LTORG\n", "ZA2052"));
 }
 
+/* A(X-Y) with X and Y in different places: one RLD item per term */
+static void test_sub_relocs(void) {
+    GoffModule *g = emit_src("A CSECT\n"
+                             " DC A(A1-*)\n"
+                             " DC A(EXTA-*)\n"
+                             " DC A(EXTA-EXTB+4)\n"
+                             " DC A(B1-A1)\n"
+                             " DC AL3(-B1)\n"
+                             " EXTRN EXTA,EXTB\n"
+                             "A1 DC X'01'\n"
+                             "B CSECT\n"
+                             "B1 DC X'02'\n"
+                             " END\n");
+    size_t n;
+    uint8_t *t;
+    if (!g) return;
+    CHECK(g->relocs.n == 7);
+    if (g->relocs.n != 7) return;
+    /* the first constant is absolute; then +EXTA -A, +EXTA -EXTB, +B -A, -B */
+    CHECK(g->relocs.v[0].offset == 4 && g->relocs.v[0].action == GOFF_ACTION_ADD);
+    CHECK(g->relocs.v[1].offset == 4 && g->relocs.v[1].action == GOFF_ACTION_SUB &&
+          g->relocs.v[1].referent == GOFF_REFERENT_CLASS);
+    CHECK(g->relocs.v[2].offset == 8 && g->relocs.v[2].action == GOFF_ACTION_ADD);
+    CHECK(g->relocs.v[3].offset == 8 && g->relocs.v[3].action == GOFF_ACTION_SUB &&
+          g->relocs.v[3].referent == GOFF_REFERENT_LABEL);
+    CHECK(g->relocs.v[4].offset == 12 && g->relocs.v[4].action == GOFF_ACTION_ADD);
+    CHECK(g->relocs.v[5].offset == 12 && g->relocs.v[5].action == GOFF_ACTION_SUB);
+    CHECK(g->relocs.v[6].offset == 16 && g->relocs.v[6].action == GOFF_ACTION_SUB &&
+          g->relocs.v[6].length == 3);
+    CHECK(g->relocs.v[0].store == 0 && g->relocs.v[1].store == 0);
+    t = all_text(g, &n);
+    /* A1 is at 19: A(A1-*) = 19, A(EXTA-*) = -4 (the field is at 4), A(EXTA-EXTB+4) = 4,
+     * A(B1-A1) = -19, AL3(-B1) = 0 */
+    CHECK(n >= 19 && t[3] == 19 && t[4] == 0xFF && t[7] == 0xFC && t[11] == 4 && t[12] == 0xFF &&
+          t[15] == 0xED);
+}
+
 int main(void) {
+    test_sub_relocs();
     test_structure();
     test_dsect_not_emitted();
     test_entry_external();

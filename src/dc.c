@@ -599,7 +599,22 @@ static int addr_con(Asm *a, Stmt *st, const Expr *e, Value v, int n, DcVal *res)
         be_bytes((uint64_t)v.abs, n, res->b);
         return 1;
     }
-    if (nt == 1 && terms[0].coef == 1) {
+    {
+        /* each term is +1 or -1; additions first. One relocation item per term. */
+        int ok = nt >= 1 && nt <= 5, k, np = 0;
+        DcRelTerm items[5];
+        for (i = 0; ok && i < nt; i++)
+            if (terms[i].coef != 1 && terms[i].coef != -1) ok = 0;
+        if (!ok) {
+            diag_help(diag_label(rep_errorf(a->rep, "ZA2025", e->sp,
+                                            "this expression cannot be relocated"),
+                                 "it combines relocatable terms in a way that has no relocation"),
+                      "an address constant can hold up to 5 relocatable terms, each added or "
+                      "subtracted once, plus an absolute value; for example A(X-Y) or "
+                      "A(EXT1-EXT2+4)");
+            st->bad = 1;
+            return 0;
+        }
         if (n != 3 && n != 4 && n != 8) {
             diag_help(rep_errorf(a->rep, "ZA2024", e->sp,
                                  "a relocatable address cannot be stored in %d byte(s)", n),
@@ -607,26 +622,33 @@ static int addr_con(Asm *a, Stmt *st, const Expr *e, Value v, int n, DcVal *res)
             st->bad = 1;
             return 0;
         }
+        for (k = 0; k < 2; k++) /* k == 0: additions, k == 1: subtractions */
+            for (i = 0; i < nt; i++) {
+                DcRelTerm *it = &items[np];
+                if ((terms[i].coef == -1) != k) continue;
+                memset(it, 0, sizeof *it);
+                it->sub = k;
+                if (terms[i].base.kind == B_CLASS) {
+                    it->cls = terms[i].base.p;
+                } else if (terms[i].base.kind == B_SYM) {
+                    it->target = terms[i].base.p;
+                } else {
+                    rep_errorf(a->rep, "ZA2025", e->sp, "this expression cannot be relocated");
+                    st->bad = 1;
+                    return 0;
+                }
+                np++;
+            }
         be_bytes((uint64_t)v.abs, n, res->b);
         res->has_rel = 1;
         res->kind = REL_ADDR;
-        if (terms[0].base.kind == B_CLASS) {
-            res->cls = terms[0].base.p;
-        } else if (terms[0].base.kind == B_SYM) {
-            res->target = terms[0].base.p;
-        } else {
-            rep_errorf(a->rep, "ZA2025", e->sp, "this expression cannot be relocated");
-            st->bad = 1;
-            return 0;
-        }
+        res->target = items[0].target;
+        res->cls = items[0].cls;
+        res->sub = items[0].sub;
+        res->nmore = np - 1;
+        for (k = 1; k < np; k++) res->more[k - 1] = items[k];
         return 1;
     }
-    diag_help(diag_label(rep_errorf(a->rep, "ZA2025", e->sp, "this expression cannot be relocated"),
-                         "it combines several relocatable terms"),
-              "an address constant can hold one relocatable term plus or minus an absolute value, "
-              "or the difference of two addresses in the same section and class");
-    st->bad = 1;
-    return 0;
 }
 
 static int dc_addr(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
@@ -1005,8 +1027,7 @@ void dir_dc(Asm *a, Stmt *st) {
         for (r = 0; r < sp.dup; r++) {
             for (j = 0; j < vals.n; j++) {
                 DcVal *v = &vals.v[j];
-                if (v->has_rel) asm_reloc(a, (int)v->n, v->target, v->cls, v->kind);
-                asm_put(a, v->b, v->n);
+                asm_put_val(a, v);
             }
         }
     }
@@ -1079,7 +1100,7 @@ void dir_cxd(Asm *a, Stmt *st) {
         Symbol *ls = asm_define_label(a, st, 4, 'F');
         if (ls) ls->align = 4;
     }
-    asm_reloc(a, 4, NULL, NULL, REL_CXD);
+    asm_reloc(a, 4, NULL, NULL, REL_CXD, 0);
     asm_put(a, zero, 4);
     if (a->pass == 1) a->sect->prv = 1;
 }
@@ -1166,8 +1187,7 @@ void dir_ccw(Asm *a, Stmt *st) {
     }
     (void)ok;
     asm_put(a, head, nh);
-    if (addr.has_rel) asm_reloc(a, (int)addr.n, addr.target, addr.cls, addr.kind);
-    asm_put(a, addr.b, addr.n);
+    asm_put_val(a, &addr);
     if (nt) asm_put(a, tail, nt);
 }
 

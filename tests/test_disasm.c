@@ -228,6 +228,16 @@ static const char *const programs[] = {
     "         LHI   4,countof(B)\n"
     "SZ       DC    A(sizeof(M),SLEN)\n"
     "         END\n",
+
+    /* relocatable differences: RLD items that subtract */
+    "A        CSECT\n"
+    "X        DC    A(A1-X)\n"
+    "         DC    A(EXTA-*),A(EXTA-EXTB+4),A(B1-A1),AL3(-B1),AD(A1-B1+9),A(B-A,EXTB-A1)\n"
+    "         EXTRN EXTA,EXTB\n"
+    "A1       DC    X'01'\n"
+    "B        CSECT\n"
+    "B1       DC    X'02'\n"
+    "         END\n",
 };
 
 static uint32_t zsym_esd(const GoffModule *g) {
