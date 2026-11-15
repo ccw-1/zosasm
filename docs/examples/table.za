@@ -1,0 +1,29 @@
+* A table of records mapped by a DSECT, searched in a loop.
+* On return R2 points to the matching entry, or R2 = 0 when there is none.
+* one entry
+ENT      DSECT
+E_KEY    DS    CL4
+E_VALUE  DS    F
+ENTLEN   EQU   *-ENT
+
+FIND     CSECT
+         USING FIND,12
+         USING ENT,2              R2 addresses one entry
+         LA    2,TAB              first entry
+         LHI   3,NENT             number of entries
+LOOP     CLC   E_KEY,=C'BETA'     the key to look for
+         BE    DONE
+         LA    2,ENTLEN(,2)       next entry
+         BCT   3,LOOP
+         XR    2,2                not found
+DONE     BR    14
+         LTORG
+
+TAB      DC    CL4'ALPH',F'1'
+         DC    CL4'BETA',F'2'
+         DC    CL4'GAMM',F'3'
+TABEND   DS    0F
+NENT     EQU   (TABEND-TAB)/ENTLEN
+         ASSERT NENT==3
+         ASSERT NENT*ENTLEN==TABEND-TAB,'table is not a whole number of entries'
+         END

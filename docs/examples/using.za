@@ -33,7 +33,8 @@ REC1     DC    CL10'Alice',F'1'
 REC2     DC    CL10'Bob',F'2'
 MSG      DC    CL2'AB',CL16' '
 
-REC      DSECT                    dummy section: only symbol values
+* a dummy section: only symbol values
+REC      DSECT
 NAME     DS    CL10
          DS    CL2
 COUNT    DS    F

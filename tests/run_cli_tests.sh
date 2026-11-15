@@ -111,6 +111,16 @@ for f in docs/examples/*; do
   cmp -s $T/ex.txt $f; check "docs/GUIDE.md shows $b" $? 0
 done
 
+# the build variants of docs/examples/config.za (guide 15.3)
+for l in 0 1 2; do $X -gz0 -DLEVEL=$l -o $T/c$l.o docs/examples/config.za; check "config.za LEVEL=$l assembles" $? 0; done
+$X -DLEVEL=3 -o $T/c3.o docs/examples/config.za 2>/dev/null; check "config.za LEVEL=3 is rejected" $? 1
+n0=$($X -dump $T/c0.o | grep TXT | head -1 | sed 's/.*len=\([0-9]*\).*/\1/'); n2=$($X -dump $T/c2.o | grep TXT | head -1 | sed 's/.*len=\([0-9]*\).*/\1/')
+[ "$n0" = 20 ] && [ "$n2" = 48 ]; check "config.za code sizes 20 and 48 (guide 15.3)" $? 0
+
+# guide 15.4: unpack and reassemble from inside the directory gives the same object
+mkdir $T/rt && cp docs/examples/config.za $T/rt/ && (cd $T/rt && $P/$X -gz2 -Werror -DLEVEL=2 -o config.o config.za && $P/$X -unpack config.o -o src >/dev/null && cd src && $P/$X -gz2 -Werror -DLEVEL=2 -o ../again.o config.za && cmp ../config.o ../again.o)
+check "guide 15.4 round trip gives the same object" $? 0
+
 rm -rf $T
 [ $fail = 0 ] && echo "tests/run_cli_tests.sh: ok"
 exit $fail

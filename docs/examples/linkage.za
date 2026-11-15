@@ -1,0 +1,44 @@
+* A complete subroutine: standard save area chain, a parameter list mapped
+* by a DSECT, a call to another routine and the return code.
+*   parameter 1: address of the input fullword
+*   parameter 2: address of the output fullword (receives input * 2)
+DOUBLE   CSECT
+DOUBLE   AMODE 31
+DOUBLE   RMODE ANY
+         EXTRN CHECK              a routine in another module
+         STM   14,12,12(13)       caller's registers into the caller's area
+         LR    12,15
+         USING DOUBLE,12
+         ST    13,SAVE+4          back chain: our area -> caller's area
+         LA    2,SAVE
+         ST    2,8(,13)           forward chain: caller's area -> ours
+         LR    13,2
+
+         LR    10,1               keep the parameter list address
+         USING PL,10
+         L     3,PL_IN            address of the input
+         L     4,0(,3)            the input value
+         LR    5,4
+         AR    5,4                times two
+         L     6,PL_OUT
+         ST    5,0(,6)            store it
+
+         LA    1,PL_IN            pass the same list on to CHECK
+         L     15,=V(CHECK)
+         BASR  14,15              R15 = its return code
+         DROP  10
+
+         L     13,SAVE+4          unchain
+         L     14,12(,13)
+         LM    0,12,20(13)        R15 stays: it is our return code
+         BR    14
+SAVE     DC    18F'0'             not reentrant: a static save area
+         LTORG
+
+* the parameter list
+PL       DSECT
+PL_IN    DS    A
+PL_OUT   DS    A
+PL_LEN   EQU   *-PL
+         ASSERT PL_LEN==8,'parameter list changed'
+         END   DOUBLE

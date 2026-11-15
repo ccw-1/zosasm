@@ -1,0 +1,26 @@
+* One source, several builds: -DLEVEL=n chooses what is assembled.
+* The default is level 1.
+#ifndef LEVEL
+#define LEVEL 1
+#endif
+#if LEVEL < 0 || LEVEL > 2
+#error LEVEL must be 0, 1 or 2
+#endif
+CONFIG   CSECT
+         USING CONFIG,12
+         L     1,=A(LEVEL)
+#if LEVEL >= 1
+         L     2,COUNTER          counting is on from level 1
+         AHI   2,1
+         ST    2,COUNTER
+#endif
+#if LEVEL >= 2
+         CLC   COUNTER,=F'1000'   a sanity check at level 2
+         BNH   OK
+         DC    H'0'               a zero halfword is an invalid instruction: abend
+OK       DS    0H
+#endif
+         BR    14
+COUNTER  DC    F'0'
+         LTORG
+         END

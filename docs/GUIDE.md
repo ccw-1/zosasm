@@ -36,6 +36,27 @@ printed here is that file, and the test suite assembles each of them.
 12. Looking inside an object: `-dump`, ZSYM, `-disasm`, `-unpack`
 13. Command reference
 14. Differences from HLASM and known limits
+15. Recipes: a subroutine, a table, build variants, source round trip
+
+### Feature index
+
+| I want to ... | see | example |
+|---|---|---|
+| assemble a first program, see what comes out | 1 | `hello.za` |
+| write names, numbers, expressions, quoted symbols | 2 | `symbols.za` |
+| use `#include`, `#define`, `#if`, `-D`, stringify | 3, 15.3 | `prep.za`, `config.za` |
+| control sections, classes, entry points, externals | 4 | `sections.za` |
+| define data: `DC`, `DS`, `EQU`, `ORG`, literals | 5 | `data.za` |
+| write instructions, name registers | 6 | `symbols.za` |
+| map storage with DSECTs, `USING` (labeled, dependent, ranges) | 7 | `using.za` |
+| use external dummy sections (`DXD`, `CXD`, `Q`-type) | 8 | `xd.za` |
+| measure with `sizeof`, `offsetof`, `countof`; check with `ASSERT` | 9 | `builtins.za` |
+| floating point, UTF-16, `CCW`, `A(X-Y)` | 10 | `floats.za` |
+| understand an error or warning | 11 | |
+| dump, disassemble, keep and unpack sources | 12, 15.4 | |
+| every command line option | 13 | |
+| know what differs from HLASM, what is unverified | 14 | |
+| a subroutine, a table search, build variants | 15 | `linkage.za`, `table.za`, `config.za` |
 
 ---
 
@@ -152,7 +173,9 @@ loop:    LA    1,4(,2)            a colon after the label is accepted
 
 A directive with an *optional* operand (`ORG`, for example) takes the first
 word after it as the operand, so a remark there is an error: put the remark
-on the line before. For statements that have no operand at all (`LTORG`,
+on the line before. `CSECT`, `DSECT` and the like ignore a stray operand
+silently, and `-disasm` then shows the first word of the remark as an operand:
+also put remarks for them on the line before. For statements that have no operand at all (`LTORG`,
 `BR 14`) a remark may follow.
 
 ### 2.2 Symbols and quoted symbols
@@ -622,7 +645,8 @@ REC1     DC    CL10'Alice',F'1'
 REC2     DC    CL10'Bob',F'2'
 MSG      DC    CL2'AB',CL16' '
 
-REC      DSECT                    dummy section: only symbol values
+* a dummy section: only symbol values
+REC      DSECT
 NAME     DS    CL10
          DS    CL2
 COUNT    DS    F
@@ -1064,3 +1088,177 @@ z/OS; they are all in one place each (`reloc_xd` in `emit.c`, `float.c`,
 disassembler), `ZSYM.md` (the symbolic information in detail),
 `HLASM-REVIEW.md` (every HLASM feature and what was decided), `PLAN.md`
 (status), and `tests/` (small programs that show every feature).
+
+---
+
+## 15. Recipes
+
+Complete programs for common jobs. Like the others, each one is a file in
+`docs/examples/` that the test suite assembles with `-Werror`.
+
+### 15.1 A subroutine with standard linkage
+
+The usual shape of an OS linkage routine: save the caller's registers, chain
+the save areas, address the parameter list through a DSECT, call another
+routine and return its return code in register 15.
+
+<!-- example: linkage.za -->
+```za
+* A complete subroutine: standard save area chain, a parameter list mapped
+* by a DSECT, a call to another routine and the return code.
+*   parameter 1: address of the input fullword
+*   parameter 2: address of the output fullword (receives input * 2)
+DOUBLE   CSECT
+DOUBLE   AMODE 31
+DOUBLE   RMODE ANY
+         EXTRN CHECK              a routine in another module
+         STM   14,12,12(13)       caller's registers into the caller's area
+         LR    12,15
+         USING DOUBLE,12
+         ST    13,SAVE+4          back chain: our area -> caller's area
+         LA    2,SAVE
+         ST    2,8(,13)           forward chain: caller's area -> ours
+         LR    13,2
+
+         LR    10,1               keep the parameter list address
+         USING PL,10
+         L     3,PL_IN            address of the input
+         L     4,0(,3)            the input value
+         LR    5,4
+         AR    5,4                times two
+         L     6,PL_OUT
+         ST    5,0(,6)            store it
+
+         LA    1,PL_IN            pass the same list on to CHECK
+         L     15,=V(CHECK)
+         BASR  14,15              R15 = its return code
+         DROP  10
+
+         L     13,SAVE+4          unchain
+         L     14,12(,13)
+         LM    0,12,20(13)        R15 stays: it is our return code
+         BR    14
+SAVE     DC    18F'0'             not reentrant: a static save area
+         LTORG
+
+* the parameter list
+PL       DSECT
+PL_IN    DS    A
+PL_OUT   DS    A
+PL_LEN   EQU   *-PL
+         ASSERT PL_LEN==8,'parameter list changed'
+         END   DOUBLE
+```
+
+Points to notice: `PL_IN` and `PL_OUT` are plain names because `USING PL,10`
+is active; `LA 1,PL_IN` therefore means "the address 0(,10)", which is the
+list itself. The `ASSERT` at the end stops the build if somebody changes the
+list without changing the callers. `=V(CHECK)` makes a literal that holds an
+external address; the `LTORG` puts it inside the range of register 12.
+
+### 15.2 A table of records
+
+A DSECT describes one entry, the table is data, and the number of entries is
+computed by the assembler instead of being counted by hand.
+
+<!-- example: table.za -->
+```za
+* A table of records mapped by a DSECT, searched in a loop.
+* On return R2 points to the matching entry, or R2 = 0 when there is none.
+* one entry
+ENT      DSECT
+E_KEY    DS    CL4
+E_VALUE  DS    F
+ENTLEN   EQU   *-ENT
+
+FIND     CSECT
+         USING FIND,12
+         USING ENT,2              R2 addresses one entry
+         LA    2,TAB              first entry
+         LHI   3,NENT             number of entries
+LOOP     CLC   E_KEY,=C'BETA'     the key to look for
+         BE    DONE
+         LA    2,ENTLEN(,2)       next entry
+         BCT   3,LOOP
+         XR    2,2                not found
+DONE     BR    14
+         LTORG
+
+TAB      DC    CL4'ALPH',F'1'
+         DC    CL4'BETA',F'2'
+         DC    CL4'GAMM',F'3'
+TABEND   DS    0F
+NENT     EQU   (TABEND-TAB)/ENTLEN
+         ASSERT NENT==3
+         ASSERT NENT*ENTLEN==TABEND-TAB,'table is not a whole number of entries'
+         END
+```
+
+`TABEND-TAB` is a difference of two labels in the same section, so it is
+absolute and can be divided; add a row to the table and `NENT` follows. There
+is no `%` (remainder) operator (section 2.3), so the second `ASSERT` checks the
+division by multiplying back.
+
+### 15.3 One source, several builds
+
+The preprocessor and `-D` replace conditional assembly. Here `LEVEL` decides
+which instructions are assembled and `#error` rejects a wrong value.
+
+<!-- example: config.za -->
+```za
+* One source, several builds: -DLEVEL=n chooses what is assembled.
+* The default is level 1.
+#ifndef LEVEL
+#define LEVEL 1
+#endif
+#if LEVEL < 0 || LEVEL > 2
+#error LEVEL must be 0, 1 or 2
+#endif
+CONFIG   CSECT
+         USING CONFIG,12
+         L     1,=A(LEVEL)
+#if LEVEL >= 1
+         L     2,COUNTER          counting is on from level 1
+         AHI   2,1
+         ST    2,COUNTER
+#endif
+#if LEVEL >= 2
+         CLC   COUNTER,=F'1000'   a sanity check at level 2
+         BNH   OK
+         DC    H'0'               a zero halfword is an invalid instruction: abend
+OK       DS    0H
+#endif
+         BR    14
+COUNTER  DC    F'0'
+         LTORG
+         END
+```
+
+```sh
+zosasm -DLEVEL=0 -o lean.o config.za      # 20 bytes of code
+zosasm -DLEVEL=2 -o checked.o config.za   # 48 bytes of code
+zosasm -DLEVEL=3 config.za                # error: LEVEL must be 0, 1 or 2
+zosasm -E -DLEVEL=2 config.za             # show what the preprocessor made
+```
+
+With `-gz2` (section 12.4) the `-D` options are stored in the object together
+with the source, so the object says how it was built.
+
+### 15.4 From source to object and back
+
+Everything the tool does, in the order you would use it:
+
+```sh
+zosasm -gz2 -Werror -DLEVEL=2 -o config.o config.za   # assemble, keep the sources
+zosasm -dump config.o                                  # records, symbols, sources
+zosasm -disasm config.o                                # your statements, comments gone
+zosasm -unpack config.o -o src                         # the original files again
+cd src
+zosasm -gz2 -Werror -DLEVEL=2 -o ../again.o config.za  # same options, same name
+cmp ../config.o ../again.o                             # no output: identical
+```
+
+The object records the file name as it was given, so assemble the unpacked
+file under the same relative name (here: from inside `src`); then the object
+is byte for byte the same. Add `-reproducible` when the source uses
+`__DATE__` or `__TIME__`.
