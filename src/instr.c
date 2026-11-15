@@ -74,21 +74,63 @@ static Base base_key(Base b) {
 /* a GNU style register operand (%r1): checked when the instruction is encoded */
 static int is_pct_reg(Operand o) { return o.text[strspn(o.text, " \t")] == '%'; }
 
-/* a register: %r1 (GNU style; the prefix says which kind), or an absolute
- * expression: a number or a name the program defined (R1 EQU 1). Bare R1 is
- * NOT predefined: it is an ordinary symbol, so it must be defined. */
+int asm_parse_pct(const char *t, char *kind, int *num) {
+    size_t tl = strlen(t), i;
+    if (tl < 3 || tl > 4 || t[0] != '%' || !strchr("rfacvRFACV", t[1])) return 0;
+    for (i = 2; i < tl; i++)
+        if (!za_isdigit((unsigned char)t[i])) return 0;
+    *kind = (char)za_toupper((unsigned char)t[1]);
+    *num = atoi(t + 2);
+    return 1;
+}
+
+int asm_reg_max(char kind) { return kind == 'V' ? 31 : 15; }
+
+static unsigned kind_flags(char kind) {
+    return kind == 'V' ? F_VR : kind == 'F' ? F_FPR : kind == 'A' ? F_AR : kind == 'C' ? F_CR : F_GPR;
+}
+
+/* the symbol an operand names when it is a register name (NAME EQU %r1), else NULL */
+static Symbol *reg_symbol(Asm *a, const char *t) {
+    const char *err;
+    char *n = sym_text(t, &err);
+    Symbol *s = n ? asm_lookup(a, n) : NULL;
+    return s && s->regkind ? s : NULL;
+}
+
+/* the diagnostic of strict registers: o is a number or an ordinary symbol where a register
+ * is expected */
+static void strict_register_error(Asm *a, Stmt *st, Operand o, const char *t, char kind) {
+    Diag *d;
+    char *fix = NULL;
+    size_t i, n = strlen(t);
+    int digits = n > 0 && n <= 2;
+    for (i = 0; i < n; i++)
+        if (!za_isdigit((unsigned char)t[i])) digits = 0;
+    if (digits)
+        fix = xasprintf("%%%c%s", za_tolower((unsigned char)kind), t);
+    d = rep_errorf(a->rep, "ZA2067", asm_op_span(st, o), "\"%s\" is not written as a register", t);
+    if (fix) diag_help(d, "write %s", fix);
+    diag_help(d, "with -strict-registers a register is written %%%c<n>, or is a name defined "
+                 "with `NAME EQU %%%c<n>`", za_tolower((unsigned char)kind),
+              za_tolower((unsigned char)kind));
+}
+
+/* a register: %r1 (GNU style; the prefix says which kind), a name made with
+ * EQU %r1, or, unless strict registers are on, an absolute expression: a
+ * number or a name the program defined (R1 EQU 1). Bare R1 is NOT predefined:
+ * it is an ordinary symbol, so it must be defined. */
 static int asm_register(Asm *a, Stmt *st, Operand o, unsigned flags, int64_t *out) {
     char *t = str_trim(o.text);
-    size_t tl = strlen(t), lead = 0;
+    size_t lead = 0;
     Operand to;
     int ok;
+    Symbol *rs;
     if (t[0] == '%') {
         /* GNU style register: %r1 %f0 %a2 %c3 %v31 */
-        size_t i;
-        int digits = tl >= 3 && tl <= 4;
-        for (i = 2; i < tl; i++)
-            if (!za_isdigit((unsigned char)t[i])) digits = 0;
-        if (!digits || !strchr("rfacvRFACV", t[1])) {
+        char kind;
+        int num;
+        if (!asm_parse_pct(t, &kind, &num)) {
             diag_help(rep_errorf(a->rep, "ZA2054", asm_op_span(st, o),
                                  "\"%s\" is not a register name", t),
                       "GNU style registers are %%r0-%%r15, %%f0-%%f15, %%a0-%%a15, %%c0-%%c15 and "
@@ -96,7 +138,7 @@ static int asm_register(Asm *a, Stmt *st, Operand o, unsigned flags, int64_t *ou
             free(t);
             return 0;
         }
-        if (za_toupper((unsigned char)t[1]) != reg_prefix(flags)) {
+        if (kind != reg_prefix(flags)) {
             diag_help(rep_errorf(a->rep, "ZA2055", asm_op_span(st, o),
                                  "%s is not a %s register", t, reg_kind(flags)),
                       "this operand takes a %s register (%%%c<n>)", reg_kind(flags),
@@ -104,9 +146,30 @@ static int asm_register(Asm *a, Stmt *st, Operand o, unsigned flags, int64_t *ou
             free(t);
             return 0;
         }
-        *out = atoi(t + 2);
+        *out = num;
         free(t);
         return 1;
+    }
+    rs = reg_symbol(a, t);
+    if (rs) { /* NAME EQU %r1 */
+        if (rs->regkind != reg_prefix(flags)) {
+            diag_help(rep_errorf(a->rep, "ZA2055", asm_op_span(st, o),
+                                 "\"%s\" is a %s register name, but this operand takes a %s register",
+                                 t, reg_kind(kind_flags(rs->regkind)), reg_kind(flags)),
+                      "this operand takes a %s register (%%%c<n>)", reg_kind(flags),
+                      (char)za_tolower((unsigned char)reg_prefix(flags)));
+            free(t);
+            return 0;
+        }
+        if (a->pass == 2) asm_note_ref(a, rs, asm_op_span(st, o));
+        *out = rs->val.abs;
+        free(t);
+        return 1;
+    }
+    if (a->strict) {
+        strict_register_error(a, st, o, t, reg_prefix(flags));
+        free(t);
+        return 0;
     }
     while (o.text[lead] && za_isspace((unsigned char)o.text[lead])) lead++;
     to.text = t;
@@ -154,14 +217,23 @@ typedef struct {
  * an error (reported) */
 static int using_operand(Asm *a, Stmt *st, Operand o, UsingOp *r) {
     memset(r, 0, sizeof *r);
-    if (is_register_name(o)) {
+    char *t = str_trim(o.text);
+    int named = reg_symbol(a, t) != NULL;
+    if (is_register_name(o) || named) {
+        free(t);
         if (!asm_register(a, st, o, F_GPR, &r->reg)) return 0;
     } else {
+        free(t);
         r->e = asm_expr(a, st, o);
         if (!r->e || !asm_eval(a, st, r->e, 1, &r->v)) return 0;
         if (!value_is_abs(&r->v)) {
             r->is_addr = 1;
             return 1;
+        }
+        if (a->strict) {
+            char *t2 = str_trim(o.text);
+            strict_register_error(a, st, o, t2, 'R');
+            return 0;
         }
         r->reg = r->v.abs;
     }

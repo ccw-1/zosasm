@@ -331,7 +331,7 @@ static int missing_symbol(Asm *a, Stmt *st, const Expr *x, int need, Value *out)
 }
 
 /* the listing's cross reference: a use of s in pass 2 */
-static void note_ref(Asm *a, Symbol *s, Span sp) {
+void asm_note_ref(Asm *a, Symbol *s, Span sp) {
     if (a->pass == 2 && sp.pos.file) vec_push(&s->refs, sp.pos);
 }
 
@@ -347,7 +347,15 @@ static int sym_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
     }
     if (!s) return missing_symbol(a, st, x, need, out);
     s->used = 1;
-    note_ref(a, s, x->sp);
+    asm_note_ref(a, s, x->sp);
+    if (s->regkind && a->strict) {
+        diag_help(rep_errorf(a->rep, "ZA2068", x->sp, "\"%s\" is a register name and cannot be used as a number",
+                             x->name),
+                  "it was defined with EQU %%%c<n>; it is only valid where a register is expected",
+                  za_tolower((unsigned char)s->regkind));
+        st->bad = 1;
+        return 0;
+    }
     switch (s->kind) {
     case SYM_LABEL:
         *out = asm_addr_value(a, s->piece, s->off);
@@ -464,7 +472,7 @@ static int attr_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
                      x->name);
         return 0;
     }
-    note_ref(a, s, x->sp);
+    asm_note_ref(a, s, x->sp);
     switch (x->attr) {
     case 'L':
         n = s->len ? s->len : 1;
@@ -533,7 +541,7 @@ static int func_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
     int late;
     if (!s) return missing_symbol(a, st, x->l, need, out);
     s->used = 1;
-    note_ref(a, s, x->l->sp);
+    asm_note_ref(a, s, x->l->sp);
     if (x->op == 'o') {
         Symbol *f = asm_lookup(a, x->r->name);
         Class *c;
@@ -541,7 +549,7 @@ static int func_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
             return func_kind_err(a, st, x, x->l, "a section name as its first argument");
         if (!f) return missing_symbol(a, st, x->r, need, out);
         f->used = 1;
-        note_ref(a, f, x->r->sp);
+        asm_note_ref(a, f, x->r->sp);
         if (f->kind != SYM_LABEL || !f->piece || f->piece->cls->sect != s->sect ||
             f->piece->cls != s->sect->classes.v[0]) {
             asm_expr_err(a, st, x->r->sp, "ZA1043", "\"%s\" is not a field of \"%s\"", f->name,
@@ -1035,10 +1043,13 @@ static void run(Asm *a) {
     finish(a);
 }
 
+int za_strict_registers;
+
 Module *asm_assemble_all(const SrcLine *lines, size_t n, const char *name, Reporter *rep) {
     Asm *a = xcalloc(sizeof *a);
     a->rep = rep;
     a->scratch = rep_new(0);
+    a->strict = za_strict_registers;
     a->mod = xcalloc(sizeof *a->mod);
     a->mod->name = xstrdup(name);
     read_statements(&a->stmts, lines, n, rep);

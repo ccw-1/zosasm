@@ -597,6 +597,7 @@ void dir_equ(Asm *a, Stmt *st) {
     int64_t length = 1, type = 0;
     Symbol *s;
     int created;
+    char regkind = 0;
     if (a->pass != 1) return;
     if (!st->name[0]) {
         rep_errorf(a->rep, "ZA1022", st->op_span, "EQU needs a symbol in the name field");
@@ -604,9 +605,25 @@ void dir_equ(Asm *a, Stmt *st) {
         return;
     }
     if (!asm_ops(a, st, 1, 3, &ops)) return;
-    e = asm_expr(a, st, ops.v[0]);
-    if (!e) return;
-    if (!asm_eval(a, st, e, 1, &v)) return;
+    {
+        char *t0 = str_trim(ops.v[0].text);
+        if (t0[0] == '%') { /* NAME EQU %r12: a register name */
+            int num;
+            if (!asm_parse_pct(t0, &regkind, &num) || num > asm_reg_max(regkind)) {
+                diag_help(rep_errorf(a->rep, "ZA2054", asm_op_span(st, ops.v[0]),
+                                     "\"%s\" is not a register name", t0),
+                          "GNU style registers are %%r0-%%r15, %%f0-%%f15, %%a0-%%a15, "
+                          "%%c0-%%c15 and %%v0-%%v31");
+                st->bad = 1;
+                return;
+            }
+            v = value_abs(num);
+        } else {
+            e = asm_expr(a, st, ops.v[0]);
+            if (!e) return;
+            if (!asm_eval(a, st, e, 1, &v)) return;
+        }
+    }
     if (ops.n > 1 && ops.v[1].text[0]) {
         if (!asm_abs_expr(a, st, ops.v[1], "the EQU length attribute", &length)) return;
     }
@@ -630,6 +647,7 @@ void dir_equ(Asm *a, Stmt *st) {
         s->len = length;
         s->type = type ? ZA_A(type) : 0;
         s->kind = value_is_abs(&v) ? SYM_ABS : SYM_REL;
+        s->regkind = regkind;
     }
 }
 

@@ -121,6 +121,17 @@ n0=$($X -dump $T/c0.o | grep TXT | head -1 | sed 's/.*len=\([0-9]*\).*/\1/'); n2
 mkdir $T/rt && cp docs/examples/config.za $T/rt/ && (cd $T/rt && $P/$X -gz2 -Werror -DLEVEL=2 -o config.o config.za && $P/$X -unpack config.o -o src >/dev/null && cd src && $P/$X -gz2 -Werror -DLEVEL=2 -o ../again.o config.za && cmp ../config.o ../again.o)
 check "guide 15.4 round trip gives the same object" $? 0
 
+# strict registers (guide 6.1)
+$X -strict-registers -Werror -o $T/strict.o docs/examples/strict.za 2>/dev/null; check "strict.za assembles with -strict-registers" $? 0
+$X -Werror -o $T/strict2.o docs/examples/strict.za 2>/dev/null; check "strict.za assembles without it" $? 0
+cmp -s $T/strict.o $T/strict2.o; check "strict and relaxed objects are the same" $? 0
+$X -strict-registers -o $T/h3.o docs/examples/hello.za 2>$T/err; check "numbers are rejected with -strict-registers" $? 1
+grep -q 'ZA2067' $T/err; check "the error is ZA2067" $? 0
+grep -q 'write %r14' $T/err; check "the error says what to write" $? 0
+$X -disasm $T/strict.o >$T/strict.disasm 2>$T/err; check "-disasm of a strict object" $? 0
+[ ! -s $T/err ]; check "-disasm of a strict object: no warnings" $? 0
+$X -strict-registers -disasm $T/hello.o >/dev/null 2>$T/err; check "-disasm ignores -strict-registers" $? 0
+
 rm -rf $T
 [ $fail = 0 ] && echo "tests/run_cli_tests.sh: ok"
 exit $fail

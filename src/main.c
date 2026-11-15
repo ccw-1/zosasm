@@ -15,7 +15,7 @@
 #include "zsym.h"
 
 static void usage(FILE *f) {
-    fprintf(f, "usage: zosasm [-o out.o] [-gz0|-gz1|-gz2] [-DNAME[=val]] [-Idir] [-E] [-reproducible] [-color] [-Werror] [-max-errors N] source.za\n"
+    fprintf(f, "usage: zosasm [-o out.o] [-gz0|-gz1|-gz2] [-DNAME[=val]] [-Idir] [-E] [-reproducible] [-strict-registers] [-color] [-Werror] [-max-errors N] source.za\n"
                "       zosasm -dump file.o\n"
                "       zosasm [-o out.za] -disasm file.o\n"
                "       zosasm [-o dir] -unpack file.o\n"
@@ -32,6 +32,8 @@ static void usage(FILE *f) {
                "                  the directory given with -o (default .)\n"
                "  -gz0|-gz1|-gz2  symbolic object information (ZSYM) in the object: none | symbols and\n"
                "                  statements (default) | also the original source files\n"
+               "  -strict-registers  in a register position accept only %%r1 (any case; %%f %%a %%c %%v too)\n"
+               "                  or a name made with NAME EQU %%r1, not plain numbers or other symbols\n"
                "  -generic        with -disasm: ignore the ZSYM information\n"
                "  -color          colorize diagnostics\n"
                "  -max-errors N   stop after this many errors (default 50, 0 = no limit)\n"
@@ -76,7 +78,11 @@ static int check_text(const GoffModule *m, const char *orig, size_t n, uint32_t 
     size_t olen;
     char err[256];
     Reporter *rep = rep_new(50);
-    Module *mod = asm_assemble_text("(disassembly)", text, strlen(text), rep);
+    int save_strict = za_strict_registers;
+    Module *mod;
+    za_strict_registers = 0; /* the converted text keeps what the author wrote */
+    mod = asm_assemble_text("(disassembly)", text, strlen(text), rep);
+    za_strict_registers = save_strict;
     uint8_t *obj = mod ? module_emit(mod, &olen, err, sizeof err) : NULL; /* zlevel 0: no ZSYM */
     *rep_out = rep;
     *diff_at = 0;
@@ -244,6 +250,8 @@ int main(int argc, char **argv) {
         } else if (!strcmp(a, "-version")) {
             printf("zosasm %s\n", ZASM_VERSION_STR);
             return 0;
+        } else if (!strcmp(a, "-strict-registers")) {
+            za_strict_registers = 1;
         } else if (!strcmp(a, "-generic")) {
             generic = 1;
         } else if (!strcmp(a, "-gz0")) {

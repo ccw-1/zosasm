@@ -164,6 +164,7 @@ struct Symbol {
     Section *xd_sect; /* its B_PRV is in this section */
     int zid;          /* symbol number in the ZSYM block */
     Vec(Pos) refs;    /* where the symbol was used (pass 2, for the listing) */
+    char regkind;     /* EQU %r12: a register name: 'R', 'F', 'A', 'C' or 'V'; 0 otherwise */
 };
 
 typedef Vec(Stmt *) StmtVec;
@@ -442,6 +443,7 @@ struct Asm {
     int64_t lead_pad;
     size_t lit_owner; /* LitRec.owner of the literals being assembled */
     int using_logged; /* highest Using.id copied to Module.usings */
+    int strict;       /* registers only as %r<n> or a name made with EQU %r<n> */
 };
 
 /* Assemble the lines; returns NULL when errors were reported. The caller
@@ -452,6 +454,11 @@ Module *asm_assemble(const SrcLine *lines, size_t n, const char *name, Reporter 
 Module *asm_assemble_all(const SrcLine *lines, size_t n, const char *name, Reporter *rep);
 /* Convenience: split text, register it and assemble. */
 Module *asm_assemble_text(const char *file, const char *text, size_t len, Reporter *rep);
+
+/* Strict registers (-strict-registers): in a register position only %r1 (any
+ * case, also %f %a %c %v) and names made with `NAME EQU %r1` are accepted, not
+ * plain numbers or other symbols. Default 0. Read when assembling starts. */
+extern int za_strict_registers;
 
 typedef void (*Handler)(Asm *a, Stmt *st);
 
@@ -476,6 +483,11 @@ void asm_advance(Asm *a, int64_t n);
 void asm_put(Asm *a, const uint8_t *b, size_t n);
 void asm_reloc(Asm *a, int n, Symbol *target, Class *cls, RelocKind kind, int sub);
 Value asm_addr_value(Asm *a, Piece *p, int64_t off);
+void asm_note_ref(Asm *a, Symbol *s, Span sp);
+/* %r1 %f0 %a2 %c3 %v31 (any case): the kind (upper case letter) and the number; 0 if t is not that */
+int asm_parse_pct(const char *t, char *kind, int *num);
+/* the largest register number of a kind letter: 15, or 31 for V */
+int asm_reg_max(char kind);
 int amode_byte(const char *s, uint8_t *out);
 int rmode_byte(const char *s, uint8_t *out);
 char *str_trim(const char *s);

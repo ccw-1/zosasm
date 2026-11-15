@@ -376,6 +376,60 @@ static void test_register_hint(void) {
     CHECK_MSG(found, "the hint for a bare register name");
 }
 
+/* -strict-registers: only %r1 and names made with EQU %r1 in register positions */
+static void test_strict_registers(void) {
+    static const struct {
+        const char *name, *src, *want;
+    } cases[] = {
+        {"number rejected", "T CSECT\n LA 1,0\n", "ZA2067"},
+        {"number in a base", "T CSECT\n LA %r1,0(,2)\n", "ZA2067"},
+        {"EQU'd number name rejected", "T CSECT\nR1 EQU 1\n LR R1,%r2\n", "ZA2067"},
+        {"USING number", "T CSECT\n USING *,12\n", "ZA2067"},
+        {"DROP number", "T CSECT\n DROP 12\n", "ZA2067"},
+        {"%r everywhere", "T CSECT\n LM %r14,%r12,12(%R13)\n L %r1,4(%r2,%r3)\n SLL %r1,2\n BR %r14\n", ""},
+        {"mask and length stay numbers", "T CSECT\n BCR 15,%r14\n MVC 0(8,%r1),0(%r2)\n LHI %r1,5\n", ""},
+        {"register names", "T CSECT\nBASE EQU %r12\nF2 EQU %f2\n USING T,BASE\n LER F2,%f4\n LA %r1,0(,BASE)\n DROP BASE\n", ""},
+        {"name of the wrong kind", "T CSECT\nF2 EQU %f2\n LR F2,%r1\n", "ZA2055"},
+        {"register name as a number", "T CSECT\nBASE EQU %r12\n LHI %r1,BASE\n", "ZA2068"},
+        {"bad EQU register", "T CSECT\nX EQU %x1\n", "ZA2054"},
+        {"EQU register range", "T CSECT\nX EQU %r16\n", "ZA2054"},
+        {"vector range", "T CSECT\nX EQU %v31\nY EQU %v32\n", "ZA2054"},
+    };
+    size_t c;
+    za_strict_registers = 1;
+    for (c = 0; c < sizeof cases / sizeof cases[0]; c++) {
+        char *got = codes_of(cases[c].src);
+        CHECK_MSG(!strcmp(got, cases[c].want), "strict %s: codes \"%s\", want \"%s\"", cases[c].name,
+                  got, cases[c].want);
+    }
+    za_strict_registers = 0;
+    /* not strict: numbers work, and register names are numbers too */
+    {
+        static const char *const ok[] = {
+            "T CSECT\n LA 1,0\n",
+            "T CSECT\nBASE EQU %r12\n LHI %r1,BASE\n LA 1,0(,BASE)\n",
+            "T CSECT\nBASE EQU 12\n USING T,BASE\n",
+        };
+        for (c = 0; c < sizeof ok / sizeof ok[0]; c++) {
+            char *got = codes_of(ok[c]);
+            CHECK_MSG(!got[0], "relaxed: \"%s\" gave %s", ok[c], got);
+        }
+    }
+    /* the same program, written strictly or not, gives the same bytes */
+    {
+        Module *m1, *m2;
+        za_strict_registers = 1;
+        m1 = assemble("T CSECT\nB EQU %r12\n USING T,B\n L %r1,4(%r2,%r3)\n STM %r14,%r12,12(B)\n", NULL);
+        za_strict_registers = 0;
+        m2 = assemble("T CSECT\n USING T,12\n L 1,4(2,3)\n STM 14,12,12(12)\n", NULL);
+        CHECK(m1 && m2);
+        if (m1 && m2) {
+            Class *k1 = m1->sections.v[0]->classes.v[0], *k2 = m2->sections.v[0]->classes.v[0];
+            CHECK(k1->len == k2->len && !memcmp(k1->data, k2->data, (size_t)k1->len));
+        }
+    }
+}
+
 static void test_diag_help(void) {
     Reporter *rep;
     size_t n, i;
@@ -400,5 +454,6 @@ int main(void) {
     test_diag_codes();
     test_diag_help();
     test_register_hint();
+    test_strict_registers();
     TEST_MAIN_END();
 }

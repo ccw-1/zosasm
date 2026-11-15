@@ -1,0 +1,23 @@
+* Strict registers: assemble with -strict-registers.
+* A register is written %r1 (also %R1; %f0 %a0 %c0 %v0 for the other kinds)
+* or is a name made with EQU %r<n>. Numbers stay numbers: displacements,
+* lengths, immediates, masks and shift counts.
+STRICT   CSECT
+BASE     EQU   %r12               register names
+WORK     EQU   %r2
+FP       EQU   %f2
+         STM   %r14,%r12,12(%r13)
+         LR    BASE,%r15
+         USING STRICT,BASE
+         LA    WORK,AREA          base and displacement come from USING
+         L     %r3,4(WORK,%r1)    D(index,base)
+         SLL   %r3,2              2 is a shift count, not a register
+         LHI   %r4,5              5 is an immediate
+         BCR   15,%r14            15 is a mask
+         LER   FP,%f4             floating point registers have their own letter
+         MVC   0(8,WORK),0(%r1)   8 is a length
+         DROP  BASE
+         LM    %r14,%r12,12(%r13)
+         BR    %r14
+AREA     DS    CL64
+         END

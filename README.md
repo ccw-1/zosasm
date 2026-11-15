@@ -52,7 +52,9 @@ differs from the input; for objects made by zosasm the round trip is exact
 (see DESIGN.md section 10).
 
 Registers can be written as numbers, as names you defined (`R1 EQU 1`; a bare
-`R1` is not predefined) or GNU style: `lgr %r1,%R2`, `ler %f2,%f4`, `vl %v1,0(%r2)`.
+`R1` is not predefined) or GNU style: `lgr %r1,%R2`, `ler %f2,%f4`, `vl %v1,0(%r2)`. With
+`-strict-registers` only the GNU style and names made with `NAME EQU %r12`
+are accepted in register positions (guide section 6.1).
 
 ## Regenerating the instruction table (developers only)
 

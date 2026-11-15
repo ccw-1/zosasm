@@ -47,7 +47,7 @@ printed here is that file, and the test suite assembles each of them.
 | use `#include`, `#define`, `#if`, `-D`, stringify | 3, 15.3 | `prep.za`, `config.za` |
 | control sections, classes, entry points, externals | 4 | `sections.za` |
 | define data: `DC`, `DS`, `EQU`, `ORG`, literals | 5 | `data.za` |
-| write instructions, name registers | 6 | `symbols.za` |
+| write instructions, name registers, require `%r1` notation | 6, 6.1 | `symbols.za`, `strict.za` |
 | map storage with DSECTs, `USING` (labeled, dependent, ranges) | 7 | `using.za` |
 | use external dummy sections (`DXD`, `CXD`, `Q`-type) | 8 | `xd.za` |
 | measure with `sizeof`, `offsetof`, `countof`; check with `ASSERT` | 9 | `builtins.za` |
@@ -571,6 +571,63 @@ The `%` form says unambiguously that the operand is a register, and needs no
 The kind of register is checked: `%f1` where a general register is needed is
 an error (`ZA2055`). Register pairs (even-odd) are *not* checked.
 
+### 6.1 Strict registers
+
+With **`-strict-registers`** a register position accepts only the `%` form, or
+a name made with `NAME EQU %r<n>` (a *register name*). A plain number, or any
+other symbol, is an error (`ZA2067`) that tells you what to write:
+
+```
+error[ZA2067]: "14" is not written as a register
+  --> hello.za:7:16
+  |
+7 |          STM   14,12,12(13)       save the caller's registers
+  |                ^^
+  help: write %r14
+```
+
+This catches the classic slips (`LA 1,0` against `L 1,0`, a swapped register
+and immediate) because the instruction table knows which operands are
+registers. Everything that is not a register stays a number: displacements,
+lengths, immediates, masks (`BCR 15,%r14`) and shift counts (`SLL %r3,2`).
+A register name can be used only where a register is expected; in an
+expression it is an error under `-strict-registers` (`ZA2068`), and the kind
+is checked (`FP EQU %f2` cannot be used as a general register, `ZA2055`).
+`USING` and `DROP` take registers in the same way.
+
+<!-- example: strict.za -->
+```za
+* Strict registers: assemble with -strict-registers.
+* A register is written %r1 (also %R1; %f0 %a0 %c0 %v0 for the other kinds)
+* or is a name made with EQU %r<n>. Numbers stay numbers: displacements,
+* lengths, immediates, masks and shift counts.
+STRICT   CSECT
+BASE     EQU   %r12               register names
+WORK     EQU   %r2
+FP       EQU   %f2
+         STM   %r14,%r12,12(%r13)
+         LR    BASE,%r15
+         USING STRICT,BASE
+         LA    WORK,AREA          base and displacement come from USING
+         L     %r3,4(WORK,%r1)    D(index,base)
+         SLL   %r3,2              2 is a shift count, not a register
+         LHI   %r4,5              5 is an immediate
+         BCR   15,%r14            15 is a mask
+         LER   FP,%f4             floating point registers have their own letter
+         MVC   0(8,WORK),0(%r1)   8 is a length
+         DROP  BASE
+         LM    %r14,%r12,12(%r13)
+         BR    %r14
+AREA     DS    CL64
+         END
+```
+
+Without the option nothing changes: numbers and defined names are accepted,
+and register names made with `EQU %r<n>` work as numbers too, so a source
+written strictly assembles either way, to the same object. `-strict-registers`
+is off by default; `-disasm` and the check it makes on its own output ignore
+it, because the text it writes keeps what the author wrote.
+
 **Addresses.** An operand like `A 3,ONE` (no base given) is turned into
 displacement and base register using the active `USING` statements; if no
 USING covers the address you get `ZA2030` with a hint. Writing the base
@@ -1042,6 +1099,7 @@ zosasm [-o dir] -unpack file.o
 | `-gz0`, `-gz1`, `-gz2` | symbolic information level (default `-gz1`) |
 | `-generic` | with `-disasm`: ignore ZSYM |
 | `-reproducible` | fail on anything that makes the object differ between runs |
+| `-strict-registers` | registers only as `%r1` or an `EQU %r1` name (section 6.1) |
 | `-version` | print the version |
 | `-color` | colour the diagnostics |
 | `-max-errors N` | stop after N errors (default 50; 0 = no limit) |
