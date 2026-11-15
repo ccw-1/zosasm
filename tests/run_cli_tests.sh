@@ -44,12 +44,23 @@ printf 'T CSECT\n COPY X\n' > $T/pp5.za
 $X -o $T/pp5.o $T/pp5.za 2>$T/err; check "COPY rejected" $? 1
 grep -q ZA9001 $T/err; check "COPY code" $? 0
 
+# ZSYM: on by default, -gz0 leaves it out
+$X -dump $T/hello.o | grep -q "^ZSYM: 1 block"; check "ZSYM by default" $? 0
+$X -dump $T/hello.o | grep -q "complete"; check "ZSYM block complete" $? 0
+$X -gz0 -o $T/hello0.o testdata/hello.za 2>/dev/null; check "-gz0 exit" $? 0
+$X -dump $T/hello0.o | grep -q "ZSYM"; check "-gz0 has no ZSYM" $? 1
+$X -dump $T/hello0.o | grep -q "C_ADATA"; check "-gz0 has no ADATA class" $? 1
+[ $(wc -c < $T/hello.o) -gt $(wc -c < $T/hello0.o) ]; check "-gz1 object is larger" $? 0
+
 # disassembler: object -> source -> the same object
-$X -disasm $T/hello.o -o $T/back.za 2>$T/err; check "-disasm exit" $? 0
+$X -disasm $T/hello0.o -o $T/back.za 2>$T/err; check "-disasm exit" $? 0
 [ ! -s $T/err ]; check "-disasm without warnings" $? 0
-$X -o $T/back.o $T/back.za 2>/dev/null; check "-disasm output assembles" $? 0
-cmp -s $T/hello.o $T/back.o; check "-disasm round trip" $? 0
-$X -disasm $T/hello.o 2>/dev/null | cmp -s - $T/back.za; check "-disasm to stdout" $? 0
+$X -gz0 -o $T/back.o $T/back.za 2>/dev/null; check "-disasm output assembles" $? 0
+cmp -s $T/hello0.o $T/back.o; check "-disasm round trip" $? 0
+$X -disasm $T/hello0.o 2>/dev/null | cmp -s - $T/back.za; check "-disasm to stdout" $? 0
+$X -disasm $T/hello.o -o $T/backz.za 2>$T/err; check "-disasm of an object with ZSYM" $? 0
+[ ! -s $T/err ]; check "-disasm with ZSYM without warnings" $? 0
+cmp -s $T/back.za $T/backz.za; check "ZSYM does not change the generic disassembly" $? 0
 head -c 200 $T/hello.o > $T/trunc.o
 $X -disasm $T/trunc.o 2>/dev/null; check "-disasm bad object" $? 1
 $X -disasm $T/missing.o 2>/dev/null; check "-disasm missing file" $? 1

@@ -9,9 +9,11 @@
 #include "disasm.h"
 #include "goff.h"
 #include "pp.h"
+#include "ebcdic.h"
+#include "zsym.h"
 
 static void usage(FILE *f) {
-    fprintf(f, "usage: zosasm [-o out.o] [-DNAME[=val]] [-Idir] [-E] [-color] [-Werror] [-max-errors N] source.za\n"
+    fprintf(f, "usage: zosasm [-o out.o] [-gz0|-gz1] [-DNAME[=val]] [-Idir] [-E] [-color] [-Werror] [-max-errors N] source.za\n"
                "       zosasm -dump file.o\n"
                "       zosasm [-o out.za] -disasm file.o\n"
                "  -o FILE         output object file (default: input with .o)\n"
@@ -20,6 +22,8 @@ static void usage(FILE *f) {
                "  -E              print the preprocessed source and stop\n"
                "  -dump FILE      print the structure of a GOFF object file and exit\n"
                "  -disasm FILE    convert a GOFF object back to source (stdout or -o)\n"
+               "  -gz0|-gz1       symbolic object information (ZSYM) in the object: none | symbols and\n"
+               "                  statements (default)\n"
                "  -color          colorize diagnostics\n"
                "  -max-errors N   stop after this many errors (default 50, 0 = no limit)\n"
                "  -Werror         treat warnings as errors\n");
@@ -40,6 +44,14 @@ static int do_dump(const char *path) {
         return 1;
     }
     goff_dump(m, stdout);
+    {
+        size_t zlen;
+        uint8_t *z = zsym_extract(m, &zlen);
+        if (z) {
+            putchar('\n');
+            zsym_dump(zsym_parse(z, zlen), stdout);
+        }
+    }
     return 0;
 }
 
@@ -51,6 +63,8 @@ static int do_disasm(const char *path, const char *out) {
     GoffModule *m;
     char *b = read_file(path, &n), *text, err[256];
     int nwarn = 0;
+    size_t k;
+    uint32_t skip_z = 0;
     Reporter *rep;
     Module *mod;
     uint8_t *obj;
@@ -63,6 +77,11 @@ static int do_disasm(const char *path, const char *out) {
     if (!m) {
         fprintf(stderr, "zosasm: %s: %s\n", path, perr);
         return 1;
+    }
+    for (k = 0; k < m->esds.n; k++) {
+        const GoffESD *e = m->esds.v[k];
+        char *nm = e->type == GOFF_ED ? ebcdic_decode(e->name, e->name_len) : NULL;
+        if (nm && !strcmp(nm, ZSYM_CLASS)) skip_z = (uint32_t)k + 1;
     }
     text = disasm_module(m, stderr, &nwarn, err, sizeof err);
     if (!text) {
@@ -77,8 +96,13 @@ static int do_disasm(const char *path, const char *out) {
     }
     rep = rep_new(50);
     mod = asm_assemble_text("(disassembly)", text, tlen, rep);
-    obj = mod ? module_emit(mod, &olen, err, sizeof err) : NULL;
-    if (!obj) {
+    obj = mod ? module_emit(mod, &olen, err, sizeof err) : NULL; /* no ZSYM: zlevel is 0 */
+    if (obj && skip_z) {
+        const char *e2 = NULL;
+        GoffModule *m2 = goff_parse(obj, olen, &e2);
+        if (!m2 || !goff_equal(m, skip_z, m2))
+            fprintf(stderr, "zosasm: warning: the generated source assembles to a different object\n");
+    } else if (!obj) {
         fprintf(stderr, "zosasm: warning: the generated source does not assemble\n");
         rep_print(rep, stderr, 0);
     } else if (olen != n || memcmp(obj, b, n) != 0) {
@@ -102,7 +126,7 @@ static char *default_output(const char *in) {
 
 int main(int argc, char **argv) {
     const char *out = NULL, *in = NULL, *disasm = NULL;
-    int color = 0, werror = 0, max_err = 50, i, only_pp = 0;
+    int color = 0, werror = 0, max_err = 50, i, only_pp = 0, zlevel = 1;
     PpOptions ppo;
     SrcVec lines = {0};
     size_t n, olen;
@@ -128,6 +152,10 @@ int main(int argc, char **argv) {
             vec_push(&ppo.include_dirs, a[2] ? a + 2 : argv[++i]);
         } else if (!strcmp(a, "-E")) {
             only_pp = 1;
+        } else if (!strcmp(a, "-gz0")) {
+            zlevel = 0;
+        } else if (!strcmp(a, "-gz1")) {
+            zlevel = 1;
         } else if (!strcmp(a, "-color")) {
             color = 1;
         } else if (!strcmp(a, "-Werror")) {
@@ -171,6 +199,7 @@ int main(int argc, char **argv) {
     mod = rep_error_count(rep) > 0 ? NULL : asm_assemble(lines.v, lines.n, in, rep);
     rep_print(rep, stderr, color);
     if (!mod || rep_error_count(rep) > 0) return 1;
+    mod->zlevel = zlevel;
     obj = module_emit(mod, &olen, err, sizeof err);
     if (!obj) {
         fprintf(stderr, "zosasm: %s: cannot write object: %s\n", in, err);

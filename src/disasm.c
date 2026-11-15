@@ -18,6 +18,7 @@
 #include "ebcdic.h"
 #include "goff.h"
 #include "isa.h"
+#include "zsym.h"
 
 #define PRIV_NAME "$PRIV000000"
 #define DEFAULT_CLASS "B_TEXT"
@@ -200,6 +201,10 @@ static int load_esds(Ctx *x) {
                 return failf(x, "ESD %u: element without a section", id);
             s = x->by_id[e->parent].p;
             nm = ebcdic_decode(e->name, e->name_len);
+            if (!strcmp(nm, ZSYM_CLASS) || !strcmp(nm, "C_ADATAE9C2")) {
+                x->by_id[id].kind = 'Z'; /* symbolic information, not code or data */
+                break;
+            }
             if (!strcmp(nm, PRV_CLASS)) {
                 x->by_id[id].kind = 'V';
                 x->by_id[id].p = s;
@@ -306,6 +311,7 @@ static int load_text(Ctx *x) {
         const GoffText *t = &m->texts.v[i];
         DClass *c = class_of(x, t->esdid);
         uint64_t end;
+        if (!c && t->esdid && t->esdid <= m->esds.n && x->by_id[t->esdid].kind == 'Z') continue;
         if (!c) {
             warnf(x, "text for ESD %u is ignored (not a class)", t->esdid);
             continue;

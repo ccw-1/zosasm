@@ -146,6 +146,9 @@ typedef struct {
 /* Parse an object; returns NULL and sets *err on failure. */
 GoffModule *goff_parse(const uint8_t *b, size_t n, const char **err);
 const GoffESD *goff_module_esd(const GoffModule *m, uint32_t id);
+/* Same ESDs, text, relocations, lengths and END? The ESD item skip_a of a
+ * (0 = none) and its text are left out of the comparison. */
+int goff_equal(const GoffModule *a, uint32_t skip_a, const GoffModule *b);
 /* readable listing */
 void goff_dump(const GoffModule *m, FILE *w);
 

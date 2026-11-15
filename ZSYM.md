@@ -1,6 +1,9 @@
-# ZSYM: symbolic information in the object (design, not implemented)
+# ZSYM: symbolic information in the object (design; Z1 implemented)
 
-Status: **proposal**, 2026-11-15. Nothing here exists in the code yet.
+Status: **Z1 implemented** (writer, reader, `-gz0/-gz1`, `-dump`; DESIGN.md section 11),
+Z2 (smart `-disasm`) and tier 2 (`-gz2`) are proposals. Where this text and
+DESIGN.md 11 differ, DESIGN.md 11 is what the code does (operand templates
+instead of RPN, scopes instead of section/class names).
 zosasm has no compatibility duty towards HLASM, so this design is free to
 change the language where that gives a better result (section 7).
 

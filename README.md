@@ -25,8 +25,13 @@ build/zosasm -E prog.za                     # show the preprocessed source
 ```
 
 Options: `-o FILE`, `-DNAME[=VAL]`, `-Idir`, `-E`, `-dump FILE`,
-`-disasm FILE`, `-color`,
+`-disasm FILE`, `-gz0`, `-gz1`, `-color`,
 `-max-errors N`, `-Werror`. Source files use the extension `.za`.
+
+By default the object carries ZSYM (`-gz1`): symbols, EQUs and the operands
+of every statement in a NOLOAD class `C_ADATAE9C1` that the loader ignores
+(DESIGN.md section 11). `-gz0` leaves it out; the object is then exactly the
+code, data and relocations.
 
 `-disasm` turns a GOFF object back into source (no comments, labels are
 generated: `L0001C`). It assembles the result again and warns if the object

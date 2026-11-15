@@ -505,3 +505,61 @@ attributes after the item (LLVM's reading; the IBM text calls `0x02` a
 follows LLVM and the writer never emits either bit. LLVM sorts the RLD by
 (P, R, offset), writes an END record count of 0 and zero HDR fields other
 than the architecture level; zosasm does not copy that.
+
+## 11. ZSYM: symbolic information in the object (`src/zsym.c`, ZSYM.md)
+
+**Status.** Writer and reader (Z1) are implemented; the smart `-disasm`
+that replays the statements (Z2) is not. The generic converter ignores the
+class, so `-disasm` of an object with ZSYM gives exactly the same source as
+without it.
+
+**Class.** `C_ADATAE9C1` is an ED under the first SD (last ESD of the
+object), NOLOAD, text style unstructured, bind CAT, length = size of the
+chunks. The text records hold the chunks at running offsets. The module
+library default is `Module.zlevel = 0` (no class); `zosasm` sets 1
+(`-gz1`, default) or 0 (`-gz0`). `-gz2` (original sources) is reserved.
+
+**Chunks.** `'Z' 'S' version:u8 kind:u8 length:u32BE payload crc32:u32BE`
+(crc over everything before it, IEEE polynomial). Kinds: 1 MODULE (producer,
+level, file names, scopes = (section, class, kind) in section/class order,
+number of symbols and statements), 2 SYMS (up to 256 symbols per chunk), 3
+STMTS (up to 256), 4 END (counts). Integers are LEB128 (zigzag when signed),
+strings are length plus bytes. A module block is MODULE SYMS* STMTS* END;
+the binder concatenates several blocks and the reader skips zero padding
+between them.
+
+**Symbols.** name, kind (label, absolute EQU, relocatable EQU, external,
+section, DXD), flags (weak, entry), scope, value (class offset; EQU value;
+section size), length/type/scale attributes, and for a relocatable EQU its
+terms (coefficient and scope or symbol). Symbol numbers are the order of
+`Module.sym_order` (literal pool labels `$LT...` are in it).
+
+**Statements.** One record per statement of pass 2, in source order: kind,
+file/line, scope, class offset and length of the bytes the statement wrote
+(0 when it switches location counter), crc32 of those bytes with the bytes
+covered by a relocation taken as zero (the binder changes them; not for
+DSECTs or empty ranges), and the label, operation and operands. Operands
+are *templates*, not text: a sequence of text, symbol and attribute
+(`L'SYM`) items, where a name is an item only when the module defines it. A
+renamed symbol therefore changes every place that uses it. `END` covers the
+literal pool.
+
+**Reader** (`zsym_parse`) never fails on content: unknown versions, bad
+checksums, truncation and junk are counted in `bad_chunks` and mark the
+block `damaged`; a block is `complete` only when it has an END chunk, no
+damaged chunk and agreeing counts. Every single bit flip of a block is
+detected (CRC-32). `zosasm -dump` prints the blocks after the ESD/TXT listing.
+
+**Round trip invariants** tested in `tests/test_zsym.c`: the object with and
+without ZSYM is identical apart from the class (`goff_equal`); crc masks
+match after the relocated bytes change; chunk damage is contained to its
+block; 4000 random mutations do not crash the reader (also under ASan).
+
+**Known gaps.** A literal pool written at END belongs to the END record
+only when the END statement is in the same class; the pool of a program
+that ends in a DSECT is not covered by any statement (Z2 must accept
+uncovered bytes only when they are the pool). `ORG` that moves back and
+rewrites bytes makes the crc of the earlier statement fail (Z2 falls back to
+the generic converter for that section). Nothing here is checked against an
+IBM tool; the class name and attributes follow the ADATA description in the
+GOFF documentation.

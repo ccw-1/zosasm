@@ -653,6 +653,25 @@ static void resolve_xd(Asm *a) {
 
 /* ---- the passes -------------------------------------------------------- */
 
+/* ZSYM: where the statement put its bytes (class offsets of the final layout).
+ * A statement that switches to another location counter belongs to the
+ * counter it enters and covers no bytes. */
+static void zsym_record(Asm *a, Stmt *st, Piece *before, int64_t loc_before) {
+    ZRec r;
+    r.st = st;
+    if (a->cur && a->cur == before) {
+        r.cls = a->cur->cls;
+        r.off = a->cur->start + loc_before;
+        r.len = a->cur->loc - loc_before;
+        if (r.len < 0) r.len = 0;
+    } else {
+        r.cls = a->cur ? a->cur->cls : NULL;
+        r.off = a->cur ? a->cur->start + a->cur->loc : 0;
+        r.len = 0;
+    }
+    vec_push(&a->mod->zrecs, r);
+}
+
 static void each(Asm *a) {
     size_t i;
     a->cur = NULL;
@@ -663,14 +682,23 @@ static void each(Asm *a) {
     a->pool_no = 0;
     for (i = 0; i < a->stmts.n; i++) {
         Stmt *st = a->stmts.v[i];
+        Piece *before = a->cur;
+        int64_t loc_before = before ? before->loc : 0;
         if (rep_too_many(a->rep)) return;
         if (a->ended) break;
         if (st->bad) continue;
         a->cur_idx = i;
         a->star_len = 0;
         asm_stmt(a, st);
+        if (a->pass == 2) zsym_record(a, st, before, loc_before);
     }
     asm_end_pool(a);
+    /* the literal pool written at END belongs to the END statement */
+    if (a->pass == 2 && a->ended && a->mod->zrecs.n && a->cur) {
+        ZRec *r = &a->mod->zrecs.v[a->mod->zrecs.n - 1];
+        int64_t end = a->cur->start + a->cur->loc;
+        if (r->cls == a->cur->cls && end - r->off > r->len) r->len = end - r->off;
+    }
 }
 
 /* end-of-assembly checks */

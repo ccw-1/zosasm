@@ -276,8 +276,13 @@ void goff_dump(const GoffModule *m, FILE *w) {
     }
     for (i = 0; i < m->texts.n; i++) {
         const GoffText *t = &m->texts.v[i];
+        const GoffESD *te = goff_module_esd(m, t->esdid);
+        char *tn = te ? ebcdic_decode(te->name, te->name_len) : NULL;
+        int adata = tn && !strncmp(tn, "C_ADATA", 7);
+        free(tn);
         fprintf(w, "TXT esd=%u off=%u len=%u", (unsigned)t->esdid, (unsigned)t->offset, (unsigned)t->len);
-        for (k = 0; k < t->len; k++) fprintf(w, " %02X", t->data[k]);
+        if (!adata) /* symbolic information is shown by -dump as ZSYM */
+            for (k = 0; k < t->len; k++) fprintf(w, " %02X", t->data[k]);
         fputc('\n', w);
     }
     for (i = 0; i < m->relocs.n; i++) {
@@ -294,4 +299,49 @@ void goff_dump(const GoffModule *m, FILE *w) {
                 (unsigned)m->end.esdid, (unsigned)m->end.offset, nm, (unsigned)m->end_count);
         free(nm);
     }
+}
+
+static int same_esd(const GoffESD *a, const GoffESD *b) {
+    uint8_t x[10], y[10];
+    goff_behavior_pack(&a->attr, x);
+    goff_behavior_pack(&b->attr, y);
+    return a->type == b->type && a->id == b->id && a->parent == b->parent && a->offset == b->offset &&
+           a->length == b->length && a->ext_attr_id == b->ext_attr_id && a->ext_attr_off == b->ext_attr_off &&
+           a->name_space == b->name_space && a->has_fill == b->has_fill && a->fill == b->fill &&
+           a->mangled == b->mangled && a->renameable == b->renameable && a->removable == b->removable &&
+           a->reserved_qwords == b->reserved_qwords && a->ada_id == b->ada_id && a->priority == b->priority &&
+           memcmp(x, y, sizeof x) == 0 && a->name_len == b->name_len && memcmp(a->name, b->name, a->name_len) == 0;
+}
+
+static int same_reloc(const GoffReloc *a, const GoffReloc *b) {
+    return a->rid == b->rid && a->pid == b->pid && a->offset == b->offset && a->reference == b->reference &&
+           a->referent == b->referent && a->action == b->action && a->store == b->store && a->length == b->length &&
+           a->bit_length == b->bit_length && a->bit_offset == b->bit_offset && a->cond_seq == b->cond_seq &&
+           a->amode_sens == b->amode_sens;
+}
+
+int goff_equal(const GoffModule *a, uint32_t skip_a, const GoffModule *b) {
+    size_t i, j;
+    if (a->esds.n - (skip_a ? 1 : 0) != b->esds.n) return 0;
+    for (i = 0, j = 0; i < a->esds.n; i++) {
+        if (a->esds.v[i]->id == skip_a && skip_a) continue;
+        if (!same_esd(a->esds.v[i], b->esds.v[j++])) return 0;
+    }
+    for (i = 0, j = 0; i < a->texts.n; i++) {
+        const GoffText *x = &a->texts.v[i], *y;
+        if (skip_a && x->esdid == skip_a) continue;
+        if (j >= b->texts.n) return 0;
+        y = &b->texts.v[j++];
+        if (x->esdid != y->esdid || x->offset != y->offset || x->style != y->style || x->encoding != y->encoding ||
+            x->true_len != y->true_len || x->len != y->len || (x->len && memcmp(x->data, y->data, x->len) != 0))
+            return 0;
+    }
+    if (j != b->texts.n || a->relocs.n != b->relocs.n || a->lens.n != b->lens.n) return 0;
+    for (i = 0; i < a->relocs.n; i++)
+        if (!same_reloc(&a->relocs.v[i], &b->relocs.v[i])) return 0;
+    for (i = 0; i < a->lens.n; i++)
+        if (a->lens.v[i].esdid != b->lens.v[i].esdid || a->lens.v[i].length != b->lens.v[i].length) return 0;
+    return a->end.kind == b->end.kind && a->end.amode == b->end.amode && a->end.esdid == b->end.esdid &&
+           a->end.offset == b->end.offset && a->end.name_len == b->end.name_len &&
+           (!a->end.name_len || memcmp(a->end.name, b->end.name, a->end.name_len) == 0);
 }

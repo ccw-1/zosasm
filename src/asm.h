@@ -75,6 +75,7 @@ struct Class {
     uint32_t esd; /* ED esdid */
     uint32_t pr;  /* PR esdid when part != NULL */
     RelocVec relocs;
+    int zid; /* scope number in the ZSYM block */
 };
 
 struct Section {
@@ -158,10 +159,20 @@ struct Symbol {
     int xd_align;     /* bytes */
     int xd;           /* the symbol is an external dummy section */
     Section *xd_sect; /* its B_PRV is in this section */
+    int zid;          /* symbol number in the ZSYM block */
 };
 
 typedef Vec(Section *) SectionVec;
 typedef Vec(Symbol *) SymbolVec;
+
+/* One assembled statement for ZSYM: where its bytes are (final layout). */
+typedef struct {
+    Stmt *st;
+    Class *cls; /* NULL before the first section */
+    int64_t off, len;
+} ZRec;
+
+typedef Vec(ZRec) ZRecVec;
 
 typedef struct {
     char *name;
@@ -170,6 +181,8 @@ typedef struct {
     SymbolVec sym_order;
     char *entry; /* END operand, or NULL */
     Span entry_def;
+    ZRecVec zrecs; /* the statements, in source order (ZSYM.md) */
+    int zlevel;    /* ZSYM level written by module_emit: 0 none, 1 symbols and statements */
 } Module;
 
 Symbol *module_symbol(const Module *m, const char *name);
