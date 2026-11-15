@@ -74,8 +74,9 @@ static Base base_key(Base b) {
 /* a GNU style register operand (%r1): checked when the instruction is encoded */
 static int is_pct_reg(Operand o) { return o.text[strspn(o.text, " \t")] == '%'; }
 
-/* a register number: the predefined names R0-R15 (F0.. A0.. C0.. V0..) are
- * used when the symbol is not defined by the program */
+/* a register: %r1 (GNU style; the prefix says which kind), or an absolute
+ * expression: a number or a name the program defined (R1 EQU 1). Bare R1 is
+ * NOT predefined: it is an ordinary symbol, so it must be defined. */
 static int asm_register(Asm *a, Stmt *st, Operand o, unsigned flags, int64_t *out) {
     char *t = str_trim(o.text);
     size_t tl = strlen(t), lead = 0;
@@ -107,18 +108,6 @@ static int asm_register(Asm *a, Stmt *st, Operand o, unsigned flags, int64_t *ou
         free(t);
         return 1;
     }
-    if (tl >= 2 && tl <= 3 && za_toupper((unsigned char)t[0]) == reg_prefix(flags) &&
-        !asm_lookup(a, t)) {
-        size_t i;
-        int digits = 1;
-        for (i = 1; i < tl; i++)
-            if (!za_isdigit((unsigned char)t[i])) digits = 0;
-        if (digits) {
-            *out = atoi(t + 1);
-            free(t);
-            return 1;
-        }
-    }
     while (o.text[lead] && za_isspace((unsigned char)o.text[lead])) lead++;
     to.text = t;
     to.off = o.off + (int)lead;
@@ -138,22 +127,8 @@ int asm_using_label_active(Asm *a, const char *name) {
     return 0;
 }
 
-/* a register written as %r1 or as the predefined name R1 (not defined by the
- * program): these are never addresses */
-static int is_register_name(Asm *a, Operand o) {
-    char *t = str_trim(o.text);
-    size_t tl = strlen(t), i;
-    int r = 0;
-    if (t[0] == '%') {
-        r = 1;
-    } else if (tl >= 2 && tl <= 3 && za_toupper((unsigned char)t[0]) == 'R' && !asm_lookup(a, t)) {
-        r = 1;
-        for (i = 1; i < tl; i++)
-            if (!za_isdigit((unsigned char)t[i])) r = 0;
-    }
-    free(t);
-    return r;
-}
+/* a register written as %r1: never an address */
+static int is_register_name(Operand o) { return is_pct_reg(o); }
 
 /* the qualifier of the first qualified symbol of e, or NULL */
 static const char *expr_qual(const Expr *e) {
@@ -179,7 +154,7 @@ typedef struct {
  * an error (reported) */
 static int using_operand(Asm *a, Stmt *st, Operand o, UsingOp *r) {
     memset(r, 0, sizeof *r);
-    if (is_register_name(a, o)) {
+    if (is_register_name(o)) {
         if (!asm_register(a, st, o, F_GPR, &r->reg)) return 0;
     } else {
         r->e = asm_expr(a, st, o);
@@ -313,7 +288,7 @@ static void no_addressability(Asm *a, const Expr *e, Value v, const char *qual, 
         key = base_key(b);
     } else {
         diag_help(d, "the operand is not a simple address; give an explicit displacement and base "
-                     "register, for example `0(R12)`");
+                     "register, for example `0(%r12)`");
         return;
     }
     for (i = 0; i < a->usings.n; i++) {
@@ -397,7 +372,7 @@ void dir_using(Asm *a, Stmt *st) {
             free(t);
         }
         for (i = 1; i < ops.n; i++)
-            if (!is_register_name(a, ops.v[i])) asm_expr(a, st, ops.v[i]);
+            if (!is_register_name(ops.v[i])) asm_expr(a, st, ops.v[i]);
         return;
     }
     /* pass 2 */
@@ -716,7 +691,7 @@ static void parse_operands(Asm *a, Stmt *st, const IsaInst *in, const OperandVec
         if (!ad.disp.text[0]) {
             diag_help(rep_errorf(a->rep, "ZA2033", asm_op_span(st, o),
                                  "the displacement before the parenthesis is missing"),
-                      "write for example `0(R2)`");
+                      "write for example `0(%r2)`");
             st->bad = 1;
             continue;
         }

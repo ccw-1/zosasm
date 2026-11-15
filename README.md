@@ -51,8 +51,8 @@ generated: `L0001C`). It assembles the result again and warns if the object
 differs from the input; for objects made by zosasm the round trip is exact
 (see DESIGN.md section 10).
 
-Registers can be written as numbers, as names (`R1`, equated or predefined)
-or GNU style: `lgr %r1,%r2`, `ler %f2,%f4`, `vl %v1,0(%r2)`.
+Registers can be written as numbers, as names you defined (`R1 EQU 1`; a bare
+`R1` is not predefined) or GNU style: `lgr %r1,%R2`, `ler %f2,%f4`, `vl %v1,0(%r2)`.
 
 ## Regenerating the instruction table (developers only)
 

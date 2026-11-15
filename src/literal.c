@@ -132,16 +132,34 @@ void asm_close_pool(Asm *a) {
         free(align);
     }
     a->pool_no++;
-    for (i = 0; i < p->lits.n; i++) {
-        Literal *l = p->lits.v[i];
-        if (l->st->bad) continue; /* reported in pass 1 */
-        asm_stmt(a, l->st);
-        if (l->st->bad && !asm_lookup(a, l->name)) {
-            /* avoid a cascade of "undefined symbol" errors for the users */
-            int created;
-            Symbol *s = asm_define(a, l->st, l->name, l->sp, &created);
-            if (created) s->kind = SYM_ABS;
+    {
+        int save_open = a->lead_open;
+        int64_t save_pad = a->lead_pad;
+        for (i = 0; i < p->lits.n; i++) {
+            Literal *l = p->lits.v[i];
+            int64_t loc0 = a->cur->loc;
+            if (l->st->bad) continue; /* reported in pass 1 */
+            a->lead_open = 1;
+            a->lead_pad = 0;
+            asm_stmt(a, l->st);
+            if (a->pass == 2 && !l->st->bad) { /* for the listing */
+                LitRec r;
+                r.cls = a->cur->cls;
+                r.off = a->cur->start + loc0 + a->lead_pad;
+                r.len = a->cur->loc - loc0 - a->lead_pad;
+                r.key = l->key;
+                r.owner = a->lit_owner == (size_t)-1 ? a->mod->zrecs.n : a->lit_owner;
+                vec_push(&a->mod->lits, r);
+            }
+            if (l->st->bad && !asm_lookup(a, l->name)) {
+                /* avoid a cascade of "undefined symbol" errors for the users */
+                int created;
+                Symbol *s = asm_define(a, l->st, l->name, l->sp, &created);
+                if (created) s->kind = SYM_ABS;
+            }
         }
+        a->lead_open = save_open;
+        a->lead_pad = save_pad;
     }
 }
 

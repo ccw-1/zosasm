@@ -163,8 +163,10 @@ struct Symbol {
     int xd;           /* the symbol is an external dummy section */
     Section *xd_sect; /* its B_PRV is in this section */
     int zid;          /* symbol number in the ZSYM block */
+    Vec(Pos) refs;    /* where the symbol was used (pass 2, for the listing) */
 };
 
+typedef Vec(Stmt *) StmtVec;
 typedef Vec(Section *) SectionVec;
 typedef Vec(Symbol *) SymbolVec;
 
@@ -173,6 +175,7 @@ typedef struct {
     Stmt *st;
     Class *cls; /* NULL before the first section */
     int64_t off, len;
+    int64_t pad; /* alignment bytes at the start of off..off+len (the listing starts after them) */
 } ZRec;
 
 typedef Vec(ZRec) ZRecVec;
@@ -183,6 +186,25 @@ typedef struct {
     char *text;
     size_t len;
 } ZSrcIn;
+
+/* a literal of a pool as the listing shows it */
+typedef struct {
+    Class *cls;
+    int64_t off, len;
+    char *key;    /* the literal as written, with the '=' */
+    size_t owner; /* index in zrecs of the statement that holds the pool (LTORG or END) */
+} LitRec;
+
+/* one USING as the listing shows it (a copy made when it was established) */
+typedef struct {
+    Span sp;       /* the USING statement */
+    char *label;   /* or NULL */
+    Base key;      /* class of the domain (B_NONE: absolute) */
+    int64_t off, lo, hi, end;
+    int reg, dependent;
+    int id;        /* Using.id, to follow DROP */
+    Pos dropped;   /* line that ended it; file NULL while active */
+} UsingRec;
 
 typedef struct {
     char *name;
@@ -196,6 +218,10 @@ typedef struct {
                     * 2 also the original sources (zsrc) */
     Vec(ZSrcIn) zsrc;    /* at level 2: the main file first, then the included files */
     Vec(char *) zdefs;   /* at level 2: the -D options given ("NAME" or "NAME=value") */
+    /* for the listing (listing.c) */
+    StmtVec stmts;       /* every statement read, in source order */
+    Vec(LitRec) lits;
+    Vec(UsingRec) usings;
 } Module;
 
 Symbol *module_symbol(const Module *m, const char *name);
@@ -240,9 +266,10 @@ struct Stmt {
     int nsegs;
     char *remark;
     int bad; /* an error was reported; skip in pass 2 */
+    size_t li; /* index of its first line in the line array given to read_statements */
+    int nli;   /* the number of lines it uses (continuation) */
 };
 
-typedef Vec(Stmt *) StmtVec;
 
 /* One top-level comma separated operand. */
 typedef struct {
@@ -410,11 +437,19 @@ struct Asm {
     int64_t star_len; /* L'* of the current statement, 0 = unknown */
     Piece *pool_piece; /* the literal pool of END was written here, from pool_loc (ZSYM) */
     int64_t pool_loc;
+    /* alignment bytes before the first byte of the statement (ZRec.pad) */
+    int lead_open, in_align;
+    int64_t lead_pad;
+    size_t lit_owner; /* LitRec.owner of the literals being assembled */
+    int using_logged; /* highest Using.id copied to Module.usings */
 };
 
 /* Assemble the lines; returns NULL when errors were reported. The caller
  * registers file texts with rep_add_source for diagnostic excerpts. */
 Module *asm_assemble(const SrcLine *lines, size_t n, const char *name, Reporter *rep);
+/* the same, but the module is returned even when errors were reported (for
+ * the listing); pass 2 may be incomplete then */
+Module *asm_assemble_all(const SrcLine *lines, size_t n, const char *name, Reporter *rep);
 /* Convenience: split text, register it and assemble. */
 Module *asm_assemble_text(const char *file, const char *text, size_t len, Reporter *rep);
 

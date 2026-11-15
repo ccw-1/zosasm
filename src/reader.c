@@ -323,6 +323,8 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
         st = xcalloc(sizeof *st);
         st->file = file;
         st->line = ln;
+        st->li = i;
+        st->nli = 1;
         st->name = st->op = st->operands = st->remark = "";
         /* name field */
         if (!is_blank((unsigned char)line[0])) {
@@ -416,6 +418,7 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
         st->operands = xstrdup(buf_cstr(&ops));
         st->segs = segs.v;
         st->nsegs = (int)segs.n;
+        st->nli = (int)(i - st->li + 1);
         vec_push(out, st);
     }
 }

@@ -229,17 +229,17 @@ Example (`docs/examples/symbols.za`):
 ```za
 * Registers, EQU, expressions and quoted symbols.
 SYMS     CSECT
-R0       EQU   0                  your own names for registers (optional:
-R1       EQU   1                  R0..R15 are predefined)
+R1       EQU   1                  your own names for registers: a bare R1 is
+R2       EQU   2                  not predefined, it must be defined like this
 BASE     EQU   12
          USING SYMS,BASE
-         LGR   R1,R2              names,
+         LGR   R1,R2              names you defined,
          LGR   1,2                numbers and
-         LGR   %r1,%r2            GNU style all mean the same
+         LGR   %r1,%R2            %r<n> (any case: %R2) all mean the same
          LA    R1,TABLE+4*2       expression: byte offset 8
          LA    R2,END_TABLE-TABLE the table length (a relocatable difference)
-         LHI   R3,X'FF'+B'101'    hex and binary self-defining terms
-         LHI   R4,C'A'            EBCDIC code of A (193)
+         LHI   %r3,X'FF'+B'101'   hex and binary self-defining terms
+         LHI   %r4,C'A'           EBCDIC code of A (193)
 TABLE    DC    10F'0'
 END_TABLE DS   0F
 "a.b"    DC    A(*)               any name can be quoted
@@ -250,9 +250,11 @@ LEN      EQU   L'TABLE            length attribute of TABLE: 4
          END
 ```
 
-Note that `R1`...`R15`, `F0`..., `A0`..., `C0`..., `V0`... are predefined
-register names unless your program defines the symbol itself (as it does here
-for `R0` and `R1`), and that `L'TABLE` is the length of one element, 4.
+Note that a bare `R1` is an ordinary symbol, as in HLASM before `REGEQU`: it
+is not predefined, and using it without defining it is an error (`ZA1011`,
+with a hint). A register is written `%r1` (any case, `%R1`), as a plain number,
+or as a name your program defined with `EQU`. And that `L'TABLE` is the length
+of one element, 4.
 
 ---
 
@@ -557,10 +559,14 @@ generated. Operands follow IBM's notation: `D(X,B)`, `D(B)`, `D(L,B)`, `D(,B)`.
 
 ```
          LGR   1,2                numbers
-         LGR   R1,R2              names (R0-R15 are predefined; F0..F15, A0.., C0.., V0.. too)
-         LGR   %r1,%r2            GNU style: %r general, %f floating point,
+         LGR   R1,R2              names you defined (R1 EQU 1); a bare R1 is NOT predefined
+         LGR   %r1,%R2            %r<n>, upper or lower case: %r general, %f floating point,
                                   %a access, %c control, %v vector
 ```
+
+The `%` form says unambiguously that the operand is a register, and needs no
+`EQU` or `REGEQU`-style macro; use it where a number would be unclear
+(`LA %r1,0` against `LA 1,0`).
 
 The kind of register is checked: `%f1` where a general register is needed is
 an error (`ZA2055`). Register pairs (even-odd) are *not* checked.

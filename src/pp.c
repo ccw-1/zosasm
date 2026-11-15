@@ -1079,10 +1079,34 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
         }
         pp->line = ln;
         dir = directive_of(t, &rest);
-        if (dir)
-            do_directive(pp, dir, rest, t);
-        else if (active(pp))
-            emit_line(pp, t);
+        {
+            PpEvent ev;
+            size_t ei = 0;
+            int rec = pp->opt->events != NULL;
+            ev.file = file;
+            ev.line = ln;
+            ev.line_end = lines.v[k].line;
+            ev.depth = pp->depth;
+            ev.text = t;
+            ev.first = pp->out->n;
+            ev.n = 0;
+            if (dir) {
+                int is_cond = !strcmp(dir, "if") || !strcmp(dir, "ifdef") || !strcmp(dir, "ifndef") ||
+                              !strcmp(dir, "elif") || !strcmp(dir, "else") || !strcmp(dir, "endif");
+                ev.kind = (is_cond || active(pp)) ? PE_DIRECTIVE : PE_SKIPPED;
+            } else {
+                ev.kind = active(pp) ? PE_LINE : PE_SKIPPED;
+            }
+            if (rec) {
+                ei = pp->opt->events->n;
+                vec_push(pp->opt->events, ev);
+            }
+            if (dir)
+                do_directive(pp, dir, rest, t);
+            else if (active(pp))
+                emit_line(pp, t);
+            if (rec && ev.kind == PE_LINE) pp->opt->events->v[ei].n = pp->out->n - ev.first;
+        }
         i = k + 1;
     }
     while (pp->conds.n > base) {

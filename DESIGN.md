@@ -59,7 +59,7 @@ Differences from HLASM:
 | 80-column card images, columns 72/16 | **no column rules**; a line may be any length |
 | continuation = non-blank in column 72 | continuation = operand field ends in `,` (see below) |
 | names fold to upper case | **symbols are case sensitive**; mnemonics, directives, register names and attribute letters are not. `-fold` may be added later |
-| registers are numbers or EQU'd names (`LGR R1,R2` needs `R1 EQU 1`, unless predefined) | all three forms work: `LGR 1,2`, `LGR R1,R2` (`R0`-`R15`, `F0`.., `A0`.., `C0`.., `V0`.. are predefined unless the program defines the symbol) and the GNU style `LGR %r1,%r2` (`%r` general, `%f` floating point, `%a` access, `%c` control, `%v` vector; also in `D(%r1,%r2)` and `USING`/`DROP`). The register class is checked (`%f1` where a general register is needed is ZA2055) |
+| registers are numbers or EQU'd names (`LGR R1,R2` needs `R1 EQU 1`, or the `REGEQU` macro) | the same: `LGR 1,2`, `LGR R1,R2` (only when the program defines `R1`; a bare `R1` is NOT predefined, the error has a hint) and the GNU style, which says plainly that it is a register, `LGR %r1,%r2` (`%r` general, `%f` floating point, `%a` access, `%c` control, `%v` vector; also in `D(%r1,%r2)` and `USING`/`DROP`). The register class is checked (`%f1` where a general register is needed is ZA2055) |
 | symbols are 1-63 characters of `A-Z 0-9 @ # $ _`; `ALIAS` gives an external name other characters or up to 256 | symbols have **no length limit** (ESD names up to 32767 bytes) and any name can be written as a **quoted symbol**, see below; there is no `ALIAS` |
 | `MNOTE`, `&SYSPARM`, ... | not supported |
 | fixed 8-char name field in the listing | n/a |

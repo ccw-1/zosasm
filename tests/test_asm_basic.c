@@ -268,6 +268,7 @@ static void test_gnu_registers(void) {
         {"LCTL %c0,%c15,0(%r1)", "LCTL 0,15,0(1)"},
         {"VL %v31,0(%r1)", "VL 31,0(1)"},
         {"LGR %R1,%R2", "LGR 1,2"},
+        {"LA %r1,0", "LA 1,0"},
         {"USING *,%r12\n         L %r1,*", "USING *,12\n         L 1,*"},
         {"MVC 0(8,%r1),0(%r2)", "MVC 0(8,1),0(2)"},
     };
@@ -333,6 +334,10 @@ static void test_diag_codes(void) {
         {"L'* in DC C", "T CSECT\n DC CL(L'*)'A'\n", "ZA1031"},
         {"EQU type range", "T CSECT\nX EQU 1,1,300\n", "ZA1033"},
         {"float range", "T CSECT\n DC E'1E99'\n", "ZA2053"},
+        {"bare R1 is not predefined", "T CSECT\n LA R1,0\n", "ZA1011"},
+        {"bare F2 is not predefined", "T CSECT\n LER F2,%f4\n", "ZA1011"},
+        {"bare R1 in USING", "T CSECT\n USING *,R12\n", "ZA1011"},
+        {"R1 after its EQU", "T CSECT\nR1 EQU 1\n LA R1,0\n", ""},
         {"GNU register class", "T CSECT\n LGR %f1,2\n", "ZA2055"},
         {"GNU register name", "T CSECT\n LGR %r1,%x2\n", "ZA2054"},
         {"GNU register range", "T CSECT\n LR %r16,1\n", "ZA2041"},
@@ -359,6 +364,18 @@ static void test_diag_codes(void) {
     }
 }
 
+static void test_register_hint(void) {
+    Reporter *rep;
+    const Diag *d;
+    int found = 0, i;
+    assemble("T CSECT\n LA R1,0\n", &rep);
+    d = rep_get(rep, 0);
+    CHECK(d != NULL);
+    for (i = 0; d && i < d->nhelp; i++)
+        if (strstr(d->help[i], "%r1") && strstr(d->help[i], "R1 EQU 1")) found = 1;
+    CHECK_MSG(found, "the hint for a bare register name");
+}
+
 static void test_diag_help(void) {
     Reporter *rep;
     size_t n, i;
@@ -382,5 +399,6 @@ int main(void) {
     test_gnu_registers();
     test_diag_codes();
     test_diag_help();
+    test_register_hint();
     TEST_MAIN_END();
 }

@@ -9,7 +9,21 @@
 
 #include "asm.h"
 
+/* What happened to each source line (for the listing). */
+typedef enum { PE_LINE, PE_DIRECTIVE, PE_SKIPPED } PpKind;
+
 typedef struct {
+    const char *file;
+    int line, line_end; /* the physical lines (more than one when joined by a backslash) */
+    int depth;          /* #include nesting, 0 = the main file */
+    PpKind kind;        /* ordinary line / preprocessor directive / inside a false #if */
+    const char *text;   /* the line as written */
+    size_t first, n;    /* PE_LINE: the lines it produced in the output array (0 when expansion
+                         * produced nothing) */
+} PpEvent;
+
+typedef struct {
+    Vec(PpEvent) *events;           /* if not NULL: every source line is recorded here, in order */
     Vec(const char *) include_dirs; /* -I */
     Vec(const char *) defines;      /* -D: "NAME", "NAME=value", "NAME(a,b)=text" */
     int reproducible;               /* -reproducible: no unstable built-ins (__DATE__ needs a fixed time) */

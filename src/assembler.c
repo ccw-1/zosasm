@@ -286,6 +286,17 @@ static Value undefined_value(void) {
     return v;
 }
 
+/* a name that looks like a register (R1, F0, A2, C3, V31) but is not defined */
+static void register_hint(Diag *d, const char *name) {
+    size_t n = strlen(name), i;
+    if (n < 2 || n > 3 || !strchr("RFACVrfacv", name[0])) return;
+    for (i = 1; i < n; i++)
+        if (!za_isdigit((unsigned char)name[i])) return;
+    diag_help(d, "registers are written %%%c%s or as a plain number; a bare \"%s\" is an ordinary "
+                 "symbol and must be defined first, for example `%s EQU %s`",
+              za_tolower((unsigned char)name[0]), name + 1, name, name, name + 1);
+}
+
 /* x names a symbol that does not exist (yet) */
 static int missing_symbol(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
     if (a->pass == 1 && !need) {
@@ -293,10 +304,12 @@ static int missing_symbol(Asm *a, Stmt *st, const Expr *x, int need, Value *out)
         return 1;
     }
     if (a->pass == 1) {
-        diag_help(diag_label(rep_errorf(a->rep, "ZA1010", x->sp,
+        Diag *d0 = diag_label(rep_errorf(a->rep, "ZA1010", x->sp,
                                         "symbol \"%s\" must be defined before this statement",
                                         x->name),
-                             "not defined yet"),
+                             "not defined yet");
+        register_hint(d0, x->name);
+        diag_help(d0,
                   "forward references are only allowed where the value is not needed to size "
                   "the statement (for example in A-type constants and branches)");
         st->bad = 1;
@@ -309,11 +322,17 @@ static int missing_symbol(Asm *a, Stmt *st, const Expr *x, int need, Value *out)
         const char *c;
         for (i = 0; i < a->mod->sym_order.n; i++) names[i] = a->mod->sym_order.v[i]->name;
         c = diag_closest(x->name, names, a->mod->sym_order.n);
+        register_hint(d, x->name);
         if (c) diag_help(d, "did you mean \"%s\"?", c);
         free(names);
     }
     st->bad = 1;
     return 0;
+}
+
+/* the listing's cross reference: a use of s in pass 2 */
+static void note_ref(Asm *a, Symbol *s, Span sp) {
+    if (a->pass == 2 && sp.pos.file) vec_push(&s->refs, sp.pos);
 }
 
 static int sym_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
@@ -328,6 +347,7 @@ static int sym_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
     }
     if (!s) return missing_symbol(a, st, x, need, out);
     s->used = 1;
+    note_ref(a, s, x->sp);
     switch (s->kind) {
     case SYM_LABEL:
         *out = asm_addr_value(a, s->piece, s->off);
@@ -444,6 +464,7 @@ static int attr_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
                      x->name);
         return 0;
     }
+    note_ref(a, s, x->sp);
     switch (x->attr) {
     case 'L':
         n = s->len ? s->len : 1;
@@ -512,6 +533,7 @@ static int func_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
     int late;
     if (!s) return missing_symbol(a, st, x->l, need, out);
     s->used = 1;
+    note_ref(a, s, x->l->sp);
     if (x->op == 'o') {
         Symbol *f = asm_lookup(a, x->r->name);
         Class *c;
@@ -519,6 +541,7 @@ static int func_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
             return func_kind_err(a, st, x, x->l, "a section name as its first argument");
         if (!f) return missing_symbol(a, st, x->r, need, out);
         f->used = 1;
+        note_ref(a, f, x->r->sp);
         if (f->kind != SYM_LABEL || !f->piece || f->piece->cls->sect != s->sect ||
             f->piece->cls != s->sect->classes.v[0]) {
             asm_expr_err(a, st, x->r->sp, "ZA1043", "\"%s\" is not a field of \"%s\"", f->name,
@@ -683,6 +706,11 @@ int asm_abs_expr(Asm *a, Stmt *st, Operand o, const char *what, int64_t *out) {
 /* ---- location counter and storage -------------------------------------- */
 
 void asm_advance(Asm *a, int64_t n) {
+    if (a->in_align) {
+        if (a->lead_open) a->lead_pad += n;
+    } else if (n > 0) {
+        a->lead_open = 0;
+    }
     a->cur->loc += n;
     if (a->cur->loc > a->cur->max) a->cur->max = a->cur->loc;
 }
@@ -690,7 +718,9 @@ void asm_advance(Asm *a, int64_t n) {
 void asm_align(Asm *a, int64_t n) {
     if (!a->cur || n <= 1) return;
     if (n > a->cur->cls->sect->max_align) a->cur->cls->sect->max_align = (int)n;
+    a->in_align = 1;
     asm_advance(a, (n - a->cur->loc % n) % n);
+    a->in_align = 0;
 }
 
 void asm_put(Asm *a, const uint8_t *b, size_t n) {
@@ -842,11 +872,13 @@ static void resolve_xd(Asm *a) {
 static void zsym_record(Asm *a, Stmt *st, Piece *before, int64_t loc_before) {
     ZRec r;
     r.st = st;
+    r.pad = 0;
     if (a->cur && a->cur == before) {
         r.cls = a->cur->cls;
         r.off = a->cur->start + loc_before;
         r.len = a->cur->loc - loc_before;
         if (r.len < 0) r.len = 0;
+        r.pad = a->lead_pad < r.len ? a->lead_pad : r.len;
     } else {
         r.cls = a->cur ? a->cur->cls : NULL;
         r.off = a->cur ? a->cur->start + a->cur->loc : 0;
@@ -855,8 +887,44 @@ static void zsym_record(Asm *a, Stmt *st, Piece *before, int64_t loc_before) {
     vec_push(&a->mod->zrecs, r);
 }
 
+/* the listing's USING table: copy new USINGs, note the line that ended one */
+static void list_usings(Asm *a, Stmt *st) {
+    size_t i, j;
+    for (i = 0; i < a->mod->usings.n; i++) {
+        UsingRec *r = &a->mod->usings.v[i];
+        int live = 0;
+        if (r->dropped.file) continue;
+        for (j = 0; j < a->usings.n; j++)
+            if (a->usings.v[j].id == r->id) live = 1;
+        if (!live) {
+            r->dropped.file = st->file;
+            r->dropped.line = st->line;
+            r->dropped.col = 1;
+        }
+    }
+    for (j = 0; j < a->usings.n; j++) {
+        const Using *u = &a->usings.v[j];
+        UsingRec r;
+        if (u->id <= a->using_logged) continue;
+        memset(&r, 0, sizeof r);
+        r.sp = u->sp;
+        r.label = u->label;
+        r.key = u->key;
+        r.off = u->off;
+        r.lo = u->lo;
+        r.hi = u->hi;
+        r.end = u->end;
+        r.reg = u->reg;
+        r.dependent = u->dependent;
+        r.id = u->id;
+        vec_push(&a->mod->usings, r);
+        if (u->id > a->using_logged) a->using_logged = u->id;
+    }
+}
+
 static void each(Asm *a) {
     size_t i;
+    a->using_logged = 0;
     a->cur = NULL;
     a->sect = NULL;
     a->ended = 0;
@@ -872,10 +940,19 @@ static void each(Asm *a) {
         if (st->bad) continue;
         a->cur_idx = i;
         a->star_len = 0;
+        a->lead_open = 1;
+        a->lead_pad = 0;
+        a->lit_owner = (size_t)-1;
         asm_stmt(a, st);
-        if (a->pass == 2) zsym_record(a, st, before, loc_before);
+        if (a->pass == 2) {
+            zsym_record(a, st, before, loc_before);
+            list_usings(a, st);
+        }
     }
     a->pool_piece = NULL;
+    a->lead_open = 1;
+    a->lead_pad = 0;
+    a->lit_owner = (!a->ended || a->mod->zrecs.n == 0) ? a->mod->zrecs.n : a->mod->zrecs.n - 1;
     asm_end_pool(a);
     /* the literal pool written at the end belongs to the END statement (a
      * statement of its own when the source has none) */
@@ -898,6 +975,7 @@ static void each(Asm *a) {
         r->cls = a->pool_piece->cls;
         r->off = a->pool_piece->start + a->pool_loc;
         r->len = a->pool_piece->start + a->pool_piece->loc - r->off;
+        r->pad = a->lead_pad < r->len ? a->lead_pad : r->len;
     }
 }
 
@@ -957,16 +1035,21 @@ static void run(Asm *a) {
     finish(a);
 }
 
-Module *asm_assemble(const SrcLine *lines, size_t n, const char *name, Reporter *rep) {
+Module *asm_assemble_all(const SrcLine *lines, size_t n, const char *name, Reporter *rep) {
     Asm *a = xcalloc(sizeof *a);
     a->rep = rep;
     a->scratch = rep_new(0);
     a->mod = xcalloc(sizeof *a->mod);
     a->mod->name = xstrdup(name);
     read_statements(&a->stmts, lines, n, rep);
+    a->mod->stmts = a->stmts;
     run(a);
-    if (rep_error_count(rep) > 0) return NULL;
     return a->mod;
+}
+
+Module *asm_assemble(const SrcLine *lines, size_t n, const char *name, Reporter *rep) {
+    Module *m = asm_assemble_all(lines, n, name, rep);
+    return rep_error_count(rep) > 0 ? NULL : m;
 }
 
 Module *asm_assemble_text(const char *file, const char *text, size_t len, Reporter *rep) {
