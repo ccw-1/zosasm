@@ -626,8 +626,17 @@ AREA     DS    CL64
 Without the option nothing changes: numbers and defined names are accepted,
 and register names made with `EQU %r<n>` work as numbers too, so a source
 written strictly assembles either way, to the same object. `-strict-registers`
-is off by default; `-disasm` and the check it makes on its own output ignore
-it, because the text it writes keeps what the author wrote.
+is off by default.
+
+`zosasm -strict-registers -disasm file.o` writes the source in this notation:
+the register operands of every instruction, and of `USING` and `DROP`, become
+`%r12`, `%f2`... even when the object was assembled from numbers or from
+names made with `R12 EQU 12` (names made with `EQU %r12` are kept; masks,
+lengths and immediates stay numbers). The text it writes is then assembled
+with `-strict-registers` as well to check it; if that fails (for example a
+register operand that is an expression) the generic converter is used, which
+always writes `%r12`. Without the option `-disasm` gives back the statements
+as they were written.
 
 **Addresses.** An operand like `A 3,ONE` (no base given) is turned into
 displacement and base register using the active `USING` statements; if no
@@ -1239,7 +1248,7 @@ zosasm [-o dir] -unpack file.o
 | `-gz0`, `-gz1`, `-gz2` | symbolic information level (default `-gz1`) |
 | `-generic` | with `-disasm`: ignore ZSYM |
 | `-reproducible` | fail on anything that makes the object differ between runs |
-| `-strict-registers` | registers only as `%r1` or an `EQU %r1` name (section 6.1) |
+| `-strict-registers` | registers only as `%r1` or an `EQU %r1` name (section 6.1); with `-disasm` the source is written that way |
 | `-l FILE` | write a listing to FILE (`-` = standard output), also after errors (section 11.2) |
 | `-ldata` | listing: all object bytes of a statement |
 | `-lpage N` | listing: N lines per page (default 0: one page) |

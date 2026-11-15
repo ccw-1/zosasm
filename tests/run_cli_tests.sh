@@ -130,7 +130,17 @@ grep -q 'ZA2067' $T/err; check "the error is ZA2067" $? 0
 grep -q 'write %r14' $T/err; check "the error says what to write" $? 0
 $X -disasm $T/strict.o >$T/strict.disasm 2>$T/err; check "-disasm of a strict object" $? 0
 [ ! -s $T/err ]; check "-disasm of a strict object: no warnings" $? 0
-$X -strict-registers -disasm $T/hello.o >/dev/null 2>$T/err; check "-disasm ignores -strict-registers" $? 0
+$X -disasm $T/hello.o >$T/plain.za 2>$T/err; check "-disasm without the option" $? 0
+grep -q 'STM   14,12,12(13)' $T/plain.za; check "-disasm without the option keeps the numbers" $? 0
+$X -strict-registers -disasm $T/hello.o >$T/strict.za 2>$T/err; check "-disasm -strict-registers" $? 0
+[ ! -s $T/err ]; check "-disasm -strict-registers: no warnings" $? 0
+grep -q 'STM   %r14,%r12,12(%r13)' $T/strict.za; check "-disasm -strict-registers writes %r" $? 0
+grep -q 'USING HELLO,%r12' $T/strict.za; check "-disasm -strict-registers: USING" $? 0
+grep -q 'LA    %r2,MSG' $T/strict.za; check "-disasm -strict-registers: base register" $? 0
+$X -gz0 -o $T/hello0s.o testdata/hello.za 2>/dev/null
+$X -strict-registers -gz0 -Werror -o $T/strict3.o $T/strict.za 2>/dev/null; check "the strict source assembles with -strict-registers" $? 0
+cmp -s $T/strict3.o $T/hello0s.o; check "and gives the same object" $? 0
+$X -strict-registers -disasm $T/strict.o 2>&1 | grep -q 'BASE'; check "-disasm -strict-registers keeps EQU %r names" $? 0
 
 # the listing (-l)
 $X -l $T/hello.lst -o $T/hl.o docs/examples/hello.za 2>/dev/null; check "-l writes a listing" $? 0

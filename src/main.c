@@ -34,7 +34,8 @@ static void usage(FILE *f) {
                "  -gz0|-gz1|-gz2  symbolic object information (ZSYM) in the object: none | symbols and\n"
                "                  statements (default) | also the original source files\n"
                "  -strict-registers  in a register position accept only %%r1 (any case; %%f %%a %%c %%v too)\n"
-               "                  or a name made with NAME EQU %%r1, not plain numbers or other symbols\n"
+               "                  or a name made with NAME EQU %%r1, not plain numbers or other symbols;\n"
+               "                  with -disasm the source is written that way\n"
                "  -l FILE         write an assembly listing to FILE (- = standard output), also when\n"
                "                  the assembly has errors\n"
                "  -ldata          listing: show all object bytes of a statement (default: 8)\n"
@@ -84,11 +85,7 @@ static int check_text(const GoffModule *m, const char *orig, size_t n, uint32_t 
     size_t olen;
     char err[256];
     Reporter *rep = rep_new(50);
-    int save_strict = za_strict_registers;
-    Module *mod;
-    za_strict_registers = 0; /* the converted text keeps what the author wrote */
-    mod = asm_assemble_text("(disassembly)", text, strlen(text), rep);
-    za_strict_registers = save_strict;
+    Module *mod = asm_assemble_text("(disassembly)", text, strlen(text), rep); /* strict with -strict-registers */
     uint8_t *obj = mod ? module_emit(mod, &olen, err, sizeof err) : NULL; /* zlevel 0: no ZSYM */
     *rep_out = rep;
     *diff_at = 0;
@@ -176,7 +173,7 @@ static int do_disasm(const char *path, const char *out, int generic) {
             nskip++;
         }
     }
-    text = disasm_ex(m, generic ? DISASM_GENERIC : 0, stderr, &nwarn, &smart, err, sizeof err);
+    text = disasm_ex(m, (generic ? DISASM_GENERIC : 0) | (za_strict_registers ? DISASM_STRICT : 0), stderr, &nwarn, &smart, err, sizeof err);
     if (!text) {
         fprintf(stderr, "zosasm: %s: %s\n", path, err);
         return 1;

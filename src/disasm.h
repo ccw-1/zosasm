@@ -20,6 +20,9 @@ char *disasm_module(const GoffModule *m, FILE *warn, int *nwarn, char *err, size
  * the information is written by the generic converter. DISASM_GENERIC
  * ignores ZSYM. *smart (may be NULL) tells whether ZSYM was used. */
 #define DISASM_GENERIC 1
+/* DISASM_STRICT: the statements taken from ZSYM get their registers written as
+ * %r1 (the notation of -strict-registers); the generic converter always does. */
+#define DISASM_STRICT 2
 char *disasm_ex(const GoffModule *m, int flags, FILE *warn, int *nwarn, int *smart, char *err, size_t errsz);
 
 #endif

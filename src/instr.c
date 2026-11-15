@@ -615,14 +615,7 @@ void dir_drop(Asm *a, Stmt *st) {
 
 /* ---- parsing of operand text ----------------------------------------------- */
 
-/* an operand split into displacement text and the parenthesized part */
-typedef struct {
-    Operand disp; /* text before the parenthesis (the whole operand if none) */
-    OperandVec inner;
-    int parens;
-} AddrOp;
-
-static AddrOp split_addr(Operand o) {
+AddrOp asm_split_addr(Operand o) {
     AddrOp r;
     const char *t = o.text;
     size_t tl = strlen(t), i, plen;
@@ -685,7 +678,7 @@ static AddrOp split_addr(Operand o) {
 /* ---- the instruction statement ----------------------------------------------- */
 
 /* pick the variant of an instruction that matches n operands */
-static const IsaInst *choose_variant(const IsaInst *vars, size_t nv, int n) {
+const IsaInst *asm_choose_variant(const IsaInst *vars, size_t nv, int n) {
     const IsaInst *best = NULL;
     size_t k;
     for (k = 0; k < nv; k++) {
@@ -759,7 +752,7 @@ static void parse_operands(Asm *a, Stmt *st, const IsaInst *in, const OperandVec
             if (!is_pct_reg(o)) asm_expr(a, st, o);
             continue;
         }
-        ad = split_addr(o);
+        ad = asm_split_addr(o);
         if (!ad.disp.text[0]) {
             diag_help(rep_errorf(a->rep, "ZA2033", asm_op_span(st, o),
                                  "the displacement before the parenthesis is missing"),
@@ -911,7 +904,7 @@ static int rel_field(Asm *a, Stmt *st, Operand o, const IsaOperand *f, int64_t *
 /* evaluate one D(X,B)-style operand */
 static int addr_field(Asm *a, Stmt *st, Operand o, const Slot *sl, int nfields, int64_t *vals,
                       const IsaInst *in) {
-    AddrOp ad = split_addr(o);
+    AddrOp ad = asm_split_addr(o);
     const IsaOperand *dispf = isa_op(in, (size_t)sl->field);
     int64_t dmax = 4095, dmin = 0, mid = 0, base_reg = 0, disp;
     long abs_at;
@@ -1098,7 +1091,7 @@ void asm_instr(Asm *a, Stmt *st) {
     uint8_t *bytes;
     split_operands(&ops, st->operands);
     asm_literal_operands(a, st, &ops);
-    in = choose_variant(vars, nv, (int)ops.n);
+    in = asm_choose_variant(vars, nv, (int)ops.n);
     if (!in) {
         bad_arity(a, st, vars, nv, (int)ops.n);
         in = &vars[0];

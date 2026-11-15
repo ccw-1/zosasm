@@ -574,6 +574,15 @@ int dc_float(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out);
 
 /* instr.c */
 void asm_instr(Asm *a, Stmt *st);
+/* an operand split into displacement text and the parenthesized part */
+typedef struct {
+    Operand disp; /* text before the parenthesis (the whole operand if none) */
+    OperandVec inner;
+    int parens;
+} AddrOp;
+AddrOp asm_split_addr(Operand o);
+/* the variant of an instruction (isa_lookup) that takes n operands, or NULL */
+const IsaInst *asm_choose_variant(const IsaInst *vars, size_t nv, int n);
 void dir_using(Asm *a, Stmt *st);
 void dir_drop(Asm *a, Stmt *st);
 

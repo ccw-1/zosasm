@@ -143,6 +143,9 @@ typedef struct {
     int64_t end_off;
     DEr *end_er;
     Smart *sm;
+    int strict;      /* DISASM_STRICT: write registers as %r1 */
+    StrMap zsyms;    /* strict: ZSYM symbol (as written) -> ZSym * */
+    StrMap zpct;     /* strict: names made with NAME EQU %r1 */
 } Ctx;
 
 static void warnf(Ctx *x, const char *fmt, ...) {
@@ -1442,12 +1445,119 @@ static void smart_flush(Ctx *x) {
         }
 }
 
+/* ---- -strict-registers notation for the statements of ZSYM ---------------------- */
+
+/* the register number a source operand stands for: a plain number or a name
+ * made with EQU of a number; -1 when it is neither (already %r1, an
+ * expression, a label...) */
+static int64_t strict_reg_value(Ctx *x, const char *text) {
+    char *t = str_trim(text), *end;
+    long long v;
+    const ZSym *sy;
+    if (!*t || t[0] == '%' || strmap_get(&x->zpct, t)) return -1;
+    v = strtoll(t, &end, 10);
+    if (!*end) return (int64_t)v;
+    sy = strmap_get(&x->zsyms, t);
+    if (sy && sy->kind == ZY_ABS && sy->terms.n == 0) return sy->val;
+    return -1;
+}
+
+/* the operand text with the register written as %r<n> (unchanged if it is not one) */
+static char *strict_reg_operand(Ctx *x, const char *text, unsigned flags) {
+    int64_t v = strict_reg_value(x, text);
+    Buf b = {0};
+    if (v < 0 || v > ((flags & F_VR) ? 31 : 15)) return xstrdup(text);
+    reg_text(&b, flags, v);
+    return xstrdup(buf_cstr(&b));
+}
+
+static void put_operands(Buf *out, const OperandVec *v) {
+    size_t i;
+    for (i = 0; i < v->n; i++) {
+        if (i) buf_putc(out, ',');
+        buf_puts(out, v->v[i].text);
+    }
+}
+
+/* the operands of a statement with every register written as %r1; the text
+ * itself when the statement is none of the kinds that are known to take registers */
+static char *strict_operands(Ctx *x, const ZStmt *s, const char *operands) {
+    OperandVec ops = {0};
+    size_t i;
+    Buf out = {0};
+    if (s->kind == ZS_USING || s->kind == ZS_DROP) {
+        split_operands(&ops, operands);
+        for (i = (s->kind == ZS_USING ? 1 : 0); i < ops.n; i++) ops.v[i].text = strict_reg_operand(x, ops.v[i].text, F_GPR);
+        put_operands(&out, &ops);
+        return xstrdup(buf_cstr(&out));
+    }
+    if (s->kind == ZS_INSN) {
+        size_t nv;
+        const IsaInst *vars = isa_lookup(s->op, &nv), *in;
+        IsaSlots sl;
+        split_operands(&ops, operands);
+        in = vars ? asm_choose_variant(vars, nv, (int)ops.n) : NULL;
+        if (!in) return xstrdup(operands);
+        isa_slots(in, &sl);
+        for (i = 0; i < ops.n && (int)i < sl.n; i++) {
+            const IsaSlot *sk = &sl.s[i];
+            const IsaOperand *f = isa_op(in, (size_t)sk->field);
+            if (sk->kind == SK_REG) {
+                ops.v[i].text = strict_reg_operand(x, ops.v[i].text, f->flags);
+            } else if (sk->kind == SK_ADDR) {
+                AddrOp ad = asm_split_addr(ops.v[i]);
+                Buf t = {0};
+                size_t k;
+                if (!ad.parens || str_trim(ops.v[i].text)[0] == '=') continue; /* not a literal */
+                for (k = 0; k < ad.inner.n; k++) {
+                    unsigned fl = F_GPR;
+                    int is_mid = ad.inner.n == 2 ? k == 0 : sk->mid >= 0;
+                    if (is_mid && sk->mid >= 0) {
+                        if (sk->mid_kind == 'L') continue;
+                        fl = isa_op(in, (size_t)sk->mid)->flags;
+                    } else if (is_mid) {
+                        continue;
+                    }
+                    ad.inner.v[k].text = strict_reg_operand(x, ad.inner.v[k].text, fl);
+                }
+                buf_puts(&t, ad.disp.text);
+                buf_putc(&t, '(');
+                put_operands(&t, &ad.inner);
+                buf_putc(&t, ')');
+                ops.v[i].text = xstrdup(buf_cstr(&t));
+            }
+        }
+        put_operands(&out, &ops);
+        return xstrdup(buf_cstr(&out));
+    }
+    return xstrdup(operands);
+}
+
+static void strict_prepare(Ctx *x, const ZBlock *b) {
+    size_t i;
+    for (i = 0; i < b->syms.n; i++) {
+        char *q = zsym_quote(b->syms.v[i].name);
+        strmap_put(&x->zsyms, q, (void *)&b->syms.v[i]);
+    }
+    for (i = 0; i < b->stmts.n; i++) {
+        const ZStmt *s = &b->stmts.v[i];
+        char *o;
+        if (s->kind != ZS_EQU) continue;
+        o = zsym_render(b, &s->operands);
+        if (str_trim(o)[0] == '%') {
+            char *l = zsym_render(b, &s->label);
+            strmap_put(&x->zpct, str_trim(l), (void *)x);
+        }
+    }
+}
+
 /* the statements in source order; a section that no longer matches is
  * written by the generic converter where its first statement was */
 static void smart_emit(Ctx *x) {
     Smart *sm = x->sm;
     const ZBlock *b = sm->b;
     size_t i;
+    if (x->strict) strict_prepare(x, b);
     for (i = 0; i < b->stmts.n; i++) {
         const ZStmt *s = &b->stmts.v[i];
         int sec = s->scope >= 0 ? sm->scope_sect[s->scope] : -1;
@@ -1468,6 +1578,7 @@ static void smart_emit(Ctx *x) {
         }
         l = zsym_render(b, &s->label);
         o = zsym_render(b, &s->operands);
+        if (x->strict) o = strict_operands(x, s, o);
         stmt(&x->out, l, s->op, o);
         free(l);
         free(o);
@@ -1487,6 +1598,7 @@ char *disasm_ex(const GoffModule *m, int flags, FILE *warn, int *nwarn, int *sma
     x.warn = warn;
     x.err = err;
     x.errsz = errsz;
+    x.strict = (flags & DISASM_STRICT) != 0;
     x.by_id = xcalloc((m->esds.n + 2) * sizeof *x.by_id);
     x.end_off = -1;
     if (smart) *smart = 0;
