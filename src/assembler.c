@@ -284,6 +284,14 @@ static Value undefined_value(void) {
 
 static int sym_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
     Symbol *s = asm_lookup(a, x->name);
+    if (x->qual && a->laid && !asm_using_label_active(a, x->qual)) {
+        diag_help(rep_errorf(a->rep, "ZA3068", x->sp, "\"%s\" is not the label of an active USING",
+                             x->qual),
+                  "a qualified symbol LABEL.NAME needs `LABEL USING ...` before it, and no DROP "
+                  "of LABEL in between");
+        st->bad = 1;
+        return 0;
+    }
     if (!s) {
         if (a->pass == 1 && !need) {
             *out = undefined_value();
@@ -614,6 +622,7 @@ static void each(Asm *a) {
     a->sect = NULL;
     a->ended = 0;
     a->usings.n = 0;
+    a->using_id = 0;
     a->pool_no = 0;
     for (i = 0; i < a->stmts.n; i++) {
         Stmt *st = a->stmts.v[i];

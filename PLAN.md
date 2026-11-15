@@ -46,8 +46,9 @@ Status key: [x] done, [-] in progress, [ ] open.
 ## Phase 2b - proposals awaiting decisions
 
 - [ ] ZSYM: symbolic information in a NOLOAD ADATA class, smart `-disasm` (ZSYM.md)
-- [ ] HLASM feature review verdicts (HLASM-REVIEW.md): DXD/CXD/Q/J, labeled and
-      dependent USING, scale/exponent, A(X-Y), R, CCW, `sizeof`, `ASSERT`
+- [x] labeled and dependent USING, USING ranges, qualified symbols (DESIGN.md 4.3)
+- [ ] HLASM feature review verdicts (HLASM-REVIEW.md): DXD/CXD/Q/J,
+      scale/exponent, A(X-Y), R, CCW, `sizeof`, `ASSERT`
 
 ## Phase 3 - quality
 

@@ -221,6 +221,37 @@ static char *quoted_symbol(EP *p) {
     return nm;
 }
 
+/* after a symbol: ".NAME" makes it a qualifier (the label of a USING); sets
+ * *name to the symbol and *qual to the qualifier (NULL if none) */
+static int qualified_tail(EP *p, char *first, char **name, char **qual) {
+    *name = first;
+    *qual = NULL;
+    if (p->pos + 1 < p->len && p->s[p->pos] == '.' &&
+        (is_sym_start((unsigned char)p->s[p->pos + 1]) || p->s[p->pos + 1] == '"')) {
+        *qual = first;
+        p->pos++;
+        if (p->s[p->pos] == '"') {
+            *name = quoted_symbol(p);
+            if (!*name) return 0;
+        } else {
+            size_t ns = p->pos;
+            while (p->pos < p->len && is_sym_char((unsigned char)p->s[p->pos])) p->pos++;
+            *name = xstrndup(p->s + ns, p->pos - ns);
+        }
+    }
+    return 1;
+}
+
+static Expr *symbol_expr(EP *p, size_t start, char *word) {
+    char *name, *qual;
+    Expr *e;
+    if (!qualified_tail(p, word, &name, &qual)) return NULL;
+    e = mk(EX_SYM, ep_span(p, start));
+    e->name = name;
+    e->qual = qual;
+    return e;
+}
+
 /* X'..', B'..', C'..' self-defining terms and attribute references
  * (L'SYM) after the leading word has been scanned; s[pos] is the quote. */
 static Expr *parse_quoted(EP *p, size_t start, const char *word) {
@@ -250,10 +281,14 @@ static Expr *parse_quoted(EP *p, size_t start, const char *word) {
             return e;
         } else {
             size_t ns = p->pos;
+            char *first, *nm, *qual;
             while (p->pos < p->len && is_sym_char((unsigned char)p->s[p->pos])) p->pos++;
+            first = xstrndup(p->s + ns, p->pos - ns);
+            if (!qualified_tail(p, first, &nm, &qual)) return NULL;
             e = mk(EX_ATTR, ep_span(p, start));
             e->attr = u;
-            e->name = xstrndup(p->s + ns, p->pos - ns);
+            e->name = nm;
+            e->qual = qual;
             return e;
         }
     }
@@ -362,18 +397,14 @@ static Expr *parse_primary(EP *p) {
     if (c == '"') {
         char *nm = quoted_symbol(p);
         if (!nm) return NULL;
-        e = mk(EX_SYM, ep_span(p, start));
-        e->name = nm;
-        return e;
+        return symbol_expr(p, start, nm);
     }
     if (is_sym_start(c)) {
         char *word;
         while (p->pos < p->len && is_sym_char((unsigned char)p->s[p->pos])) p->pos++;
         word = xstrndup(p->s + start, p->pos - start);
         if (p->pos < p->len && p->s[p->pos] == '\'') return parse_quoted(p, start, word);
-        e = mk(EX_SYM, ep_span(p, start));
-        e->name = word;
-        return e;
+        return symbol_expr(p, start, word);
     }
     return ep_fail(p, "ZA1005", p->pos, 1, "unexpected character \"%c\" in expression", c);
 }
@@ -408,6 +439,7 @@ char *expr_describe(const Expr *e) {
     case EX_NUM:
         return xasprintf("%lld", (long long)e->num);
     case EX_SYM:
+        if (e->qual) return xasprintf("%s.%s", e->qual, e->name);
         return xstrdup(e->name);
     case EX_LOC:
         return xstrdup("*");

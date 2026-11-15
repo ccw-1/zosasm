@@ -181,6 +181,59 @@ encoding implemented in `internal/goff` follow
 *z/OS MVS Program Management: Advanced Facilities*, appendix C (also
 summarized in `_context/goff-format-knowledge.md`).
 
+### 4.3 USING, DROP and qualified symbols
+
+`USING` tells the assembler which register holds which address; an
+instruction operand without a base register is turned into
+displacement + base from the active USINGs (pass 2, `src/instr.c`).
+
+```
+         USING base,reg1,reg2,...        ordinary: reg1 holds base, reg2 base+4096 ...
+W1       USING base,reg                  labeled: only symbols written W1.NAME use it
+         USING base,address              dependent: base is at ADDRESS, whose register
+                                         comes from the USING that covers ADDRESS
+         USING (base,end,lower,upper),reg limits (all but base optional)
+```
+
+* **Ranges.** The default range is the displacement field: 0-4095 from each
+  register, or -2^19 .. 2^19-1 for long-displacement instructions. `end`
+  limits only the 12-bit displacements (`USING base,reg` is
+  `USING (base,base+4096),reg`); `lower` and `upper` (exclusive) limit both.
+  Limits are addresses in the section of `base` (numbers for an absolute
+  base); `X'80000000'` for `lower`/`upper` means no limit and an empty
+  item is skipped, as in `(base,,lower,upper)`. `end` and `upper` must be
+  greater than the base and `lower`.
+* **Choice.** Among the active USINGs that cover an address, the one with the
+  smallest non-negative displacement wins (negative ones only as a last
+  resort, for long displacements); if several give the same displacement the
+  higher register wins, then the later USING.
+* **Unqualified and qualified symbols.** An unqualified symbol uses only
+  unlabeled USINGs. `W1.FIELD` uses only the USING labeled `W1` (an error,
+  `ZA3068`, when `W1` is not active). `.` is not part of a symbol, so the
+  qualifier cannot be mistaken for a quoted name such as `"a.b"`; `L'W1.FIELD`
+  is accepted too. A USING label is not a symbol: it conflicts with a symbol
+  of the same name (`ZA3067`).
+* **When a USING ends.**
+  * An ordinary USING ends when a later ordinary USING names the same
+    register, or `DROP reg`.
+  * A labeled USING ends with `DROP label` or when the same label is used
+    again, never by `DROP reg`; the registers of one labeled USING form one
+    range.
+  * A USING of an address ends with `DROP address` (the USING that covers the
+    address).
+  * Dependent USINGs end with the USING they depend on (the *root*: a
+    dependent USING is never based on another dependent USING but on the
+    ordinary or labeled USING that finally supplies the register), or by
+    their own label or address. `DROP` without operands ends everything.
+* **Absolute bases.** `USING 0,3` makes `LA 7,5` assemble as `LA 7,5(,3)`;
+  without such a USING an absolute displacement uses base 0.
+
+Codes: `ZA3060` (DROP of nothing), `ZA3061`/`ZA3062` (base is external /
+not a simple address), `ZA3063` (range item count), `ZA3064` (limit in
+another section), `ZA3065` (end/upper not greater), `ZA3066` (several
+operands of a dependent USING, address among registers), `ZA3067` (label is
+also a symbol), `ZA3068` (qualifier is not an active USING label).
+
 ## 5. Instruction table
 
 `isa/isa.json` is the source of truth: mnemonic, format name (POP names such

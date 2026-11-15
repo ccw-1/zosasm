@@ -262,6 +262,7 @@ struct Expr {
     Span sp;
     int64_t num;
     char *name; /* EX_SYM, EX_ATTR */
+    char *qual; /* USING label of a qualified symbol (LABEL.NAME), else NULL */
     char attr;  /* 'L', 'T', ... */
     int loc;    /* L'* */
     char op;    /* EX_BIN, EX_UN */
@@ -276,10 +277,22 @@ char *expr_describe(const Expr *e);
 
 /* ---- the assembler --------------------------------------------------- */
 
+/* One base register assignment of a USING (DESIGN.md 4.3).  Offsets are in
+ * the section of key (absolute when key.kind is B_NONE).  The register holds
+ * the address of offset off minus bias; a dependent USING gets its register
+ * and bias from the USING that resolves its supporting address. */
 typedef struct {
-    Base key; /* class (also for dummy sections); B_NONE = absolute */
-    int64_t off;
+    char *label;       /* USING label (qualifier), NULL when unlabeled */
+    Base key;          /* class (also for dummy sections); B_NONE = absolute */
+    int64_t off;       /* base address */
+    int64_t lo, hi;    /* addressable offsets lo <= t < hi */
+    int64_t end;       /* end limit; applies to unsigned displacements only */
     int reg;
+    int64_t bias;
+    int dependent;
+    int id;   /* serial number of the USING (per register) */
+    int root; /* id of the USING that supplies the register; own id if not dependent */
+    int dead; /* being removed by DROP */
     Span sp;
 } Using;
 
@@ -326,6 +339,7 @@ struct Asm {
     Section *sect;
     int ended;
     UsingVec usings;
+    int using_id;
     char *end_entry;
     Span end_span;
     XattrVec xattrs;
@@ -350,6 +364,8 @@ Symbol *asm_lookup(Asm *a, const char *name);
 Symbol *asm_define(Asm *a, Stmt *st, const char *name, Span sp, int *created);
 void asm_define_label(Asm *a, Stmt *st, int64_t length, char typ);
 int asm_valid_name(const char *n);
+/* name is the label of an active labeled USING */
+int asm_using_label_active(Asm *a, const char *name);
 int asm_need_section(Asm *a, Stmt *st);
 int asm_ops(Asm *a, Stmt *st, int min, int max, OperandVec *out);
 Expr *asm_expr(Asm *a, Stmt *st, Operand o);

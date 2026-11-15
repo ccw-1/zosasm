@@ -126,46 +126,390 @@ static int asm_register(Asm *a, Stmt *st, Operand o, unsigned flags, int64_t *ou
     return ok;
 }
 
-void dir_using(Asm *a, Stmt *st) {
-    OperandVec ops = {0};
+/* ---- USING and DROP (DESIGN.md 4.3) ---------------------------------------- */
+
+#define DISP_LONG_MIN (-((int64_t)1 << 19))
+#define DISP_LONG_MAX (((int64_t)1 << 19) - 1)
+
+int asm_using_label_active(Asm *a, const char *name) {
+    size_t i;
+    for (i = 0; i < a->usings.n; i++)
+        if (a->usings.v[i].label && strcmp(a->usings.v[i].label, name) == 0) return 1;
+    return 0;
+}
+
+/* a register written as %r1 or as the predefined name R1 (not defined by the
+ * program): these are never addresses */
+static int is_register_name(Asm *a, Operand o) {
+    char *t = str_trim(o.text);
+    size_t tl = strlen(t), i;
+    int r = 0;
+    if (t[0] == '%') {
+        r = 1;
+    } else if (tl >= 2 && tl <= 3 && za_toupper((unsigned char)t[0]) == 'R' && !asm_lookup(a, t)) {
+        r = 1;
+        for (i = 1; i < tl; i++)
+            if (!za_isdigit((unsigned char)t[i])) r = 0;
+    }
+    free(t);
+    return r;
+}
+
+/* the qualifier of the first qualified symbol of e, or NULL */
+static const char *expr_qual(const Expr *e) {
+    const char *q;
+    if (!e) return NULL;
+    if (e->kind == EX_SYM) return e->qual;
+    if (e->kind == EX_BIN || e->kind == EX_UN) {
+        q = expr_qual(e->l);
+        if (q) return q;
+        return e->kind == EX_BIN ? expr_qual(e->r) : NULL;
+    }
+    return NULL;
+}
+
+typedef struct {
+    int is_addr; /* a relocatable address (dependent USING, DROP address) */
+    int64_t reg;
+    Value v;
+    const Expr *e;
+} UsingOp;
+
+/* classify a USING or DROP operand: a register number or an address; 0 after
+ * an error (reported) */
+static int using_operand(Asm *a, Stmt *st, Operand o, UsingOp *r) {
+    memset(r, 0, sizeof *r);
+    if (is_register_name(a, o)) {
+        if (!asm_register(a, st, o, F_GPR, &r->reg)) return 0;
+    } else {
+        r->e = asm_expr(a, st, o);
+        if (!r->e || !asm_eval(a, st, r->e, 1, &r->v)) return 0;
+        if (!value_is_abs(&r->v)) {
+            r->is_addr = 1;
+            return 1;
+        }
+        r->reg = r->v.abs;
+    }
+    if (r->reg < 0 || r->reg > 15) {
+        rep_errorf(a->rep, "ZA2041", asm_op_span(st, o), "register %lld is out of range 0 to 15",
+                   (long long)r->reg);
+        return 0;
+    }
+    return 1;
+}
+
+/* the key and offset of an address; 0 after an error */
+static int using_address(Asm *a, const Expr *e, const Value *v, Base *key, int64_t *off) {
+    Base b;
+    memset(key, 0, sizeof *key);
+    *off = v->abs;
+    if (value_is_abs(v)) return 1;
+    if (!value_simple(v, &b)) {
+        rep_errorf(a->rep, "ZA3062", e->sp,
+                   "USING operand must be a simple address in one section");
+        return 0;
+    }
+    if (b.kind == B_SYM) {
+        rep_errorf(a->rep, "ZA3061", e->sp,
+                   "USING needs an address in this module, not an external symbol");
+        return 0;
+    }
+    *key = base_key(b);
+    return 1;
+}
+
+/* an end or limit operand of USING: in the section of the base (or absolute
+ * when the base is); 0 after an error */
+static int using_limit(Asm *a, Stmt *st, Operand o, Base key, int none_ok, int64_t *out,
+                       int *none) {
+    char *t = str_trim(o.text);
     Expr *e;
     Value v;
-    Base key;
-    size_t i;
-    if (st->name[0] && a->pass == 1) {
-        rep_errorf(a->rep, "ZA9002", st->name_span, "labeled USING is not supported yet");
-        st->bad = 1;
-        return;
+    Base k;
+    int64_t off;
+    int empty = t[0] == 0;
+    free(t);
+    *none = 0;
+    if (empty) {
+        *none = 1;
+        return 1;
     }
-    if (!asm_ops(a, st, 2, 17, &ops)) return;
-    e = asm_expr(a, st, ops.v[0]);
-    if (a->pass == 1)
-        for (i = 1; i < ops.n; i++)
-            if (!is_pct_reg(ops.v[i])) asm_expr(a, st, ops.v[i]);
-    if (a->pass != 2 || !e) return;
-    if (!asm_eval(a, st, e, 1, &v)) return;
-    memset(&key, 0, sizeof key);
-    if (!value_is_abs(&v)) {
-        Base b;
-        if (value_simple(&v, &b)) {
-            key = base_key(b);
-            if (b.kind == B_SYM) {
-                rep_errorf(a->rep, "ZA3061", e->sp,
-                           "USING needs an address in this module, not an external symbol");
-                return;
-            }
-        } else {
-            rep_errorf(a->rep, "ZA3062", e->sp, "USING operand must be a simple address in one section");
-            return;
+    e = asm_expr(a, st, o);
+    if (!e || !asm_eval(a, st, e, 1, &v)) return 0;
+    if (none_ok && value_is_abs(&v) && v.abs == 0x80000000LL) { /* no limit */
+        *none = 1;
+        return 1;
+    }
+    if (!using_address(a, e, &v, &k, &off)) return 0;
+    if (!base_eq(k, key)) {
+        diag_help(rep_errorf(a->rep, "ZA3064", e->sp,
+                             "the limit of a USING must be in the same section as its base"),
+                  key.kind == B_NONE ? "the base is absolute, so the limit must be absolute"
+                                     : "write it as an address, for example `BASE+4096`");
+        return 0;
+    }
+    *out = off;
+    return 1;
+}
+
+/* mark entry i and the USINGs that depend on it as ended */
+static void using_kill(Asm *a, size_t i) {
+    size_t j;
+    Using *u = &a->usings.v[i];
+    u->dead = 1;
+    if (!u->dependent)
+        for (j = 0; j < a->usings.n; j++)
+            if (a->usings.v[j].root == u->id) a->usings.v[j].dead = 1;
+}
+
+static void using_compact(Asm *a) {
+    size_t i, kept = 0;
+    for (i = 0; i < a->usings.n; i++)
+        if (!a->usings.v[i].dead) a->usings.v[kept++] = a->usings.v[i];
+    a->usings.n = kept;
+}
+
+/* The USING that resolves offset t of key, or -1.  qual is the label of a
+ * qualified symbol; an unqualified symbol only uses unlabeled USINGs.  The
+ * smallest non-negative displacement wins (negative ones only as a last
+ * resort); ranges that coincide use the higher register. */
+static long find_using(Asm *a, Base key, int64_t t, const char *qual, int64_t lo, int64_t hi,
+                       int64_t *disp) {
+    long best = -1;
+    int64_t brank = 0;
+    int uns = lo >= 0;
+    size_t i;
+    for (i = a->usings.n; i-- > 0;) {
+        const Using *u = &a->usings.v[i];
+        int64_t d, rank;
+        if (qual ? (!u->label || strcmp(u->label, qual) != 0) : u->label != NULL) continue;
+        if (!base_eq(u->key, key)) continue;
+        if (t < u->lo || t >= u->hi || (uns && t >= u->end)) continue;
+        d = t - u->off + u->bias;
+        if (d < lo || d > hi) continue;
+        rank = d < 0 ? ((int64_t)1 << 40) - d : d;
+        if (best < 0 || rank < brank || (rank == brank && u->reg > a->usings.v[best].reg)) {
+            best = (long)i;
+            brank = rank;
+            *disp = d;
         }
     }
-    for (i = 1; i < ops.n; i++) {
-        int64_t r;
+    return best;
+}
+
+/* explain a failed USING lookup */
+static void no_addressability(Asm *a, const Expr *e, Value v, const char *qual, int64_t lo,
+                              int64_t hi) {
+    char *desc = expr_describe(e);
+    Diag *d = diag_label(
+        rep_errorf(a->rep, "ZA2030", e->sp, "no USING gives addressability to %s", desc),
+        "this address is not covered");
+    Base b, key;
+    int near = 0, any = 0;
+    size_t i;
+    if (value_is_abs(&v)) {
+        memset(&key, 0, sizeof key);
+    } else if (value_simple(&v, &b)) {
+        key = base_key(b);
+    } else {
+        diag_help(d, "the operand is not a simple address; give an explicit displacement and base "
+                     "register, for example `0(R12)`");
+        return;
+    }
+    for (i = 0; i < a->usings.n; i++) {
+        const Using *u = &a->usings.v[i];
+        if (qual ? (!u->label || strcmp(u->label, qual) != 0) : u->label != NULL) continue;
+        any = 1;
+        if (base_eq(u->key, key)) {
+            int64_t dd = v.abs - u->off + u->bias;
+            near = 1;
+            diag_note(d, u->sp,
+                      "register %d is based here, but the displacement would be %lld (allowed %lld "
+                      "to %lld)",
+                      u->reg, (long long)dd, (long long)lo, (long long)hi);
+        }
+    }
+    if (!near) {
+        if (!value_is_abs(&v) && b.kind == B_SYM)
+            diag_help(d,
+                      "\"%s\" is external; load its address with a V- or A-type constant and use "
+                      "it through a base register",
+                      desc);
+        else if (qual)
+            diag_help(d, "no USING labeled \"%s\" covers the section of this address", qual);
+        else if (!any)
+            diag_help(d, "there is no active USING; add `USING *,R12` (or the register of your "
+                         "choice) after loading the base register");
+        else
+            diag_help(d, "no active USING refers to the section/class of this address");
+    }
+}
+
+void dir_using(Asm *a, Stmt *st) {
+    OperandVec ops = {0}, rng = {0};
+    Operand base_op;
+    Expr *e;
+    Value v;
+    Base key, k2;
+    int64_t off, lo = INT64_MIN, hi = INT64_MAX, end = INT64_MAX, parent_disp = 0;
+    int none, dependent = 0, root = 0, parent_reg = 0;
+    long parent = -1;
+    char *t0;
+    size_t i, nregs = 0;
+    int regs[16];
+    UsingOp o1;
+    if (!asm_ops(a, st, 2, 17, &ops)) return;
+    /* the first operand: BASE or (BASE,end,lower,upper) */
+    t0 = str_trim(ops.v[0].text);
+    if (t0[0] == '(' && match_paren(t0, 0) == (long)strlen(t0) - 1) {
+        size_t lead = 0, k;
+        char *inner = xstrndup(t0 + 1, strlen(t0) - 2);
+        OperandVec tmp = {0};
+        while (ops.v[0].text[lead] && za_isspace((unsigned char)ops.v[0].text[lead])) lead++;
+        split_operands(&tmp, inner);
+        for (k = 0; k < tmp.n; k++) {
+            tmp.v[k].off += ops.v[0].off + (int)lead + 1;
+            vec_push(&rng, tmp.v[k]);
+        }
+        if (rng.n < 1 || rng.n > 4) {
+            if (a->pass == 1) {
+                rep_errorf(a->rep, "ZA3063", asm_op_span(st, ops.v[0]),
+                           "the first operand of USING takes 1 to 4 items: (base,end,lower,upper)");
+                st->bad = 1;
+            }
+            return;
+        }
+    } else {
+        vec_push(&rng, ops.v[0]);
+    }
+    base_op = rng.v[0];
+    if (a->pass == 1) {
+        if (st->name[0] && !asm_valid_stmt_name(st)) {
+            diag_help(rep_errorf(a->rep, "ZA1021", st->name_span,
+                                 "\"%s\" is not a valid symbol name", st->name),
+                      "a USING label follows the rules of symbol names");
+            st->bad = 1;
+            return;
+        }
+        for (i = 0; i < rng.n; i++) {
+            char *t = str_trim(rng.v[i].text);
+            if (t[0]) asm_expr(a, st, rng.v[i]);
+            free(t);
+        }
+        for (i = 1; i < ops.n; i++)
+            if (!is_register_name(a, ops.v[i])) asm_expr(a, st, ops.v[i]);
+        return;
+    }
+    /* pass 2 */
+    e = asm_expr(a, st, base_op);
+    if (!e || !asm_eval(a, st, e, 1, &v)) return;
+    if (!using_address(a, e, &v, &key, &off)) return;
+    for (i = 1; i < rng.n; i++) {
+        int64_t x;
+        if (!using_limit(a, st, rng.v[i], key, i >= 2, &x, &none)) return;
+        if (none) continue;
+        if (i == 1) {
+            if (x <= off) {
+                rep_errorf(a->rep, "ZA3065", asm_op_span(st, rng.v[i]),
+                           "the end address must be greater than the base");
+                return;
+            }
+            end = x;
+        } else if (i == 2) {
+            lo = x;
+        } else {
+            hi = x;
+        }
+    }
+    if (lo != INT64_MIN && hi != INT64_MAX && hi <= lo) {
+        rep_errorf(a->rep, "ZA3065", asm_op_span(st, rng.v[3]),
+                   "the upper limit must be greater than the lower limit");
+        return;
+    }
+    if (!using_operand(a, st, ops.v[1], &o1)) return;
+    if (o1.is_addr) {
+        /* dependent USING: based on the USING that resolves this address */
+        int64_t t2;
+        const char *q = expr_qual(o1.e);
+        if (ops.n > 2) {
+            rep_errorf(a->rep, "ZA3066", asm_op_span(st, ops.v[2]),
+                       "a dependent USING takes one address, not several operands");
+            return;
+        }
+        if (!using_address(a, o1.e, &o1.v, &k2, &t2)) return;
+        parent = find_using(a, k2, t2, q, DISP_LONG_MIN, DISP_LONG_MAX, &parent_disp);
+        if (parent < 0) {
+            no_addressability(a, o1.e, o1.v, q, DISP_LONG_MIN, DISP_LONG_MAX);
+            return;
+        }
+        dependent = 1;
+        parent_reg = a->usings.v[parent].reg;
+        root = a->usings.v[parent].root;
+    } else {
+        regs[nregs++] = (int)o1.reg;
+        for (i = 2; i < ops.n; i++) {
+            UsingOp o;
+            if (!using_operand(a, st, ops.v[i], &o)) return;
+            if (o.is_addr) {
+                rep_errorf(a->rep, "ZA3066", asm_op_span(st, ops.v[i]),
+                           "a base register is expected here, not an address");
+                return;
+            }
+            regs[nregs++] = (int)o.reg;
+        }
+    }
+    if (st->name[0]) {
+        size_t j;
+        if (asm_lookup(a, st->name)) {
+            diag_help(rep_errorf(a->rep, "ZA3067", st->name_span,
+                                 "\"%s\" is a USING label and also a symbol of the program",
+                                 st->name),
+                      "a USING label can be used only as a qualifier; choose another name");
+            return;
+        }
+        for (j = 0; j < a->usings.n; j++) /* the same label again ends the prior USING */
+            if (a->usings.v[j].label && strcmp(a->usings.v[j].label, st->name) == 0)
+                using_kill(a, j);
+        using_compact(a);
+    }
+    if (dependent) {
         Using u;
-        if (!asm_register(a, st, ops.v[i], F_GPR, &r)) continue;
+        memset(&u, 0, sizeof u);
+        u.label = st->name[0] ? xstrdup(st->name) : NULL;
         u.key = key;
-        u.off = v.abs + (int64_t)(i - 1) * 4096;
-        u.reg = (int)r;
+        u.off = off;
+        u.lo = lo;
+        u.hi = hi;
+        u.end = end;
+        u.reg = parent_reg;
+        u.bias = parent_disp;
+        u.dependent = 1;
+        u.id = ++a->using_id;
+        u.root = root;
+        u.sp = asm_op_span(st, ops.v[0]);
+        vec_push(&a->usings, u);
+        return;
+    }
+    for (i = 0; i < nregs; i++) {
+        Using u;
+        memset(&u, 0, sizeof u);
+        if (!st->name[0]) { /* a USING of the same register ends the prior one */
+            size_t j;
+            for (j = 0; j < a->usings.n; j++)
+                if (!a->usings.v[j].label && !a->usings.v[j].dependent &&
+                    a->usings.v[j].reg == regs[i])
+                    using_kill(a, j);
+            using_compact(a);
+        }
+        u.label = st->name[0] ? xstrdup(st->name) : NULL;
+        u.key = key;
+        u.off = off + (int64_t)i * 4096;
+        u.lo = lo;
+        u.hi = hi;
+        u.end = end;
+        u.reg = regs[i];
+        u.id = ++a->using_id;
+        u.root = u.id;
         u.sp = asm_op_span(st, ops.v[0]);
         vec_push(&a->usings, u);
     }
@@ -181,88 +525,44 @@ void dir_drop(Asm *a, Stmt *st) {
         return;
     }
     for (i = 0; i < ops.n; i++) {
-        int64_t r;
+        UsingOp o;
+        char *t = str_trim(ops.v[i].text);
+        const char *err = NULL;
+        char *name = t[0] ? sym_text(t, &err) : NULL;
         int found = 0;
-        size_t kept = 0;
-        if (!asm_register(a, st, ops.v[i], F_GPR, &r)) continue;
-        for (j = 0; j < a->usings.n; j++) {
-            if (a->usings.v[j].reg == (int)r) {
-                found = 1;
-                continue;
+        if (name && asm_using_label_active(a, name)) {
+            for (j = 0; j < a->usings.n; j++)
+                if (a->usings.v[j].label && strcmp(a->usings.v[j].label, name) == 0)
+                    using_kill(a, j);
+            using_compact(a);
+            continue;
+        }
+        if (!using_operand(a, st, ops.v[i], &o)) continue;
+        if (o.is_addr) {
+            Base k;
+            int64_t t2, d;
+            long at;
+            const char *q = expr_qual(o.e);
+            if (!using_address(a, o.e, &o.v, &k, &t2)) continue;
+            at = find_using(a, k, t2, q, DISP_LONG_MIN, DISP_LONG_MAX, &d);
+            if (at < 0)
+                rep_warnf(a->rep, "ZA3060", asm_op_span(st, ops.v[i]),
+                          "DROP of an address that no active USING covers");
+            else
+                using_kill(a, (size_t)at);
+        } else {
+            for (j = 0; j < a->usings.n; j++) {
+                const Using *u = &a->usings.v[j];
+                if (!u->label && !u->dependent && u->reg == (int)o.reg) {
+                    using_kill(a, j);
+                    found = 1;
+                }
             }
-            a->usings.v[kept++] = a->usings.v[j];
+            if (!found)
+                rep_warnf(a->rep, "ZA3060", asm_op_span(st, ops.v[i]),
+                          "DROP of register %d, which has no active USING", (int)o.reg);
         }
-        a->usings.n = kept;
-        if (!found)
-            rep_warnf(a->rep, "ZA3060", asm_op_span(st, ops.v[i]),
-                      "DROP of register %d, which has no active USING", (int)r);
-    }
-}
-
-/* find a base register and displacement for v */
-static int resolve_using(Asm *a, Value v, int64_t lo, int64_t hi, int *reg, int64_t *disp) {
-    Base b;
-    Base key;
-    int ok = 0;
-    int64_t best = 0;
-    size_t i;
-    if (!value_simple(&v, &b)) return 0;
-    key = base_key(b);
-    for (i = a->usings.n; i-- > 0;) {
-        const Using *u = &a->usings.v[i];
-        int64_t d, rank;
-        if (!base_eq(u->key, key)) continue;
-        d = v.abs - u->off;
-        if (d < lo || d > hi) continue;
-        /* smaller is better; negatives only as a last resort */
-        rank = d < 0 ? ((int64_t)1 << 40) - d : d;
-        if (!ok || rank < best) {
-            best = rank;
-            *reg = u->reg;
-            *disp = d;
-            ok = 1;
-        }
-    }
-    return ok;
-}
-
-/* explain a failed USING lookup */
-static void no_addressability(Asm *a, const Expr *e, Value v, int64_t lo, int64_t hi) {
-    char *desc = expr_describe(e);
-    Diag *d = diag_label(
-        rep_errorf(a->rep, "ZA2030", e->sp, "no USING gives addressability to %s", desc),
-        "this address is not covered");
-    Base b, key;
-    int near = 0;
-    size_t i;
-    if (!value_simple(&v, &b)) {
-        diag_help(d, "the operand is not a simple address; give an explicit displacement and base "
-                     "register, for example `0(R12)`");
-        return;
-    }
-    key = base_key(b);
-    for (i = 0; i < a->usings.n; i++) {
-        const Using *u = &a->usings.v[i];
-        if (base_eq(u->key, key)) {
-            int64_t dd = v.abs - u->off;
-            near = 1;
-            diag_note(d, u->sp,
-                      "register %d is based here, but the displacement would be %lld (allowed %lld "
-                      "to %lld)",
-                      u->reg, (long long)dd, (long long)lo, (long long)hi);
-        }
-    }
-    if (!near) {
-        if (b.kind == B_SYM)
-            diag_help(d,
-                      "\"%s\" is external; load its address with a V- or A-type constant and use "
-                      "it through a base register",
-                      desc);
-        else if (a->usings.n == 0)
-            diag_help(d, "there is no active USING; add `USING *,R12` (or the register of your "
-                         "choice) after loading the base register");
-        else
-            diag_help(d, "no active USING refers to the section/class of this address");
+        using_compact(a);
     }
 }
 
@@ -564,6 +864,8 @@ static int addr_field(Asm *a, Stmt *st, Operand o, const Slot *sl, int nfields, 
     AddrOp ad = split_addr(o);
     const IsaOperand *dispf = isa_op(in, (size_t)sl->field);
     int64_t dmax = 4095, dmin = 0, mid = 0, base_reg = 0, disp;
+    long abs_at;
+    Base abs_key;
     Expr *e;
     Value dv;
     int has_mid = 0, explicit_base = 0;
@@ -620,7 +922,12 @@ static int addr_field(Asm *a, Stmt *st, Operand o, const Slot *sl, int nfields, 
         explicit_base = 1;
     }
     /* displacement and base */
-    if (value_is_abs(&dv)) {
+    memset(&abs_key, 0, sizeof abs_key);
+    if (value_is_abs(&dv) && !explicit_base && sl->base >= 0 &&
+        (abs_at = find_using(a, abs_key, dv.abs, NULL, dmin, dmax, &disp)) >= 0) {
+        /* an absolute address covered by a USING with an absolute base */
+        base_reg = a->usings.v[abs_at].reg;
+    } else if (value_is_abs(&dv)) {
         disp = dv.abs;
         if (disp < dmin || disp > dmax) {
             diag_help(rep_errorf(a->rep, "ZA2036", e->sp, "displacement %lld is out of range %lld to %lld",
@@ -637,14 +944,15 @@ static int addr_field(Asm *a, Stmt *st, Operand o, const Slot *sl, int nfields, 
                   "number");
         return 0;
     } else {
-        int reg;
-        int64_t d;
-        if (!resolve_using(a, dv, dmin, dmax, &reg, &d)) {
-            no_addressability(a, e, dv, dmin, dmax);
+        Base b;
+        long at = -1;
+        const char *q = expr_qual(e);
+        if (value_simple(&dv, &b)) at = find_using(a, base_key(b), dv.abs, q, dmin, dmax, &disp);
+        if (at < 0) {
+            no_addressability(a, e, dv, q, dmin, dmax);
             return 0;
         }
-        disp = d;
-        base_reg = reg;
+        base_reg = a->usings.v[at].reg;
         if (sl->base < 0) {
             rep_errorf(a->rep, "ZA2038", e->sp, "this operand has no base register field");
             return 0;

@@ -34,9 +34,9 @@ Proposed verdict is in the last column; "?" marks a question for you.
 
 | Feature | What it is | Proposed |
 |---|---|---|
-| **Labeled `USING`** | `W1 USING WORK,2` gives the mapping a name, so the same DSECT can be mapped twice (two registers) and the fields are used as `W1.FIELD`. | **Do**. Currently ZA9002. The qualified name `W1.FIELD` is a new expression form. |
-| **Dependent `USING`** | `USING RECMAP,INREC` maps a DSECT onto an area that is itself covered by another USING; no new register, the address is computed from the base of the first USING. Ends with it. | **Do**. |
-| `USING` range, `USING (a,b),reg` | Limit of the covered area (default 4096), several bases. | **Do** the range forms; check what exists. |
+| **Labeled `USING`** | `W1 USING WORK,2` gives the mapping a name, so the same DSECT can be mapped twice (two registers) and the fields are used as `W1.FIELD`. | **Done** (DESIGN.md 4.3). The qualified name `W1.FIELD` is a new expression form. |
+| **Dependent `USING`** | `USING RECMAP,INREC` maps a DSECT onto an area that is itself covered by another USING; no new register, the address is computed from the base of the first USING. Ends with it. | **Done**. |
+| `USING` range, `USING (a,b),reg` | Limit of the covered area (default 4096), several bases. | **Done**. |
 | Scoped `USING` | (not in HLASM) | **?** `USING ... ENDUSING`-style block as an alternative to `PUSH`/`POP`. |
 | `Q`, `QY`, `QD` constants | Offset of an external dummy section / DSECT / PART in the pseudo-register area; the binder fills it (RLD type Q). | **Do** (with `DXD`). |
 | `J`, `JD` constants | Length of a DXD/class/DSECT, filled by the binder (GOFF LEN record). | **Do** (with `DXD`; LEN records are in PLAN.md). |
