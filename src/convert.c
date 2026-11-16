@@ -268,7 +268,7 @@ static int has_cont_mark(const Conv *c, const char *ln) {
 static const char *const OPERANDLESS[] = {"CSECT", "DSECT", "RSECT", "COM", "LOCTR", "LTORG", "EJECT", "MEND", "MEXIT", "ANOP", NULL};
 static const char *const CASTMT[] = {"AIF",  "AGO",  "ANOP", "SETA", "SETB",  "SETC",    "LCLA",  "LCLB", "LCLC",
                                      "GBLA", "GBLB", "GBLC", "ACTR", "MNOTE", "MEXIT",   "AREAD", "AINSERT", "MHELP", NULL};
-static const char *const UNSUPPORTED[] = {"OPSYN", "PUSH", "POP", "ACONTROL", "ADATA", "CEJECT", "EXITCTL", "REPRO", "ALIAS", NULL};
+static const char *const UNSUPPORTED[] = {"OPSYN", "ADATA", "REPRO", "ALIAS", NULL};
 
 static int in_list(const char *const *l, const char *s) {
     for (; *l; l++)

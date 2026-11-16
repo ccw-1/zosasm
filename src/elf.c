@@ -248,6 +248,7 @@ static int do_relocs(Ctx *x, ElfSec *e) {
         case REL_RI:
             break;
         case REL_Q:
+        case REL_QY:
             return fail(x, "Q-type constants have no ELF form", sn);
         case REL_CXD:
             return fail(x, "CXD has no ELF form", sn);

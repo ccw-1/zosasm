@@ -12,19 +12,19 @@ Proposed verdict is in the last column; "?" marks a question for you.
 
 | Instruction | What it really does | Proposed |
 |---|---|---|
-| `ACONTROL` | Changes assembler options in the middle of the source: `AFPR` (which FP registers are legal), `CA(ccsid)`/`CE(ccsid)` (code page of `CA`/`C` constants, only for `DC`), `COMPAT` (macro/case compatibility), `FLAG` (message levels), `MACHINE`/`OPTABLE` (instruction set level), `RA2` (alignment warnings), `TYPECHECK` (register type checks), `ILMA`, `LIBMAC`, `CU`. | **Redo** as `#pragma` and command line: `-march` (reject instructions newer than a machine level; needs facility data in the ISA table), code page of character constants (zosasm is fixed to IBM-1047 today) ?. Rest **Skip**. |
+| `ACONTROL` | Changes assembler options in the middle of the source: `AFPR` (which FP registers are legal), `CA(ccsid)`/`CE(ccsid)` (code page of `CA`/`C` constants, only for `DC`), `COMPAT` (macro/case compatibility), `FLAG` (message levels), `MACHINE`/`OPTABLE` (instruction set level), `RA2` (alignment warnings), `TYPECHECK` (register type checks), `ILMA`, `LIBMAC`, `CU`. | **Done** (2026-11): `AFPR`/`NOAFPR`, `TYPECHECK(REGISTER)`, `CA`/`CE` validated; the other selections are checked and ignored (DESIGN.md 4.7). |
 | `ADATA` | Writes a user record into the *associated data file* (a side file of the assembler). Only checked and listed unless the ADATA option is on. | **Skip**. ZSYM (ZSYM.md) is the GOFF-native replacement, and it is generated, not hand written. |
 | `AINSERT` | Puts a record into the input stream, from a macro (queue front/back). | **Skip** (macro language is out; the preprocessor `#include`/`#define` covers it). |
 | `CCW`, `CCW0` | 8 byte format 0 channel command word: command code, 24 bit data address, flags, count; aligned on a doubleword; the symbol gets length 8. Used by EXCP/EXCPVR I/O code. | **Done** (DESIGN.md 13). |
 | `CCW1` | Same, format 1, 31 bit data address. | **Done** (DESIGN.md 13). |
-| `CEJECT n` | Conditional page eject in the listing. | **Skip**; accept as no-op like `EJECT` (the listing starts a page on `EJECT`; `CEJECT` has no effect). |
+| `CEJECT n` | Conditional page eject in the listing. | **Done**: conditional page eject in the listing (DESIGN.md 4.7, 15). |
 | `CXD` | Reserves a fullword that the binder fills with the total length of all external dummy sections (the class `B_PRV`). | **Done** (DESIGN.md 4.4). |
 | `DXD` | Defines an *external dummy section*: a named piece of **pseudo-register** storage (size and alignment from a DS-like operand) that the binder merges by name over all modules and allocates at run time. Referenced through `Q(name)`. In GOFF it is a PR in class `B_PRV`. This is how reentrant static storage (LE, PL/I) is assigned. | **Done** (DESIGN.md 4.4). |
-| `EXITCTL` | Sets four parameters for user exits of the assembler. | **Skip**. |
+| `EXITCTL` | Sets four parameters for user exits of the assembler. | **Done** as a checked no-op (DESIGN.md 4.7). |
 | `MNOTE sev,'text'` | User defined message with severity, mostly from macros and conditional assembly. | **Redo**: `ASSERT expr,'text'` (ZSYM.md 7) fails the assembly when an assembly-time condition is false, and `#error`/`#warning` already exist. No `MNOTE`. |
 | `OPSYN` | Gives an operation code another name, or deletes it (used to rename or replace instructions in macro libraries). | **Skip**; `#define` on the operation field already renames. |
-| `PUSH` / `POP` | Save and restore the `PRINT`, `USING`, `ACONTROL` state on a stack (macros use it to change the USING environment temporarily). | **Skip** `PRINT`/`ACONTROL`. `USING` state: **?** (a real need in long routines, but a scoped form is nicer than a stack: see `USING` below). |
-| `REPRO` | Copies the next record unchanged into the *object deck*. The manual says: do not use with GOFF. | **Skip**. |
+| `PUSH` / `POP` | Save and restore the `PRINT`, `USING`, `ACONTROL` state on a stack (macros use it to change the USING environment temporarily). | **Done**: `PRINT`, `USING` and `ACONTROL` state (DESIGN.md 4.7). |
+| `REPRO` | Copies the next record unchanged into the *object deck*. The manual says: do not use with GOFF. | **Done** as a warning (ZA2077); the next record is skipped, nothing goes into the object. |
 | `*PROCESS` | Options inside the source. | **Skip** (`#pragma`); a `*` in column 1 is a comment already. |
 | `ICTL`, `ISEQ` | Column layout of the source. | zosasm has no columns: accepted and ignored today; **Skip** (could become an error later). |
 | `ALIAS` | Long or odd external names. | **Done differently**: quoted symbols `"a.b"`. |
@@ -38,11 +38,11 @@ Proposed verdict is in the last column; "?" marks a question for you.
 | **Dependent `USING`** | `USING RECMAP,INREC` maps a DSECT onto an area that is itself covered by another USING; no new register, the address is computed from the base of the first USING. Ends with it. | **Done**. |
 | `USING` range, `USING (a,b),reg` | Limit of the covered area (default 4096), several bases. | **Done**. |
 | Scoped `USING` | (not in HLASM) | **?** `USING ... ENDUSING`-style block as an alternative to `PUSH`/`POP`. |
-| `Q`, `QY`, `QD` constants | Offset of an external dummy section / DSECT / PART in the pseudo-register area; the binder fills it (RLD type Q). | **Done** (`QY` not yet). |
+| `Q`, `QY`, `QD` constants | Offset of an external dummy section / DSECT / PART in the pseudo-register area; the binder fills it (RLD type Q). | **Done** (`QY` too: GOFF reference type 9, unverified against IBM; rejected with `-elf`). |
 | `J`, `JD` constants | Length of a DXD/class/DSECT, filled by the binder (GOFF LEN record). | **Done** (as RLD length items; LEN records not needed). |
 | `R` constant | Address of the PSECT (private read/write area) of a symbol, for reentrant code (`V` is the entry address, `R` the data area). | **Done** (DESIGN.md 4.4); `XATTR PSECT` is parsed but not written yet. |
-| `S`, `SY` constants | A base-displacement value computed from a USING (2 or 3 bytes). | **Maybe**: little use outside old code. |
-| `CU` (UTF-16), `G` (DBCS) constants | Text in other encodings. | `CU` **Done** (UTF-16BE only, DESIGN.md 13); `G` **Skip**. |
+| `S`, `SY` constants | A base-displacement value computed from a USING (2 or 3 bytes). | **Done** (resolved through `USING`; DESIGN.md 13). |
+| `CU` (UTF-16), `G` (DBCS) constants | Text in other encodings. | `CU` **Done** (UTF-16BE only, DESIGN.md 13); `G` **Done** as hex quads (no DBCS tables). |
 | Scale `S`, exponent `E` modifiers | `FS8'35.92'`, `EE3'3.414'`, fixed/float scaling. | **Done** (DESIGN.md 13). |
 | Decimal float `DD ED LD` (and `DB EB LB` binary float) | Hex float (E D L) exists; the other formats do not. | **Done** (DD ED LD with all rounding modes, special values, LQ; DESIGN.md 13). |
 | Program type `P(...)` in DC and `EQU` | A 32 bit user tag on a symbol, no effect on code. | **Skip** (ZSYM can carry such tags if wanted). |

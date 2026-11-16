@@ -252,7 +252,7 @@ static int has_code(const char *src, const char *want) {
 }
 
 static void test_literal_errors(void) {
-    CHECK(has_code("M CSECT\n BASR 12,0\n USING *,12\n L 1,=S(1)\n END\n", "ZA9002"));
+    CHECK(has_code("M CSECT\n BASR 12,0\n USING *,12\n L 1,=W(1)\n END\n", "ZA2013"));
     CHECK(has_code("M CSECT\n BASR 12,0\n USING *,12\n L 1,=\n END\n", "ZA2051"));
     CHECK(has_code("D DSECT\n L 1,=F'1'\n", "ZA2052"));
     CHECK(has_code("M CSECT\n BASR 12,0\n USING *,12\n L 1,=F'1'\nD DSECT\n LTORG\n", "ZA3043"));

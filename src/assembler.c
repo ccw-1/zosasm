@@ -33,12 +33,15 @@ typedef struct {
 } DirEntry;
 
 static const DirEntry directive_tab[] = {
-    {"AMODE", dir_mode},   {"ASSERT", dir_assert}, {"CATTR", dir_cattr},   {"CCW", dir_ccw},     {"CCW0", dir_ccw},   {"CCW1", dir_ccw},   {"CNOP", dir_cnop},   {"COM", dir_section},
-    {"COPY", dir_copy},    {"CSECT", dir_section}, {"CXD", dir_cxd},   {"DC", dir_dc},       {"DROP", dir_drop},
-    {"DS", dir_dc},        {"DSECT", dir_section}, {"DXD", dir_dxd},     {"EJECT", dir_ignore}, {"END", dir_end},
-    {"ENTRY", dir_entry},  {"EQU", dir_equ},      {"EXTRN", dir_extrn}, {"ICTL", dir_ignore},
-    {"ISEQ", dir_ignore},  {"LOCTR", dir_loctr},  {"LTORG", dir_ltorg}, {"ORG", dir_org},
-    {"PRINT", dir_ignore}, {"PUNCH", dir_ignore}, {"RMODE", dir_mode},  {"RSECT", dir_section},
+    {"ACONTROL", dir_acontrol}, {"AMODE", dir_mode},   {"ASSERT", dir_assert}, {"CATTR", dir_cattr},
+    {"CCW", dir_ccw},      {"CCW0", dir_ccw},     {"CCW1", dir_ccw},     {"CEJECT", dir_ceject},
+    {"CNOP", dir_cnop},    {"COM", dir_section},  {"COPY", dir_copy},    {"CSECT", dir_section},
+    {"CXD", dir_cxd},      {"DC", dir_dc},        {"DROP", dir_drop},    {"DS", dir_dc},
+    {"DSECT", dir_section}, {"DXD", dir_dxd},     {"EJECT", dir_ignore}, {"END", dir_end},
+    {"ENTRY", dir_entry},  {"EQU", dir_equ},      {"EXITCTL", dir_exitctl}, {"EXTRN", dir_extrn},
+    {"ICTL", dir_ignore},  {"ISEQ", dir_ignore},  {"LOCTR", dir_loctr},  {"LTORG", dir_ltorg},
+    {"ORG", dir_org},      {"POP", dir_pushpop},  {"PRINT", dir_ignore}, {"PUNCH", dir_ignore},
+    {"PUSH", dir_pushpop}, {"REPRO", dir_repro},  {"RMODE", dir_mode},   {"RSECT", dir_section},
     {"SPACE", dir_ignore}, {"START", dir_section}, {"TITLE", dir_ignore}, {"USING", dir_using},
     {"WXTRN", dir_extrn},  {"XATTR", dir_xattr},
 };
@@ -415,7 +418,7 @@ static char type_attr(const Symbol *s) {
     case SYM_SECT:
         return 'J';
     default:
-        return s->type ? s->type : 'U';
+        return s->type == 'G' ? '@' : s->type ? s->type : 'U';
     }
 }
 
@@ -939,6 +942,11 @@ static void each(Asm *a) {
     a->usings.n = 0;
     a->using_id = 0;
     a->pool_no = 0;
+    a->strict = za_strict_registers;
+    a->afpr = 1;
+    a->print_depth = 0;
+    a->using_stack.n = 0;
+    a->ac_stack.n = 0;
     for (i = 0; i < a->stmts.n; i++) {
         Stmt *st = a->stmts.v[i];
         Piece *before = a->cur;

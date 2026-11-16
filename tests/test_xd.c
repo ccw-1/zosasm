@@ -165,7 +165,28 @@ static void test_errors(void) {
     expect_codes("REFERENCE direct", "T CSECT\n EXTRN E\nE XATTR REFERENCE(DIRECT)\n", "");
 }
 
+static void test_qy(void) {
+    GoffModule *g = emit_src("T CSECT\n"
+                             " DC QY(WORK),H'7'\n"
+                             " DC AL1(L'Q1)\n"
+                             "Q1 DC QY(WORK)\n"
+                             "WORK DXD F\n");
+    uint32_t work_id = 0;
+    const GoffReloc *r;
+    if (!g) return;
+    CHECK(find_esd(g, GOFF_PR, "WORK", &work_id) != NULL);
+    CHECK(g->relocs.n == 2);
+    r = reloc_at(g, 0);
+    CHECK(r && r->rid == work_id && r->reference == GOFF_REF_LONGDISP && !r->store &&
+          r->length == 2 && r->bit_length == 4 && r->bit_offset == 4);
+    /* QY is 3 bytes at a halfword boundary */
+    r = reloc_at(g, 8);
+    CHECK(r && r->reference == GOFF_REF_LONGDISP);
+    expect_codes("QY length", "T CSECT\n DC QYL4(W)\nW DXD F\n", "ZA2029");
+}
+
 int main(void) {
+    test_qy();
     test_structure();
     test_r_and_indirect();
     test_cxd_only();

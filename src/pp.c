@@ -872,6 +872,11 @@ static void do_pragma(Pp *pp, const char *rest, Span sp) {
                       "for example: #pragma title \"my program\"");
     } else if (!strcmp(word, "eject")) {
         if (*arg) rep_errorf(pp->rep, "ZA4061", sp, "#pragma eject takes no operand");
+    } else if (!strcmp(word, "ceject")) {
+        size_t k;
+        for (k = 0; arg[k] && za_isdigit((unsigned char)arg[k]); k++) {
+        }
+        if (arg[k]) rep_errorf(pp->rep, "ZA4061", sp, "#pragma ceject takes a number of lines");
     } else if (!strcmp(word, "space")) {
         size_t k;
         for (k = 0; arg[k] && za_isdigit((unsigned char)arg[k]); k++) {
@@ -886,8 +891,8 @@ static void do_pragma(Pp *pp, const char *rest, Span sp) {
                       "for example: #pragma print off");
     } else {
         Diag *d = rep_warnf(pp->rep, "ZA4060", sp, "unknown #pragma \"%s\" is ignored", word);
-        const char *const known[] = {"title", "eject", "space", "print"};
-        const char *c = diag_closest(word, known, 4);
+        const char *const known[] = {"title", "eject", "ceject", "space", "print"};
+        const char *c = diag_closest(word, known, 5);
         if (c) diag_help(d, "did you mean \"%s\"?", c);
     }
 }

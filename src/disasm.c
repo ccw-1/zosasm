@@ -414,13 +414,17 @@ static int xcon_reloc(Ctx *x, const GoffReloc *r, DRel *d) {
     char *name = NULL;
     DEr *er = NULL;
     if (!t || r->reference == GOFF_REF_ADDRESS || r->reference == GOFF_REF_RELIMM) return 0;
-    if (r->reference == GOFF_REF_OFFSET && r->referent == GOFF_REFERENT_LABEL && !r->store &&
-        n >= 1 && n <= 8) {
+    if ((r->reference == GOFF_REF_OFFSET && r->referent == GOFF_REFERENT_LABEL && !r->store &&
+         n >= 1 && n <= 8) ||
+        (r->reference == GOFF_REF_LONGDISP && r->referent == GOFF_REFERENT_LABEL && !r->store &&
+         n == 2 && r->bit_length == 4 && r->bit_offset == 4)) {
+        char kind = r->reference == GOFF_REF_LONGDISP ? 'q' : 'Q'; /* q = QY, 3 bytes */
+        if (r->reference == GOFF_REF_LONGDISP) n = 3;
         if (t->kind == 'P') {
-            k = 'Q';
+            k = kind;
             name = ((DPr *)t->p)->name;
         } else if (t->kind == 'C' && te->type == GOFF_PR) {
-            k = 'Q';
+            k = kind;
             name = ((DClass *)t->p)->part;
         }
     } else if (r->reference == GOFF_REF_LENGTH && r->store && (n == 2 || n == 3 || n == 4 || n == 8)) {
@@ -532,9 +536,11 @@ static int load_relocs(Ctx *x) {
             p->val = stored_value(c->data + r->offset, n) + p->base - base2;
             continue;
         }
-        xk = r->action == GOFF_ACTION_ADD && !r->bit_length && !r->bit_offset && !r->cond_seq &&
+        xk = r->action == GOFF_ACTION_ADD && !r->cond_seq &&
+             (r->reference == GOFF_REF_LONGDISP || (!r->bit_length && !r->bit_offset)) &&
              xcon_reloc(x, r, &d);
         if (xk) {
+            n = d.len;
             if ((uint64_t)r->offset + (uint64_t)n > c->len) {
                 warnf(x, "relocation at %s+%u is outside the class and is ignored", c->name, r->offset);
                 continue;
@@ -1020,7 +1026,9 @@ static void emit_xcon(Ctx *x, const DRel *r, const char *label) {
         stmt(&x->out, label, "CXD", NULL);
         return;
     }
-    if (r->len == 8)
+    if (r->xk == 'q')
+        o2 = xasprintf("QY(%s)", r->xname);
+    else if (r->len == 8)
         o2 = xasprintf("%cD(%s)", r->xk, r->xname);
     else if (r->len == 4)
         o2 = xasprintf("%c(%s)", r->xk, r->xname);

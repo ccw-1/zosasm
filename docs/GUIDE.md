@@ -482,12 +482,13 @@ align or to name a place.
 | `F`, `H` | fixed point | 4, 2 | decimal, fraction, `E` exponent, `U` prefix for unsigned; `FD`: 8 bytes |
 | `A`, `Y` | address | 4, 2 | an expression; relocated when it names a section |
 | `V` | external address | 4 | a name that may be external |
-| `Q`, `J`, `R` | pseudo register offset, length, PSECT address | 4 | section 8 |
+| `S`, `SY` | base register and displacement | 2, 3 | `S(address)` or `S(disp(base))`; section 5.1.1 |
+| `Q`, `J`, `R` | pseudo register offset, length, PSECT address | 4 | section 8; `QY` is 3 bytes (20 bit long displacement) |
+| `G` | graphic (double byte) characters | as written | hexadecimal digits, section 5.1.1 |
 | `P`, `Z` | packed, zoned decimal | as written | |
 | `E`, `D`, `L` | hexadecimal float short, long, extended | 4, 8, 16 | `EB DB LB` binary, `ED DD LD` decimal, `LQ` quadword aligned |
 
-Modifiers and extensions that are not supported and give an error that says
-so: `G` constants, `S` and `SY` constants, `QY`, bit lengths (`L.n`).
+A bit length `L.n` is also possible (section 5.1.1).
 
 Each constant is aligned to its natural boundary unless it has an explicit
 length: `F` to 4, `D` to 8, `H` to 2, and so on.
@@ -547,6 +548,39 @@ Points worth knowing:
   attribute (a number 0 to 255 or a character).
 * `CNOP byte,boundary` aligns to `byte` modulo `boundary` (2,8 = a halfword
   position inside a doubleword) with no-op instructions.
+
+#### 5.1.1 Bit lengths, `S`/`SY`, `QY` and `G`
+
+*Bit lengths.* `L.n` gives the length in bits (`FL.12'-1'` is `FFF0`). The
+fields of one `DC` follow each other bit by bit (`FL.12'-1,1000'` is
+`FFF3E8`), the last byte is filled with zero bits, and the length attribute
+is the number of bytes of the first field. `C`, `E`, `D` and `L` constants
+fill the field from the left, all other types take the low-order bits of the
+value (`XL.12'ABCD'` is `BCD0`). A byte length operand after a bit length
+operand starts on a byte boundary. Not allowed: `CU`, `G`, `S`, `V`, `Q`,
+`J`, `R`, binary and decimal floating point, and relocatable `A` or `Y`
+values (error `ZA2069`, `ZA2070`).
+
+*`S` and `SY`.* The constant holds a base register and a displacement,
+4 + 12 bits for `S` (2 bytes) and 4 + 20 bits for `SY` (3 bytes; the
+displacement is stored low 12 bits first, then the high 8 bits, as in
+instructions). `S(address)` takes both from the active `USING`s exactly like
+a storage operand (`S(1024)` with no USING is base 0, displacement 1024);
+`S(disp(base))` gives both explicitly (`S(512(12))` is `C200`). Alignment is a
+halfword. In a literal, `*` is the address of the literal pool entry (HLASM
+uses the place where the literal is used).
+
+*`QY`.* Like `Q`, but 3 bytes, halfword aligned, and the binder stores the
+offset as a 20 bit signed long displacement (RLD reference type 9 with a
+2 byte + 4 bit field at bit offset 4; not verified against IBM).
+
+*`G`.* Graphic constants hold double-byte characters. zosasm has no DBCS code
+page tables, so each character is written as **four hexadecimal digits**
+(`G'42C1 42C2'`), with optional blanks and the shift code marks `<` and `>`
+around them, which are ignored (the shift codes are not part of the
+constant). `GL6'42C1'` pads with the DBCS blank `4040`, `GL2'42C142C2'`
+truncates on the right, and the length must be a multiple of 2. `T'name` of a
+`G` constant is `@`.
 
 ### 5.2 Literals
 
@@ -779,7 +813,7 @@ WORK     DXD   CL100,F        external dummy section: 104 bytes, word aligned
 * `DXD name operands` takes the operands of `DS` and stores nothing. The
   name may be used only in `Q`, `J` and `XATTR`.
 * A `DSECT` named in `Q` or `J` becomes an external dummy section too.
-* `QD`, `JD`, `RD` and `QL3`... give other sizes; `QY` is not supported.
+* `QD`, `JD`, `RD` and `QL3`... give other sizes; `QY` is the 3 byte long displacement form (section 5.1.1).
 
 <!-- example: xd.za -->
 ```za
@@ -807,6 +841,19 @@ OFFSAVE  DC    Q(SAVE)
          DC    R(FUNC)
          END
 ```
+
+#### 14.1 Assembler controls
+
+| statement | what zosasm does |
+|---|---|
+| `ACONTROL AFPR`, `NOAFPR` | `NOAFPR`: only floating-point registers 0, 2, 4 and 6 are accepted (`ZA2071`); `AFPR` (the start state) allows all 16 |
+| `ACONTROL TYPECHECK(REGISTER)`, `NOREGISTER`, `NOTYPECHECK` | switch the strict register checks of section 6.1 on and off in the middle of the source |
+| `ACONTROL CA(819)`, `CE(1047)` (or `LOCAL`) | accepted; zosasm writes `CA` constants in ISO 8859-1 and `CE` in IBM-1047 only (`ZA2073` for other code pages) |
+| `ACONTROL COMPAT(..)`, `FLAG(..)`, `CU(..)`, `ILMA`, `LIBMAC`, `MACHINE(..)`, `OPTABLE(..)`, `RA2` | the selections are checked (`ZA2072` for an unknown one) and have no effect |
+| `PUSH`/`POP` `PRINT`, `USING`, `ACONTROL`, `,NOPRINT` | save and restore the listing print state, the active `USING`s and the `ACONTROL` state, each on its own stack; `POP` without `PUSH` is an error (`ZA2075`), a wrong operand `ZA2074` |
+| `CEJECT [n]` | listing only (section 11.2) |
+| `EXITCTL type,v1[,v2..]` | checked (`ZA2076` for an unknown exit type) and ignored: zosasm has no user exits |
+| `REPRO` | warning `ZA2077`; the record that follows is skipped: a GOFF object has no card image records |
 
 **Not verified against IBM.** The records that the binder reads for these
 constants (offset, length and R-type relocations) are written as the GOFF
@@ -989,6 +1036,16 @@ error[ZA1011]: undefined symbol "UNDEF"
 * Lines produced by a preprocessor macro get a note that says which macro
   and where it was defined.
 * `-color` colours the output.
+* `-diag json` writes all messages as **one JSON document** on standard error
+  instead, for tools:
+  `{"diagnostics":[{"severity":"error","code":"ZA1011","message":"...",`
+  `"file":"e.za","line":2,"column":7,"length":5,"label":"...",`
+  `"notes":[{"file":...,"line":...,"column":...,"length":...,"message":"..."}],`
+  `"help":["..."]},...],"errors":1,"warnings":0}`. `severity` is `note`,
+  `warning`, `error` or `fatal`; `label` is left out when there is none;
+  line and column are 1-based (column counts bytes); the messages are sorted
+  by file, line and column. The document is written also when there is
+  nothing to report (`"diagnostics":[]`).
 
 Code ranges:
 
@@ -1068,8 +1125,10 @@ the source. Notes:
 
 **Diagnostics** are printed after the line they belong to, as `** CODE
 severity: message` with the notes and help lines, so a listing shows what went
-wrong at that line. Messages without a line (for example "no control
-section") come after the last line.
+wrong at that line, with carets (`^^^^`) under the source text first.
+Messages without a line (for example "no control section") come after the last
+line. (No carets for lines that macro expansion produced: their columns
+belong to the expanded text, which the text format of the messages shows.)
 
 **Print control.** `TITLE 'text'` sets the second line of the page header (and
 starts a new page with `-lpage`), `EJECT` starts a new page, `SPACE n` leaves
@@ -1082,7 +1141,13 @@ n blank lines, and `PRINT` takes a list of `ON`, `OFF`, `GEN`, `NOGEN`,
 | `NOGEN`, `GEN` | hide or show the `+` rows of preprocessor expansion |
 | `DATA`, `NODATA` | all object bytes, or back to what `-ldata` says |
 
-The same controls exist as preprocessor lines, which can be used inside `#if`: `#pragma title "text"`, `#pragma eject`, `#pragma
+`CEJECT n` starts a new page when fewer than n lines are left on the page
+(no operand: like `EJECT`; 0: unless at the top; the number must be written
+in decimal), and is not listed itself. `PUSH PRINT` saves the print state
+(`PRINT` operands and `DATA`) and `POP PRINT` restores it; with `,NOPRINT` the
+`PUSH` or `POP` statement is not listed.
+
+The same controls exist as preprocessor lines, which can be used inside `#if`: `#pragma title "text"`, `#pragma eject`, `#pragma ceject 10`, `#pragma
 space 2`, `#pragma print off` (also `on`, `data`, `nodata`, `gen`, `nogen`).
 Without `-lpage` there are no pages, and the header is written once.
 
@@ -1269,6 +1334,7 @@ hlasm2za [options] input.asm        (section 16)
 | `-lpage N` | listing: N lines per page (default 0: one page) |
 | `-lbrief` | listing: no tables |
 | `-version` | print the version |
+| `-diag text\|json` | diagnostics as text (default) or as one JSON document (section 11.1) |
 | `-color` | colour the diagnostics |
 | `-max-errors N` | stop after N errors (default 50; 0 = no limit) |
 | `-Werror` | warnings are errors |
@@ -1294,7 +1360,8 @@ Environment: `SOURCE_DATE_EPOCH` (seconds since 1970) fixes `__DATE__` and
 | macros, `AIF`, `SETC`, `COPY` | C style preprocessor and the macro language of chapter 19; `COPY` is an error that says `#include` |
 | `ALIAS`, 63 character names | quoted symbols, no limit |
 | `MNOTE` | `ASSERT`, `#error`, `#warning` |
-| `*PROCESS`, `ACONTROL`, `PUSH`/`POP` | `#pragma`, options on the command line |
+| `*PROCESS` | `#pragma`, options on the command line |
+| `ACONTROL`, `PUSH`, `POP`, `CEJECT`, `EXITCTL`, `REPRO` | only the useful parts (section 14.1) |
 | `*-LABEL` length tricks | `sizeof`, `offsetof`, `alignof`, `countof` |
 | listing | `-l` (section 11.2), a different layout; `TITLE`, `EJECT`, `SPACE`, `PRINT` work in it; `PUNCH`, `ICTL`, `ISEQ` are accepted and ignored |
 | object deck / OBJ output | GOFF only |
@@ -1305,9 +1372,9 @@ converts `MACRO`..`MEND` definitions to zosasm macros (section 16.4), and
 reports what it cannot convert (conditional assembly in open code, macro calls
 of system macros, a few macro statements).
 
-**Not implemented.** `ACONTROL`, `ADATA`, `AINSERT`, `CEJECT`, `EXITCTL`,
-`MNOTE`, `OPSYN`, `PUSH`, `POP`, `REPRO`; DC types `G`, `S`, `SY`, `QY`; bit
-length modifiers (`L.n`); `CU` code page options (UTF-16LE/UTF-8); register
+**Not implemented.** `ADATA`, `AINSERT` in open code, `MNOTE`, `OPSYN`; `G`
+constants with real DBCS text (hexadecimal only); `CU` code page options
+(UTF-16LE/UTF-8); other code pages for `CA`/`CE`; register
 pair checks (an odd register where a pair is needed assembles and fails when
 run).
 
@@ -1661,8 +1728,7 @@ line.
   `SETB`, `SETC`, `LCL*`, `GBL*`, `MNOTE`, `&variables`, `.sequence`
   symbols in open code): use `#if`, `#define`, `ASSERT` and `#error`
   (section 3), or put the code into a macro.
-* **`OPSYN`, `PUSH`, `POP`, `ACONTROL`, `ADATA`, `CEJECT`, `EXITCTL`,
-  `REPRO`, `ALIAS`**: not supported by zosasm (`ALIAS` is replaced by quoted
+* **`OPSYN`, `ADATA`, `REPRO`, `ALIAS`**: not supported by zosasm (`ALIAS` is replaced by quoted
   symbols, section 2.2).
 * **`*PROCESS`** lines: the options go on the zosasm command line.
 * DC and DS forms that zosasm does not have (section 14) are not checked by

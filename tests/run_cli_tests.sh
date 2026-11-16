@@ -23,6 +23,15 @@ $X -Werror -o $T/warn.o $T/warn.za 2>/dev/null; check "-Werror" $? 1
 cp $T/warn.za $T/dflt.za; rm -f $T/dflt.o
 $X $T/dflt.za 2>/dev/null; [ -s $T/dflt.o ]; check "default output name" $? 0
 
+$X -diag json -o $T/bad.o $T/bad.za 2>$T/err; check "-diag json exit" $? 1
+grep -q '^{"diagnostics":\[' $T/err; check "-diag json header" $? 0
+grep -q '"code":"ZA1011","message":"undefined symbol' $T/err; check "-diag json code" $? 0
+grep -q '"errors":1,"warnings":0}' $T/err; check "-diag json counts" $? 0
+$X -diag json -o $T/hello.o testdata/hello.za 2>$T/err; check "-diag json ok exit" $? 0
+grep -q '"diagnostics":\[\],"errors":0' $T/err; check "-diag json empty" $? 0
+$X -diag xml testdata/hello.za 2>/dev/null; check "-diag bad value" $? 2
+$X -l - -lbrief -o $T/bad.o $T/bad.za 2>/dev/null | grep -q '^ *\^\^\^\^\^$'; check "listing carets" $? 0
+
 $X 2>/dev/null; check "no input" $? 2
 $X -bogus x.za 2>/dev/null; check "bad option" $? 2
 $X $T/missing.za 2>/dev/null; check "missing file" $? 1

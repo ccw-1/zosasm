@@ -25,6 +25,11 @@ typedef struct {
     const char *colhead;
     int printing, gen, data; /* PRINT ON/OFF, GEN/NOGEN, DATA/NODATA */
     int force;         /* show the rows of this event although printing is off (it has diagnostics) */
+    int hide;          /* CEJECT, PUSH/POP ...,NOPRINT: the statement itself is not shown */
+    struct {
+        int printing, gen, data;
+    } pstack[64];      /* PUSH PRINT */
+    int npstack;
     Vec(const char *) files;
     /* statements and lines */
     const SrcVec *lines;
@@ -91,7 +96,7 @@ static void rowhead(L *l, char *out, size_t n) {
 static void row(L *l, const char *loc, const char *obj, int more, int fc, int line, int mark,
                 const char *src) {
     Buf b = {0};
-    if (!l->printing && !l->force) return;
+    if ((!l->printing && !l->force) || l->hide) return;
     buf_printf(&b, "%-*s  %-17s%c ", l->lw, loc ? loc : "", obj ? obj : "", more ? '+' : ' ');
     if (line > 0) buf_printf(&b, "%c%5d", fc, line);
     else buf_puts(&b, "      ");
@@ -161,12 +166,15 @@ static char *unquote(const char *s) {
     return xstrdup(buf_cstr(&b));
 }
 
-/* word is TITLE, EJECT, SPACE or PRINT (any case); returns 0 for any other word */
+/* word is TITLE, EJECT, SPACE, PRINT, CEJECT, PUSH or POP (any case); returns 0 for any other word */
 static int ctl_word(const char *w) {
     if (za_streqi(w, "TITLE")) return 1;
     if (za_streqi(w, "EJECT")) return 2;
     if (za_streqi(w, "SPACE")) return 3;
     if (za_streqi(w, "PRINT")) return 4;
+    if (za_streqi(w, "CEJECT")) return 5;
+    if (za_streqi(w, "PUSH")) return 6;
+    if (za_streqi(w, "POP")) return 7;
     return 0;
 }
 
@@ -191,8 +199,43 @@ static void ctl_print(L *l, const char *arg) {
 
 /* before the row of the statement: TITLE starts a page with the new title,
  * PRINT takes effect (the row of PRINT ON / OFF itself is shown either way) */
+/* does the operand list of PUSH/POP contain the keyword? */
+static int has_word(const char *arg, const char *kw) {
+    char *a = za_strlower(arg), *p = a;
+    size_t n = strlen(kw);
+    while (*p) {
+        size_t k = 0;
+        while (*p == ' ' || *p == ',') p++;
+        while (p[k] && p[k] != ' ' && p[k] != ',') k++;
+        if (k == n && !strncmp(p, kw, n)) return 1;
+        p += k;
+    }
+    return 0;
+}
+
 static void ctl_before(L *l, int w, const char *arg) {
-    if (w == 1) {
+    if (w == 5) {
+        l->hide = 1;
+    } else if (w == 6 || w == 7) {
+        int was = l->printing;
+        if (has_word(arg, "print")) {
+            if (w == 6) {
+                if (l->npstack < 64) {
+                    l->pstack[l->npstack].printing = l->printing;
+                    l->pstack[l->npstack].gen = l->gen;
+                    l->pstack[l->npstack].data = l->data;
+                    l->npstack++;
+                }
+            } else if (l->npstack > 0) {
+                l->npstack--;
+                l->printing = l->pstack[l->npstack].printing;
+                l->gen = l->pstack[l->npstack].gen;
+                l->data = l->pstack[l->npstack].data;
+            }
+        }
+        if (has_word(arg, "noprint")) l->hide = 1;
+        else l->force = l->force || was || l->printing;
+    } else if (w == 1) {
         l->title = unquote(arg);
         if (l->paging && l->used > 3) start_page(l);
     } else if (w == 4) {
@@ -203,7 +246,19 @@ static void ctl_before(L *l, int w, const char *arg) {
 }
 
 static void ctl_after(L *l, int w, const char *arg) {
-    if (w == 2) {
+    l->hide = 0;
+    if (w == 5) {
+        const char *p = skip_blank(arg);
+        int num = *p != 0;
+        long n = 0;
+        const char *q;
+        for (q = p; *q && *q != ' ' && *q != '\t'; q++)
+            if (*q < '0' || *q > '9') num = 0;
+        if (*p && num) n = strtol(p, NULL, 10);
+        if (l->paging && l->used > 3) {
+            if (!*p || (num && (n == 0 || l->o->page - l->used < n))) start_page(l);
+        }
+    } else if (w == 2) {
         if (l->paging && l->used > 3) start_page(l);
     } else if (w == 3) {
         long n = *skip_blank(arg) ? strtol(skip_blank(arg), NULL, 10) : 1;
@@ -225,9 +280,30 @@ static const char *sev_name(Severity s) {
     }
 }
 
-static void put_diag(L *l, const Diag *d) {
+/* the carets under the source text of the row above (src = the text shown in the row,
+ * NULL when the columns of the diagnostic do not refer to it) */
+static void put_carets(L *l, const Diag *d, const char *src) {
+    Buf b = {0};
+    size_t col, tl, n, i;
+    if (!src || d->span.pos.line < 1 || d->span.pos.col < 1) return;
+    tl = strlen(src);
+    col = (size_t)d->span.pos.col - 1;
+    if (col > tl) col = tl;
+    n = d->span.len < 1 ? 1 : (size_t)d->span.len;
+    if (col + n > tl && tl > col) n = tl - col;
+    for (i = 0; i < (size_t)l->lw + 30; i++) buf_putc(&b, ' ');
+    for (i = 0; i < col; i++) buf_putc(&b, src[i] == '\t' ? '\t' : ' ');
+    for (i = 0; i < (col + n <= tl ? utf8_count(src + col, n) : n); i++) buf_putc(&b, '^');
+    if (d->label && *d->label) buf_printf(&b, " %s", d->label);
+    put(l, buf_cstr(&b));
+    free(b.p);
+}
+
+static void put_diag(L *l, const Diag *d, const char *src) {
     int i;
-    char *s = xasprintf("** %s %s: %s", d->code, sev_name(d->sev), d->msg);
+    char *s;
+    put_carets(l, d, src);
+    s = xasprintf("** %s %s: %s", d->code, sev_name(d->sev), d->msg);
     put(l, s);
     for (i = 0; i < d->nnotes; i++) {
         const Pos *p = &d->notes[i].span.pos;
@@ -638,7 +714,11 @@ void listing_write(FILE *f, const Module *m, const SrcVec *lines, const PpEventV
         for (j = 0; j < evd[i].n; j++) {
             int was = l->printing;
             l->printing = 1;
-            put_diag(l, evd[i].v[j]);
+            put_diag(l, evd[i].v[j],
+                     (e->kind == PE_DIRECTIVE || e->kind == PE_SKIPPED ||
+                      (e->n == 1 && !strcmp(e->text, lines->v[e->first].text)))
+                         ? e->text
+                         : NULL);
             l->printing = was;
         }
     }
@@ -659,7 +739,7 @@ void listing_write(FILE *f, const Module *m, const SrcVec *lines, const PpEventV
     if (stray.n) {
         put(l, "");
         put(l, "Diagnostics that do not belong to a source line:");
-        for (j = 0; j < stray.n; j++) put_diag(l, stray.v[j]);
+        for (j = 0; j < stray.n; j++) put_diag(l, stray.v[j], NULL);
     }
 
     if (!opt->brief) {

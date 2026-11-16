@@ -286,6 +286,24 @@ as `Q(...)`, `J(...)`, `R(...)` and `CXD`. A DSECT that was used in `Q` comes
 back as a `DXD` (the object is the same). A `B_PRV` class without PRs and
 without a CXD is dropped.
 
+### 4.7 Assembler controls (`src/dirctl.c`)
+
+`ACONTROL`, `PUSH`/`POP`, `CEJECT`, `EXITCTL` and `REPRO` live in
+`dirctl.c`. State-changing ones run in both passes (`each()` resets the
+state before pass 2): `Asm.afpr`, `Asm.strict` (`TYPECHECK(REGISTER)` /
+`NOTYPECHECK`), `print_depth`, `using_stack`, `ac_stack`.
+* `ACONTROL AFPR|NOAFPR` makes `check_reg` (`instr.c`) reject FP registers
+  other than 0,2,4,6 (ZA2071); `TYPECHECK(REGISTER|NOREGISTER)` toggles the
+  register type checks; `CA(n)`/`CE(n)` are validated (ZA2073); other
+  selections (`COMPAT`, `FLAG`, `MACHINE`, `OPTABLE`, `RA2`, `ILMA`, ...) are
+  checked for form and ignored (ZA2072).
+* `PUSH`/`POP` take `PRINT`, `USING`, `ACONTROL` (ZA2074, `POP` without
+  `PUSH` ZA2075). Three independent stacks: listing print state, `UsingVec`
+  copies (pass 2 only, as `USING` itself) and `AcState{afpr,strict}`.
+* `EXITCTL` checks the exit type (ZA2076) and does nothing. `REPRO` warns
+  (ZA2077); the reader skips the next physical line.
+Not compared with IBM.
+
 ## 5. Instruction table
 
 `isa/isa.json` is the source of truth: mnemonic, format name (POP names such
@@ -352,8 +370,13 @@ error[ZA2001]: unknown instruction "LGRR"
   not written if any error was reported. `-max-errors N` stops early.
 * Suggestions use edit distance against mnemonics, directive names, symbols
   and operand keywords (`CATTR` attributes etc.).
-* `-W` flags select warnings (`-Werror` makes them fatal), `-color`,
-  `-diag-format=json` produces machine readable output (editor integration).
+* `-W` flags select warnings (`-Werror` makes them fatal), `-color`.
+  `-diag json` (implemented, `rep_print_json()` in `diag.c`) writes one
+  JSON document `{"diagnostics":[...],"errors":n,"warnings":n}` to stderr
+  instead of the text excerpts (`-diag text` is the default). Each entry has
+  code, severity, message, file/line/column/length of the primary span,
+  label, notes and help lines. Only `zosasm` has it; `hlasm2za` and the MCP
+  server do not.
 
 ## 7. Testing strategy
 
@@ -784,9 +807,31 @@ same afterwards. A SUB on a V, Q, R or X constant, or one with bit lengths,
 is still ignored with a warning. Other binder producers may order the items
 differently: the reader takes additions first, whatever the order.
 
-**Not done.** Bit-length modifiers (`L.n`), `QY`, `S`/`SY`, `G`, the `CU`
-code page options, and the exponent modifier warning for values that are not
-exactly representable.
+**Bit lengths `L.n`.** `DcSpec.bits` holds the length in bits; `has_len` and
+`length` are set to the ceiling in bytes, so the byte code produces the
+field. `bits_add`/`bits_flush` pack the fields of the operands of one `DC`
+(and of `DS`) into bytes without alignment between them: `C`, `E`, `D`, `L`
+are left aligned in the field, the other types take the low-order bits.
+Relocatable values with a bit length are an error (ZA2070), a type that has
+no bit form too (ZA2069).
+
+**`S`/`SY`.** `asm_base_disp()` (`instr.c`) resolves the operand through the
+active `USING`s as an instruction operand does (`S(address)` or
+`S(disp(base))`); an absolute number with no `USING` gives base 0. `S` is two
+bytes `[base<<4 | D>>8][D&0xff]`, `SY` three, `[base<<4 | DL>>8][DL&0xff][DH]`.
+`S(*)` in a literal gives the address of the pool entry (HLASM: the place of
+use). Not compared with IBM.
+
+**`QY`.** Relocation kind `REL_QY`; GOFF reference type 9
+(`GOFF_REF_LONGDISP`), length 2, bit length 4, bit offset 4. `-disasm` prints
+it as `QY(name)`; `-elf` rejects it. Not verified against IBM.
+
+**`G`.** There are no DBCS tables: the nominal value is hex quads (blanks and
+`<` `>` are ignored), padding is `4040`, truncation is on the right, `T'` is
+`@`.
+
+**Not done.** The `CU` code page options and the exponent modifier warning
+for values that are not exactly representable.
 
 ## 14. Original sources, `-gz2` (tier 2)
 
@@ -872,8 +917,14 @@ shown anyway), `NOGEN` hides `+` rows, `DATA` shows all bytes. A page header
 is written when the first line of the page is written, so a `TITLE` before it
 is in it. Table sections start a page with `-lpage`.
 
-**Not done.** Carets under the source for diagnostics; `CEJECT`; keeping a
-statement's diagnostics on the same page; a cross reference use inside a
+**`CEJECT n`** starts a page when fewer than n lines are left (`ctl_word`
+code 5; the row itself is hidden). `PUSH`/`POP` with `PRINT` save and restore
+the print state (own stack of 64 in the listing; `NOPRINT` forms are hidden
+like `PRINT` rows). **Carets:** `put_carets()` writes a caret line under the
+source row of a diagnostic when the row shows the source text unchanged (not
+for macro-expanded rows).
+
+**Not done.** Keeping a statement's diagnostics on the same page; a cross reference use inside a
 literal; a listing option for a different column layout.
 
 ## 16. Converting HLASM source (`hlasm2za`, `src/convert.c`, `src/regops.c`)

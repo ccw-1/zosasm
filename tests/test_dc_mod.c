@@ -337,7 +337,68 @@ static void test_bfp(void) {
     hex(" DC X'AA'\n DC LQ'1'\n", "AA000000000000000000000000000000" "41100000000000003300000000000000");
 }
 
+/* bit-length modifiers L.n (examples of the manual) */
+static void test_bits(void) {
+    hex(" DC FL.12'-1'\n", "FFF0");
+    hex(" DC FL.12'-1,1000'\n", "FFF3E8");
+    hex(" DC FL.12'-1,1000,-2'\n", "FFF3E8FFE0");
+    hex(" DC 3FL.12'-2'\n", "FFEFFEFFE0");
+    hex("BL1 DC FL.12'-1,1000'\n DC AL1(L'BL1)\n", "FFF3E8" "02");
+    hex(" DC FL.12'276'\n", "1140");
+    hex(" DC XL.12'ABCD'\n", "BCD0");
+    hex(" DC BL.3'101'\n", "A0");
+    hex(" DC BL.3'101',BL.5'11111'\n", "BF");
+    /* left aligned types: C, E */
+    hex(" DC CL.12'AB'\n", "C1C0");
+    hex(" DC HL.4'5',XL.4'A'\n", "5A");
+    /* a byte-length operand starts on a byte boundary */
+    hex(" DC FL.4'1',XL1'FF'\n", "10FF");
+    /* DS */
+    hex(" DS 3FL.12\n DC X'AA'\n", "0000000000" "AA");
+    err(" DC FL.0'1'\n", "ZA2016");
+    err(" DC XL.9000000'1'\n", "ZA2016");
+    err(" DC VL.8(X)\nX DS 0H\n", "ZA2069");
+    err(" DC AL.32(M)\n", "ZA2070");
+    hex(" DC AL.16(300)\n", "012C");
+}
+
+/* S and SY constants (examples of the manual) */
+static void test_s(void) {
+    hex(" DC S(1024)\n", "0400");
+    hex(" DC S(512(12))\n", "C200");
+    hex(" DC SY(-2(3))\n", "3FFEFF");
+    hex(" DC SY(4095(1)),SY(4096(2))\n", "1FFF00" "00" "200001");
+    hex(" DC AL1(1)\n DC S(0(1))\n", "01" "00" "1000");
+    hex(" DC SL2(5)\n", "0005");
+    /* the displacement comes from a USING */
+    hex(" USING *,12\nL1 DS 0H\n DC S(L1+6),SY(L1+6)\n", "C006" "C00600");
+    err(" DC S(5000)\n", "ZA2036");
+    err(" DC S(1(16))\n", "ZA2041");
+    err(" DC SL3(1)\n", "ZA2016");
+    err(" DC SYL2(1)\n", "ZA2029");
+    err(" DC SL.8(1)\n", "ZA2069");
+    err("L1 DS 0H\n DC S(L1)\n", "ZA2030");
+}
+
+/* graphic constants: hexadecimal double-byte characters */
+static void test_graphic(void) {
+    hex(" DC G'42C1 42C2'\n", "42C142C2");
+    hex(" DC G'<42C1>'\n", "42C1");
+    hex(" DC 3G'D1D1'\n", "D1D1D1D1D1D1");
+    hex(" DC GL6'42C1'\n", "42C140404040");
+    hex(" DC GL2'42C142C2'\n", "42C1");
+    hex("A DC G'42C1'\n DC AL1(L'A)\n", "42C1" "02");
+    err(" DC GL3'42C1'\n", "ZA2042");
+    err(" DC G'42C'\n", "ZA2042");
+    err(" DC G'42CG'\n", "ZA2021");
+    err(" DC GL.8'42C1'\n", "ZA2069");
+    err(" DC G''\n", "ZA2019");
+}
+
 int main(void) {
+    test_graphic();
+    test_s();
+    test_bits();
     test_bfp();
     test_dfp_range();
     test_dpd();

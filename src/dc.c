@@ -7,18 +7,21 @@
 #include "asm.h"
 #include "ebcdic.h"
 
-#define DC_TYPES "C X B F H A Y V Q J R P Z E D L"
+#define DC_TYPES "C X B F H A Y S V Q J R P Z E D L G"
 
 int64_t dc_alignment(const DcSpec *sp) {
     switch (sp->typ) {
+    case 'Q':
+        if (sp->ext == 'Y') return 2;
+        return sp->ext == 'D' ? 8 : 4;
     case 'F':
     case 'A':
-    case 'Q':
     case 'J':
     case 'R':
         return sp->ext == 'D' ? 8 : 4;
     case 'H':
     case 'Y':
+    case 'S':
         return 2;
     case 'V':
     case 'E':
@@ -33,15 +36,19 @@ int64_t dc_alignment(const DcSpec *sp) {
 
 int64_t dc_deflen(const DcSpec *sp) {
     switch (sp->typ) {
+    case 'Q':
+        if (sp->ext == 'Y') return 3;
+        return sp->ext == 'D' ? 8 : 4;
     case 'F':
     case 'A':
-    case 'Q':
     case 'J':
     case 'R':
         return sp->ext == 'D' ? 8 : 4;
     case 'H':
     case 'Y':
         return 2;
+    case 'S':
+        return sp->ext == 'Y' ? 3 : 2;
     case 'V':
     case 'E':
         return 4;
@@ -205,24 +212,7 @@ int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp) {
         return 0;
     }
     sp->typ = (char)za_toupper((unsigned char)s[i]);
-    {
-        const char *why = NULL;
-        switch (sp->typ) {
-        case 'S':
-            why = "S-type address";
-            break;
-        case 'G':
-            why = "graphic";
-            break;
-        }
-        if (why) {
-            diag_help(dc_err(a, st, "ZA9002", o.off + (int)i, 1, "%s constants are not supported yet",
-                             why),
-                      "supported types: %s", DC_TYPES);
-            return 0;
-        }
-    }
-    if (!strchr("CXBFHAYVQJRPZEDL", sp->typ)) {
+    if (!strchr("CXBFHAYSVQJRPZEDLG", sp->typ)) {
         diag_help(dc_err(a, st, "ZA2013", o.off + (int)i, 1, "unknown constant type \"%c\"", s[i]),
                   "valid types: %s", DC_TYPES);
         return 0;
@@ -242,10 +232,9 @@ int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp) {
                    c == 'D') {
             sp->ext = 'D';
             i++;
-        } else if (sp->typ == 'Q' && c == 'Y') {
-            dc_err(a, st, "ZA9002", o.off + (int)i - 1, 2,
-                   "QY (long displacement) offset constants are not supported yet");
-            return 0;
+        } else if ((sp->typ == 'Q' || sp->typ == 'S') && c == 'Y') {
+            sp->ext = 'Y';
+            i++;
         } else if (fp && (c == 'B' || c == 'H')) {
             sp->ext = c;
             i++;
@@ -264,9 +253,16 @@ int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp) {
             int64_t n;
             i++;
             if (i < len && s[i] == '.') {
-                dc_err(a, st, "ZA9002", o.off + (int)i - 1, 2,
-                       "bit-length modifiers are not supported yet");
-                return 0;
+                i++;
+                if (!dc_number(a, st, s, &i, o.off, "bit length", &n)) return 0;
+                if (n < 1) {
+                    dc_err(a, st, "ZA2016", o.off, (int)len, "the bit length must be positive");
+                    return 0;
+                }
+                sp->bits = n;
+                sp->length = (n + 7) / 8;
+                sp->has_len = 1;
+                continue;
             }
             if (!dc_number(a, st, s, &i, o.off, "length modifier", &n)) return 0;
             sp->length = n;
@@ -331,7 +327,7 @@ int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp) {
     }
     /* A/Y/V take parentheses, everything else quotes */
     if (sp->has_nom) {
-        int addr = strchr("AYVQJR", sp->typ) != NULL;
+        int addr = strchr("AYSVQJR", sp->typ) != NULL;
         if (addr && sp->quoted) {
             diag_help(dc_err(a, st, "ZA2015", sp->nom_off - 1, (int)strlen(sp->nom) + 2,
                              "%c-type values are written in parentheses", sp->typ),
@@ -345,14 +341,32 @@ int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp) {
             return 0;
         }
     }
+    if (sp->bits) {
+        int bad = strchr("GSVQJR", sp->typ) != NULL || (sp->typ == 'C' && sp->ext == 'U') ||
+                  ((sp->typ == 'E' || sp->typ == 'D' || sp->typ == 'L') &&
+                   (sp->ext == 'B' || sp->ext == 'D'));
+        if (bad) {
+            diag_help(dc_err(a, st, "ZA2069", o.off, (int)len,
+                             "a bit length (L.n) cannot be used with this constant type"),
+                      "use a byte length, for example `%cL4`", sp->typ);
+            return 0;
+        }
+    }
     if (sp->has_len) {
         int64_t max = 8;
         if (strchr("CXBPZ", sp->typ)) max = 65535;
+        if (sp->typ == 'G') max = 256;
         if (sp->typ == 'L') max = 16;
+        if (sp->typ == 'S') max = sp->ext == 'Y' ? 3 : 2;
         if (sp->length > max || (sp->length < 1 && !(sp->length == 0 && sp->dup >= 0))) {
-            dc_err(a, st, "ZA2016", o.off, (int)len,
-                   "length modifier %lld is outside 1 to %lld for type %c", (long long)sp->length,
-                   (long long)max, sp->typ);
+            if (sp->bits)
+                dc_err(a, st, "ZA2016", o.off, (int)len,
+                       "bit length %lld is outside 1 to %lld for type %c", (long long)sp->bits,
+                       (long long)max * 8, sp->typ);
+            else
+                dc_err(a, st, "ZA2016", o.off, (int)len,
+                       "length modifier %lld is outside 1 to %lld for type %c",
+                       (long long)sp->length, (long long)max, sp->typ);
             return 0;
         }
     }
@@ -541,6 +555,51 @@ static int dc_bits(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
     return 1;
 }
 
+/* G: double-byte characters, each written as four hexadecimal digits (the
+ * shift codes of the nominal value are not part of the constant).  Blanks and
+ * the shift code marks < and > around the digits are ignored. */
+static int dc_graphic(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
+    const char *t = sp->nom;
+    size_t tl = strlen(t), m, nn = 0, nb, want;
+    uint8_t *nib = xmalloc(tl + 1), *b;
+    if (sp->has_len && (sp->length & 1)) {
+        dc_err(a, st, "ZA2042", sp->off, sp->n,
+               "the length of a G constant must be a multiple of 2, not %lld", (long long)sp->length);
+        return 0;
+    }
+    for (m = 0; m < tl; m++) {
+        int c = (unsigned char)t[m];
+        if (c == ' ' || c == '<' || c == '>') continue;
+        if (!za_isxdigit(c)) {
+            diag_help(dc_err(a, st, "ZA2021", sp->nom_off + (int)m, 1,
+                             "\"%c\" is not a hexadecimal digit", c),
+                      "write each double-byte character as 4 hexadecimal digits, for example "
+                      "G'42C1 42C2'");
+            return 0;
+        }
+        nib[nn++] = (uint8_t)(c <= '9' ? c - '0' : za_toupper(c) - 'A' + 10);
+    }
+    if (nn % 4) {
+        dc_err(a, st, "ZA2042", sp->nom_off, (int)tl,
+               "a G constant needs 4 hexadecimal digits for each character, not %zu digits", nn);
+        return 0;
+    }
+    nb = nn / 2;
+    want = sp->has_len ? (size_t)sp->length : nb;
+    if (!want) {
+        dc_err(a, st, "ZA2019", sp->off, sp->n, "an empty G constant needs a length modifier");
+        return 0;
+    }
+    b = xcalloc(want + 1);
+    for (m = 0; m < nn && m / 2 < want; m++) b[m / 2] |= (uint8_t)(m % 2 ? nib[m] : nib[m] << 4);
+    for (m = nb; m + 1 < want; m += 2) { /* DBCS blanks */
+        b[m] = 0x40;
+        b[m + 1] = 0x40;
+    }
+    push_val(out, b, want);
+    return 1;
+}
+
 static int dc_int(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
     int n = (int)dc_deflen(sp);
     OperandVec items = {0};
@@ -683,6 +742,47 @@ static int dc_addr(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
     return good;
 }
 
+/* S and SY: base register and displacement */
+static int dc_s(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
+    int n = (int)dc_deflen(sp), good = 1, ly = sp->ext == 'Y';
+    OperandVec items = {0};
+    size_t k;
+    if (sp->has_len && sp->length != n) {
+        diag_help(dc_err(a, st, "ZA2029", sp->off, sp->n,
+                         "an S%s-type constant cannot be %d byte(s) long", ly ? "Y" : "",
+                         (int)sp->length),
+                  "S is always 2 bytes and SY always 3");
+        return 0;
+    }
+    split_operands(&items, sp->nom);
+    for (k = 0; k < items.n; k++) {
+        Operand it = items.v[k];
+        int64_t base, disp;
+        uint8_t *b = zeros((size_t)n);
+        it.off += sp->nom_off;
+        if (!a->laid) {
+            push_val(out, b, (size_t)n);
+            continue;
+        }
+        if (!asm_base_disp(a, st, it, ly, &base, &disp)) {
+            good = 0;
+            push_val(out, b, (size_t)n);
+            continue;
+        }
+        if (!ly) {
+            b[0] = (uint8_t)(base << 4 | ((disp >> 8) & 15));
+            b[1] = (uint8_t)disp;
+        } else {
+            /* as in the instructions: base, DL (12 bits), DH (8 bits) */
+            b[0] = (uint8_t)(base << 4 | ((disp >> 8) & 15));
+            b[1] = (uint8_t)disp;
+            b[2] = (uint8_t)(disp >> 12);
+        }
+        push_val(out, b, (size_t)n);
+    }
+    return good;
+}
+
 static int dc_v(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
     int n = (int)dc_deflen(sp), good = 1;
     OperandVec items = {0};
@@ -759,13 +859,15 @@ static int dc_xd(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, DcVec *out) {
     OperandVec items = {0};
     size_t k;
     if (sp->has_len) n = (int)sp->length;
-    if (sp->typ == 'Q' ? (n < 1 || n > (big ? 8 : 4))
+    if (sp->typ == 'Q' && sp->ext == 'Y' ? n != 3
+        : sp->typ == 'Q' ? (n < 1 || n > (big ? 8 : 4))
                        : sp->typ == 'J' ? !(n == 2 || n == 3 || n == 4 || n == 8)
                                         : !(n == 3 || n == 4 || (big && n == 8))) {
         diag_help(dc_err(a, st, "ZA2029", sp->off, sp->n,
                          "a %c%s-type constant cannot be %d byte(s) long", sp->typ,
                          big ? "D" : "", n),
-                  sp->typ == 'Q'   ? "Q is 1 to 4 bytes, QD 1 to 8"
+                  sp->ext == 'Y'   ? "QY is always 3 bytes"
+                  : sp->typ == 'Q' ? "Q is 1 to 4 bytes, QD 1 to 8"
                   : sp->typ == 'J' ? "J and JD are 2 to 4 bytes or 8"
                                    : "R is 3 or 4 bytes, RD 3, 4 or 8");
         return 0;
@@ -819,7 +921,7 @@ static int dc_xd(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, DcVec *out) {
             }
             v.target = s;
         } else {
-            v.kind = sp->typ == 'Q' ? REL_Q : REL_LEN;
+            v.kind = sp->typ == 'Q' ? (sp->ext == 'Y' ? REL_QY : REL_Q) : REL_LEN;
             if (s && (s->kind == SYM_DXD || s->xd)) {
                 v.target = s;
             } else if (s && s->kind == SYM_SECT && s->piece && s->piece->cls->part &&
@@ -940,6 +1042,9 @@ static int dc_values(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, DcVec *vals)
     case 'C':
         ok = dc_char(a, st, sp, vals);
         break;
+    case 'G':
+        ok = dc_graphic(a, st, sp, vals);
+        break;
     case 'X':
     case 'B':
         ok = dc_bits(a, st, sp, vals);
@@ -951,6 +1056,9 @@ static int dc_values(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, DcVec *vals)
     case 'A':
     case 'Y':
         ok = dc_addr(a, st, sp, vals);
+        break;
+    case 'S':
+        ok = dc_s(a, st, sp, vals);
         break;
     case 'V':
         ok = dc_v(a, st, sp, vals);
@@ -982,12 +1090,54 @@ static int dc_values(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, DcVec *vals)
     return ok;
 }
 
+/* Bit-length constants (L.n): the fields of one DC statement follow each
+ * other bit by bit; the last byte is filled with zero bits. */
+typedef struct {
+    uint8_t *b;
+    size_t cap, nbits;
+} BitAcc;
+
+static void bits_add(BitAcc *acc, const DcVal *v, int64_t bits, int left) {
+    size_t skip = left ? 0 : v->n * 8 - (size_t)bits, i;
+    if (acc->nbits + (size_t)bits > acc->cap * 8) {
+        size_t ncap = (acc->nbits + (size_t)bits) / 8 + 64;
+        acc->b = xrealloc(acc->b, ncap);
+        memset(acc->b + acc->cap, 0, ncap - acc->cap);
+        acc->cap = ncap;
+    }
+    for (i = 0; i < (size_t)bits; i++) {
+        size_t src = skip + i;
+        if (v->b[src / 8] & (0x80 >> (src % 8))) acc->b[(acc->nbits + i) / 8] |= (uint8_t)(0x80 >> ((acc->nbits + i) % 8));
+    }
+    acc->nbits += (size_t)bits;
+}
+
+/* writes (DC) or skips (DS) the collected fields */
+static void bits_flush(Asm *a, BitAcc *acc, int is_ds) {
+    size_t n = (acc->nbits + 7) / 8;
+    if (n) {
+        if (is_ds) {
+            asm_advance(a, (int64_t)n);
+        } else {
+            DcVal v;
+            memset(&v, 0, sizeof v);
+            v.b = xcalloc(n);
+            memcpy(v.b, acc->b, n);
+            v.n = n;
+            asm_put_val(a, &v);
+        }
+    }
+    free(acc->b);
+    memset(acc, 0, sizeof *acc);
+}
+
 /* DC and DS */
 void dir_dc(Asm *a, Stmt *st) {
     int is_ds = za_streqi(st->op, "DS");
     OperandVec ops = {0};
     int label_done = 0;
     size_t k;
+    BitAcc acc = {0};
     if (!asm_need_section(a, st)) return;
     if (!asm_ops(a, st, 1, -1, &ops)) {
         asm_define_label(a, st, 1, 0);
@@ -999,7 +1149,7 @@ void dir_dc(Asm *a, Stmt *st) {
         int ok = dc_parse(a, st, ops.v[k], &sp);
         int64_t total = 0, r;
         size_t j;
-        if (ok && k == 0) a->star_len = sp.has_len ? sp.length : strchr("CXBPZ", sp.typ) ? 0 : dc_deflen(&sp);
+        if (ok && k == 0) a->star_len = sp.has_len ? sp.length : strchr("CXBPZG", sp.typ) ? 0 : dc_deflen(&sp);
         if (ok) ok = dc_values(a, st, &sp, is_ds, &vals);
         if (!ok) {
             if (!label_done) {
@@ -1008,6 +1158,7 @@ void dir_dc(Asm *a, Stmt *st) {
             }
             continue;
         }
+        if (!sp.bits) bits_flush(a, &acc, is_ds);
         if (!sp.has_len) asm_align(a, dc_alignment(&sp));
         if (!label_done) {
             int64_t l = vals.n > 0 ? (int64_t)vals.v[0].n : 0;
@@ -1018,6 +1169,21 @@ void dir_dc(Asm *a, Stmt *st) {
                 if (sp.has_scale) ls->scale = (int)sp.scale;
             }
             label_done = 1;
+        }
+        if (sp.bits) {
+            int left = sp.typ == 'C' || sp.typ == 'E' || sp.typ == 'D' || sp.typ == 'L';
+            int bad = 0;
+            for (j = 0; j < vals.n; j++)
+                if (vals.v[j].has_rel) bad = 1;
+            if (bad) {
+                diag_help(dc_err(a, st, "ZA2070", sp.off, sp.n,
+                                 "a relocatable address cannot have a bit length"),
+                          "use a byte length, for example `AL4`");
+                continue;
+            }
+            for (r = 0; r < sp.dup; r++)
+                for (j = 0; j < vals.n; j++) bits_add(&acc, &vals.v[j], sp.bits, left);
+            continue;
         }
         for (j = 0; j < vals.n; j++) total += (int64_t)vals.v[j].n;
         if (is_ds) {
@@ -1031,6 +1197,7 @@ void dir_dc(Asm *a, Stmt *st) {
             }
         }
     }
+    bits_flush(a, &acc, is_ds);
 }
 
 /* DXD: an external dummy section, a pseudo register of the class B_PRV; its

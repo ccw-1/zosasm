@@ -193,6 +193,7 @@ static const char *const programs[] = {
     "         DC    Q(WORK),QD(WORK),J(WORK)\n"
     "         CXD\n"
     "         DC    R(LAB),R(EXT1),J(DSA),Q(DSA),RD(T),QL3(WORK),JL2(WORK)\n"
+    "         DC    QY(WORK),QY(DSA)\n"
     "         EXTRN EXT1\n"
     "WORK     DXD   CL100,F\n"
     "DSA      DSECT\n"

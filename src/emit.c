@@ -192,6 +192,14 @@ static int reloc_xd(const Class *c, const Reloc *r, GoffReloc *g, char *err, siz
         g->referent = GOFF_REFERENT_LABEL;
         g->rid = t ? t->esd : r->cls->pr;
         return 1;
+    case REL_QY: /* 20 bit long displacement field: bits 4 to 23 of 3 bytes */
+        g->reference = GOFF_REF_LONGDISP;
+        g->referent = GOFF_REFERENT_LABEL;
+        g->rid = t ? t->esd : r->cls->pr;
+        g->length = 2;
+        g->bit_length = 4;
+        g->bit_offset = 4;
+        return 1;
     case REL_LEN:
         g->reference = GOFF_REF_LENGTH;
         g->store = 1;
@@ -227,6 +235,7 @@ static int reloc_item(const Class *c, const Reloc *r, GoffReloc *g, char *err, s
     g->action = r->sub ? GOFF_ACTION_SUB : GOFF_ACTION_ADD;
     switch (r->kind) {
     case REL_Q:
+    case REL_QY:
     case REL_CXD:
     case REL_LEN:
     case REL_R:

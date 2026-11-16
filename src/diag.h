@@ -71,6 +71,8 @@ const Diag *rep_get(const Reporter *r, size_t i); /* in report order */
 const Diag **rep_sorted(const Reporter *r, size_t *n);
 
 void rep_print(Reporter *r, FILE *w, int color);
+/* the same as one JSON document: {"diagnostics":[...],"errors":n,"warnings":n}; see GUIDE */
+void rep_print_json(Reporter *r, FILE *w);
 char *rep_summary(const Reporter *r);
 
 /* Closest candidate to word (case-insensitive) or NULL when nothing is a

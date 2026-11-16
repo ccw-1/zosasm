@@ -261,7 +261,64 @@ static void test_wide_loc(void) {
     CHECK(has(t, "01117000  01"));
 }
 
+static void test_ctl2(void) {
+    ListOptions lo;
+    char *t;
+    /* PUSH PRINT / POP PRINT restore the state */
+    t = list("T        CSECT\n"
+             "         PUSH  PRINT\n"
+             "         PRINT OFF\n"
+             "         DC    X'11'\n"
+             "         POP   PRINT\n"
+             "         DC    X'22'\n"
+             "         END\n");
+    CHECK(!has(t, "X'11'"));
+    CHECK(has(t, "X'22'"));
+    CHECK(has(t, "PUSH  PRINT"));
+    CHECK(has(t, "POP   PRINT"));
+    /* NOPRINT hides the statement itself */
+    t = list("T        CSECT\n"
+             "         PUSH  PRINT,NOPRINT\n"
+             "         POP   PRINT,NOPRINT\n"
+             "         DC    X'22'\n"
+             "         END\n");
+    CHECK(!has(t, "PUSH"));
+    CHECK(!has(t, "POP "));
+    CHECK(has(t, "X'22'"));
+    /* CEJECT: only when too few lines remain */
+    memset(&lo, 0, sizeof lo);
+    lo.page = 10;
+    lo.brief = 1;
+    t = list_with("T        CSECT\n"
+                  "         DC    X'01'\n"
+                  "         CEJECT 2\n"
+                  "         DC    X'02'\n"
+                  "         END\n", lo);
+    CHECK(!has(t, "CEJECT"));
+    CHECK(!has(t, "Page 2"));
+    t = list_with("T        CSECT\n"
+                  "         DC    X'01'\n"
+                  "         CEJECT 20\n"
+                  "         DC    X'02'\n"
+                  "         END\n", lo);
+    CHECK(has(t, "Page 2"));
+    CHECK(before(t, "Page 2", "X'02'"));
+    t = list_with("T        CSECT\n"
+                  "         DC    X'01'\n"
+                  "         CEJECT\n"
+                  "         DC    X'02'\n"
+                  "         END\n", lo);
+    CHECK(has(t, "Page 2"));
+    t = list_with("T        CSECT\n"
+                  "         DC    X'01'\n"
+                  "#pragma ceject 20\n"
+                  "         DC    X'02'\n"
+                  "         END\n", lo);
+    CHECK(has(t, "Page 2"));
+}
+
 int main(void) {
+    test_ctl2();
     test_rows();
     test_diag_inline();
     test_preprocessor_rows();

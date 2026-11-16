@@ -16,7 +16,7 @@
 #include "zsym.h"
 
 static void usage(FILE *f) {
-    fprintf(f, "usage: zosasm [-o out.o] [-elf] [-ascii|-charset ascii|ebcdic] [-gz0|-gz1|-gz2] [-DNAME[=val]] [-Idir] [-Mdir] [-macro-steps N] [-E] [-reproducible] [-strict-registers] [-l FILE [-ldata] [-lpage N] [-lbrief]] [-color] [-Werror] [-max-errors N] source.za\n"
+    fprintf(f, "usage: zosasm [-o out.o] [-elf] [-ascii|-charset ascii|ebcdic] [-gz0|-gz1|-gz2] [-DNAME[=val]] [-Idir] [-Mdir] [-macro-steps N] [-E] [-reproducible] [-strict-registers] [-l FILE [-ldata] [-lpage N] [-lbrief]] [-diag text|json] [-color] [-Werror] [-max-errors N] source.za\n"
                "       zosasm -dump file.o\n"
                "       zosasm [-o out.za] -disasm file.o\n"
                "       zosasm [-o dir] -unpack file.o\n"
@@ -51,6 +51,7 @@ static void usage(FILE *f) {
                "  -lpage N        listing: N lines per page with a header (default 0: one page)\n"
                "  -lbrief         listing: no tables at the end\n"
                "  -generic        with -disasm: ignore the ZSYM information\n"
+               "  -diag text|json diagnostics as text (default) or as one JSON document on stderr\n"
                "  -color          colorize diagnostics\n"
                "  -max-errors N   stop after this many errors (default 50, 0 = no limit)\n"
                "  -Werror         treat warnings as errors\n");
@@ -229,7 +230,7 @@ static char *default_output(const char *in) {
 
 int main(int argc, char **argv) {
     const char *out = NULL, *in = NULL, *disasm = NULL, *unpack = NULL;
-    int color = 0, werror = 0, max_err = 50, i, only_pp = 0, zlevel = 1, generic = 0, elf = 0;
+    int color = 0, json = 0, werror = 0, max_err = 50, i, only_pp = 0, zlevel = 1, generic = 0, elf = 0;
     const char *charset = NULL;
     PpOptions ppo;
     SrcVec lines = {0};
@@ -300,6 +301,16 @@ int main(int argc, char **argv) {
             zlevel = 2;
         } else if (!strcmp(a, "-color")) {
             color = 1;
+        } else if (!strcmp(a, "-diag") && i + 1 < argc) {
+            const char *f = argv[++i];
+            if (!strcmp(f, "json")) {
+                json = 1;
+            } else if (!strcmp(f, "text")) {
+                json = 0;
+            } else {
+                fprintf(stderr, "zosasm: -diag takes text or json, not %s\n", f);
+                return 2;
+            }
         } else if (!strcmp(a, "-Werror")) {
             werror = 1;
         } else if (!strcmp(a, "-max-errors") && i + 1 < argc) {
@@ -343,7 +354,8 @@ int main(int argc, char **argv) {
     if (only_pp) {
         size_t k;
         for (k = 0; k < lines.n; k++) puts(lines.v[k].text);
-        rep_print(rep, stderr, color);
+        if (json) rep_print_json(rep, stderr);
+        else rep_print(rep, stderr, color);
         return rep_error_count(rep) > 0;
     }
     if (listfile) {
@@ -363,7 +375,8 @@ int main(int argc, char **argv) {
     } else {
         mod = rep_error_count(rep) > 0 ? NULL : asm_assemble(lines.v, lines.n, in, rep);
     }
-    rep_print(rep, stderr, color);
+    if (json) rep_print_json(rep, stderr);
+    else rep_print(rep, stderr, color);
     if (!mod || rep_error_count(rep) > 0) return 1;
     mod->zlevel = zlevel;
     if (zlevel >= 2) {

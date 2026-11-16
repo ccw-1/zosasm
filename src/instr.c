@@ -808,6 +808,13 @@ static int check_reg(Asm *a, Span sp, const IsaOperand *f, int64_t r, int64_t *v
                    (long long)max);
         return 0;
     }
+    if (!a->afpr && (f->flags & F_FPR) && !(f->flags & F_VR) && (r > 6 || (r & 1))) {
+        diag_help(rep_errorf(a->rep, "ZA2071", sp, "floating-point register %lld is not available",
+                             (long long)r),
+                  "ACONTROL NOAFPR is on: only registers 0, 2, 4 and 6 can be used; ACONTROL AFPR "
+                  "allows all 16");
+        return 0;
+    }
     vals[idx] = r;
     return 1;
 }
@@ -1026,6 +1033,79 @@ static int addr_field(Asm *a, Stmt *st, Operand o, const Slot *sl, int nfields, 
         }
     }
     if (sl->base >= 0) vals[sl->base] = base_reg;
+    return 1;
+}
+
+/* The nominal value of an S or SY constant: either an address (the base
+ * register and displacement come from the active USINGs) or
+ * `displacement(base)` with two absolute expressions.  Returns 1 and the base
+ * register and the displacement. */
+int asm_base_disp(Asm *a, Stmt *st, Operand o, int longdisp, int64_t *base_out, int64_t *disp_out) {
+    AddrOp ad = asm_split_addr(o);
+    int64_t dmin = longdisp ? -((int64_t)1 << 19) : 0, dmax = longdisp ? ((int64_t)1 << 19) - 1 : 4095;
+    int64_t disp = 0, base_reg = 0;
+    Expr *e;
+    Value dv;
+    e = asm_expr(a, st, ad.disp);
+    if (!e) return 0;
+    if (!asm_eval(a, st, e, 1, &dv)) return 0;
+    if (ad.inner.n > 1) {
+        rep_errorf(a->rep, "ZA2038", e->sp, "write the constant as S(address) or S(displacement(base))");
+        return 0;
+    }
+    if (ad.inner.n == 1) {
+        int64_t r;
+        if (!asm_register(a, st, ad.inner.v[0], F_GPR, &r)) return 0;
+        if (r < 0 || r > 15) {
+            rep_errorf(a->rep, "ZA2041", asm_op_span(st, ad.inner.v[0]),
+                       "register %lld is out of range 0 to 15", (long long)r);
+            return 0;
+        }
+        if (!value_is_abs(&dv)) {
+            diag_help(rep_errorf(a->rep, "ZA2037", e->sp,
+                                 "a displacement with an explicit base register must be absolute"),
+                      "drop the base register to let USING supply it");
+            return 0;
+        }
+        if (dv.abs < dmin || dv.abs > dmax) {
+            rep_errorf(a->rep, "ZA2036", e->sp, "displacement %lld is out of range %lld to %lld",
+                       (long long)dv.abs, (long long)dmin, (long long)dmax);
+            return 0;
+        }
+        *base_out = r;
+        *disp_out = dv.abs;
+        return 1;
+    }
+    {
+        Base b, key;
+        long at = -1;
+        const char *q = expr_qual(e);
+        if (value_is_abs(&dv)) {
+            memset(&key, 0, sizeof key);
+            at = find_using(a, key, dv.abs, NULL, dmin, dmax, &disp);
+            if (at < 0) {
+                /* no USING covers the number: it is the displacement itself */
+                if (dv.abs < dmin || dv.abs > dmax) {
+                    rep_errorf(a->rep, "ZA2036", e->sp,
+                               "displacement %lld is out of range %lld to %lld",
+                               (long long)dv.abs, (long long)dmin, (long long)dmax);
+                    return 0;
+                }
+                *base_out = 0;
+                *disp_out = dv.abs;
+                return 1;
+            }
+        } else if (value_simple(&dv, &b)) {
+            at = find_using(a, base_key(b), dv.abs, q, dmin, dmax, &disp);
+        }
+        if (at < 0) {
+            no_addressability(a, e, dv, q, dmin, dmax);
+            return 0;
+        }
+        base_reg = a->usings.v[at].reg;
+    }
+    *base_out = base_reg;
+    *disp_out = disp;
     return 1;
 }
 

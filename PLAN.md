@@ -24,7 +24,7 @@ Status key: [x] done, [-] in progress, [ ] open.
 - [x] machine instructions: operand classes, `USING`/`DROP` base/displacement
       resolution, relative branches and `LARL`/`BRASL` (+ RLD relative
       immediate for other elements), extended mnemonics, `CNOP`, `ORG`
-- [x] `DC` types (done except S G, bit lengths; CU, CCW, scale/exponent, decimal float and
+- [x] `DC` types (all forms incl. S SY G QY, bit lengths; CU, CCW, scale/exponent, decimal float and
       rounding modes: DESIGN.md 13)  C X B F H FD P Z A AD Y S V Q (+ E D L hex/binary float,
       CA/CE character sets), duplication/length/scale modifiers, multiple
       nominal values, `DS` with `0` boundary alignment
@@ -38,9 +38,10 @@ Status key: [x] done, [-] in progress, [ ] open.
       DEFLOAD, FILL, PART, PRIORITY, MERGE/CAT binding
 - [ ] `XATTR`: LINKAGE(OS|XPLINK), SCOPE(SECTION|MODULE|LIBRARY|EXPORT|IMPORT),
       REFERENCE(CODE|DATA), DATAREFERENCE, PSECT, DEFLOAD, ...
+- [x] `ACONTROL`, `PUSH`/`POP`, `CEJECT`, `EXITCTL`, `REPRO`, `-diag json`, listing carets (DESIGN.md 4.7, 6, 15)
 - [x] quoted symbols `"any name"` replace HLASM `ALIAS` (DESIGN.md 2; `-disasm` uses them)
 - [x] `DXD`/`CXD`, `Q`/`J`/`R` constants, `REFERENCE(...,INDIRECT)` (DESIGN.md 4.4; RLD encodings unverified)
-- [ ] `COM` details, deferred lengths (LEN record), `QY`, XATTR `ATTRIBUTES`/`PSECT` output,
+- [ ] `COM` details, deferred lengths (LEN record), XATTR `ATTRIBUTES`/`PSECT` output,
       XPLINK call descriptors, `B_IDRL` ident record
 - [ ] END with entry point by name / ESDID+offset
 

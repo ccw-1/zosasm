@@ -418,6 +418,8 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
         st->operands = xstrdup(buf_cstr(&ops));
         st->segs = segs.v;
         st->nsegs = (int)segs.n;
+        /* REPRO: the record that follows is data, not a statement */
+        if (za_streqi(st->op, "REPRO") && i + 1 < n) i++;
         st->nli = (int)(i - st->li + 1);
         vec_push(out, st);
     }

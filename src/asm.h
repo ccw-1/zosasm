@@ -36,7 +36,7 @@ typedef struct {
     int tasking;
 } ClassAttr;
 
-typedef enum { REL_ADDR, REL_V, REL_Q, REL_CXD, REL_RI, REL_LEN, REL_R } RelocKind;
+typedef enum { REL_ADDR, REL_V, REL_Q, REL_CXD, REL_RI, REL_LEN, REL_R, REL_QY } RelocKind;
 
 typedef struct {
     int64_t off; /* offset in the class */
@@ -415,6 +415,11 @@ typedef struct {
 
 typedef Vec(LitPool *) PoolVec;
 
+/* the state ACONTROL changes (and PUSH ACONTROL saves) */
+typedef struct {
+    int afpr, strict;
+} AcState;
+
 struct Asm {
     Reporter *rep;
     Reporter *scratch; /* silent reporter for pass 2 re-parsing */
@@ -446,6 +451,10 @@ struct Asm {
     size_t lit_owner; /* LitRec.owner of the literals being assembled */
     int using_logged; /* highest Using.id copied to Module.usings */
     int strict;       /* registers only as %r<n> or a name made with EQU %r<n> */
+    int afpr;         /* ACONTROL AFPR: FP registers 1, 3, 5, 7 to 15 are allowed */
+    int print_depth;  /* PUSH PRINT entries (the listing keeps the saved states) */
+    Vec(UsingVec) using_stack; /* PUSH USING */
+    Vec(AcState) ac_stack;     /* PUSH ACONTROL */
 };
 
 /* Assemble the lines; returns NULL when errors were reported. The caller
@@ -513,6 +522,11 @@ void dir_ccw(Asm *a, Stmt *st);
 void dir_cxd(Asm *a, Stmt *st);
 void dir_copy(Asm *a, Stmt *st);
 void dir_ignore(Asm *a, Stmt *st);
+void dir_acontrol(Asm *a, Stmt *st);
+void dir_ceject(Asm *a, Stmt *st);
+void dir_exitctl(Asm *a, Stmt *st);
+void dir_pushpop(Asm *a, Stmt *st);
+void dir_repro(Asm *a, Stmt *st);
 size_t asm_directive_names(const char *const **names);
 
 /* dc.c */
@@ -520,7 +534,8 @@ typedef struct {
     int64_t dup;
     char typ; /* upper case type letter */
     char ext; /* 'A'/'E' (character), 'D' (F, A), 'B'/'H' (floating point) */
-    int64_t length;
+    int64_t length; /* bytes; with a bit length: bytes needed to hold it */
+    int64_t bits;   /* the bit length of L.n (0 = none) */
     int has_len, has_nom, quoted;
     int has_scale, has_exp; /* Sn and En modifiers */
     int64_t scale, exp10;
@@ -583,6 +598,7 @@ typedef struct {
     int parens;
 } AddrOp;
 AddrOp asm_split_addr(Operand o);
+int asm_base_disp(Asm *a, Stmt *st, Operand o, int longdisp, int64_t *base, int64_t *disp);
 /* the variant of an instruction (isa_lookup) that takes n operands, or NULL */
 const IsaInst *asm_choose_variant(const IsaInst *vars, size_t nv, int n);
 void dir_using(Asm *a, Stmt *st);

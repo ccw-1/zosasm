@@ -335,6 +335,67 @@ void rep_print(Reporter *r, FILE *w, int color) {
     }
 }
 
+static void json_str(FILE *w, const char *s) {
+    fputc('"', w);
+    for (; s && *s; s++) {
+        unsigned char c = (unsigned char)*s;
+        if (c == '"' || c == '\\')
+            fprintf(w, "\\%c", c);
+        else if (c == '\n')
+            fputs("\\n", w);
+        else if (c == '\t')
+            fputs("\\t", w);
+        else if (c < 0x20)
+            fprintf(w, "\\u%04x", c);
+        else
+            fputc(c, w);
+    }
+    fputc('"', w);
+}
+
+static void json_span(FILE *w, Span sp) {
+    fputs("\"file\":", w);
+    json_str(w, sp.pos.file ? sp.pos.file : "");
+    fprintf(w, ",\"line\":%d,\"column\":%d,\"length\":%d", sp.pos.line, sp.pos.col, sp.len);
+}
+
+void rep_print_json(Reporter *r, FILE *w) {
+    size_t n, i;
+    int k;
+    const Diag **ds = rep_sorted(r, &n);
+    fputs("{\"diagnostics\":[", w);
+    for (i = 0; i < n; i++) {
+        const Diag *d = ds[i];
+        fputs(i ? ",\n" : "\n", w);
+        fprintf(w, "{\"severity\":\"%s\",\"code\":", d->sev == SEV_FATAL ? "fatal" : sev_name(d->sev));
+        json_str(w, d->code);
+        fputs(",\"message\":", w);
+        json_str(w, d->msg);
+        fputc(',', w);
+        json_span(w, d->span);
+        if (d->label && *d->label) {
+            fputs(",\"label\":", w);
+            json_str(w, d->label);
+        }
+        fputs(",\"notes\":[", w);
+        for (k = 0; k < d->nnotes; k++) {
+            fputs(k ? ",{" : "{", w);
+            json_span(w, d->notes[k].span);
+            fputs(",\"message\":", w);
+            json_str(w, d->notes[k].msg);
+            fputc('}', w);
+        }
+        fputs("],\"help\":[", w);
+        for (k = 0; k < d->nhelp; k++) {
+            if (k) fputc(',', w);
+            json_str(w, d->help[k]);
+        }
+        fputs("]}", w);
+    }
+    fprintf(w, "%s],\"errors\":%d,\"warnings\":%d}\n", n ? "\n" : "", r->nerr, r->nwarn);
+    free(ds);
+}
+
 const char *diag_closest(const char *word, const char *const *cands, size_t n) {
     char *w = za_strlower(word);
     const char *best = NULL;
