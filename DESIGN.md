@@ -1046,4 +1046,4 @@ transport, JSON-RPC batches, restricting `path`/`output` to a directory, a
 
 ## 19. Macro language (design only)
 
-See `MACRO.md`: a C-like macro language in the preprocessor stage (`#macro`, `#let`, `#if`, `#while`, `#switch`, `#goto`, model statements with `&name` substitution) that can express every HLASM macro, so `hlasm2za` can convert them. Not implemented; decisions D1/D2 and a sample of real macros are needed first.
+See `MACRO.md`: a C-like macro language in the preprocessor stage (braced `#if/#while/#for/#switch` blocks written on `#` lines with free indentation, model statements substituted with `&name`, 0-based lists, block scoped variables, library lookup of macros by name). It keeps the semantics of HLASM conditional assembly, not its syntax; `hlasm2za` is to recover structured control flow from `AIF`/`AGO` (the survey of SYS1.MACLIB is in MACRO.md section 0). Not implemented.

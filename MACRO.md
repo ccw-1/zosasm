@@ -1,8 +1,10 @@
 # zosasm macro language - design (not implemented)
 
-Status: **design for discussion**. Nothing here exists in the code yet. The
-numbers of the decisions (D1, D2, ...) are the points where the user's
-choice is needed; the rest follows from them.
+Status: **design, not implemented**. Decided with the user: `&` substitutes
+into emitted text (D1), indexing is 0-based everywhere (D2), the macro
+language is C-like with braces and free indentation and only has to keep
+the *semantics* of HLASM conditional assembly, not its syntax; `hlasm2za`
+recovers structure from the sequence-symbol branching.
 
 ## 0. What SYS1.MACLIB shows (survey of `maclib_utf8/`)
 
@@ -15,7 +17,7 @@ section 12 reads the directory in place.
 
 | feature | uses | macros | consequence |
 |---|---|---|---|
-| `AIF` / `AGO` / `ANOP` | 43079 / 12605 / 28678 | 1251 / 1111 / 1253 | **`#goto` is the main conversion path**, not a fallback: the code is flat branches, forward *and backward* (`AGO .POSITIO` re-enters a block above), with sequence symbols like `.ALVL1_A`. Structure recognition is a bonus (section 8). |
+| `AIF` / `AGO` / `ANOP` | 43079 / 12605 / 28678 | 1251 / 1111 / 1253 | the code is flat branches, forward *and backward* (`AGO .POSITIO` re-enters a block above), with sequence symbols like `.ALVL1_A`, and is hard to read. The converter must **recover structure** (if/else, loops, early return, switch; section 10); `#goto` stays only as the last resort. |
 | `SETA` / `SETB` / `SETC` | 9934 / 6645 / 20090 | 361 / 380 / 790 | string building dominates |
 | `LCLx` / `GBLx` | 5.8k / 2.4k | 1000 / 1145 | many `GBLA &SYSALVL`-style globals that one macro (`SYSSTATE`) sets and the others read: `#global` must keep the first initial value |
 | arrays `LCLB &B(5)`, `&B(1) SETB` | 1872 | 418 | lists with indexed `#set` |
@@ -45,421 +47,460 @@ What the code looks like (not quoted; own summary):
 * arguments are indexed as sublists (`&REG(1)`, `N'&REG`), and substituted
   inside strings and next to dots (`&A.(0,13)`, `CL&A'&E'`);
 * macros call other macros (`SYSSTATE`, `IHBERMAC` for messages,
-  `IHBINNRR`): **library lookup is required, not optional** (section 5);
+  `IHBINNRR`): **library lookup is required, not optional** (section 7);
 * a member may contain non macro text after `MEND` (the PL/S version of the
   macro) and column 73-80 change flags (`@L2C`); the converter stops at
   `MEND` and drops the columns.
 
 Consequences for the plan: M1 plus library lookup plus `hlasm2za` conversion
 cover this library; the symbol-table interleaving (M2) is deferred and may
-never be needed; `#goto` and a fast flat interpreter are central (a single
+never be needed; control-flow recovery in the converter and a fast interpreter are central (a single
 `WTO` or `GETMAIN` expansion runs hundreds of statements).
 
-## 1. Why, and what it is not
+## 1. Goals
 
-zosasm has a C style preprocessor (`#define`, `#include`, `#if`; DESIGN.md
-8, guide 3). It substitutes tokens. It cannot loop, keep a counter, take
-a string apart or choose which statements to generate from the *value* of
-an argument. Existing HLASM macro libraries do all of that, so converting
-them (`hlasm2za` today only comments `MACRO`..`MEND` out) needs a language
-with the same power.
+* **Same semantics as HLASM conditional assembly, not the same syntax.** What
+  a macro can compute and emit is kept; how it is written is C-like and
+  readable: braces, `if/else`, `while`, `for`, `switch`, `return`, named
+  variables, free indentation.
+* **A converted macro must read like a hand written one.** `hlasm2za` is a
+  decompiler for sequence-symbol branching (section 10), not a transliterator.
+* One language for macros and open code; `#` marks code lines (as the
+  preprocessor already does), `&` substitutes into emitted text (D1).
+* A macro is a **statement** (it sits in the operation field), found by name,
+  in the source or in a library directory.
+* Fast and bounded: bodies are compiled once, the interpreter has no
+  recursion for control flow, and runaway loops end with an error.
 
-The goal is **not** to copy the HLASM macro language. It is a small
-C-like language that
+It lives in the preprocessor stage (`src/pp.c`) and produces the lines the
+assembler reads today; object output does not change.
 
-* defines *statement macros* (a new "instruction": `LABEL  NAME  operands`),
-* computes with integers, strings and lists at assembly time,
-* decides, by `#if`/`#while`/`#switch`, which assembler statements to emit,
-* can express anything an HLASM macro does, so that `hlasm2za` can convert
-  every macro (in the worst case with `#goto`, section 8).
+## 2. A first look
 
-It sits in the preprocessor stage (`src/pp.c`) and produces the same lines
-that the assembler reads today. Object output is unchanged.
-
-## 2. Overview by example
-
-An HLASM macro and its form in the new language:
+A small macro (own example):
 
 ```
-         MACRO
-&NAME    MOVEA &TO,&FROM,&LEN=,&FILL=NO
-         AIF   ('&LEN' NE '').HAVE
-&NAME    MVC   &TO.(L'&FROM),&FROM
-         AGO   .FILL
-.HAVE    ANOP
-&NAME    MVC   &TO.(&LEN),&FROM
-.FILL    AIF   ('&FILL' EQ 'NO').EXIT
-         MVI   &TO,C' '
-.EXIT    MEND
+// STOREREGS (first,last) [,base=13] [,off=20] [,size=4]
+// stores registers first..last into a save area
+#macro STOREREGS(regs, base = 13, off = 20, size = 4) {
+    #if (count(regs) != 2) {
+        #error "STOREREGS needs a register range such as (2,5)"
+        #return
+    #}
+    #let first = int(regs[0])
+    #let last  = int(regs[1])
+
+    #for (let r = first; r <= last; r++) {
+        #let disp = off + (r - first) * size
+        #if (size == 8) {
+            STG   &r,&disp(,&base)
+        #} else {
+            ST    &r,&disp(,&base)
+        #}
+    #}
+#}
 ```
 
 ```
-#macro MOVEA(to, from, len = "", fill = "NO")
-#if len != ""
-&__LABEL__ MVC   &to(&len),&from
-#else
-&__LABEL__ MVC   &to(L'&from),&from
-#endif
-#if fill != "NO"
-           MVI   &to,C' '
-#endif
-#endmacro
+         STOREREGS (2,4),size=8        expands to  STG 2,20(,13)
+                                                   STG 3,28(,13)
+                                                   STG 4,36(,13)
 ```
 
-Calls look like any statement, with the operand syntax of zosasm:
+The rules in one paragraph. A line whose first non-blank character is `#`
+is **macro code**: C-like statements, names without any marker, blocks in
+braces (`#if (...) {` ... `#}`), indented as you like. Every other line is a
+**model statement**: assembler text that is emitted, with `&name` replaced
+by the value of the variable. Labels in model statements end with a colon
+(`LOOP&sys.ndx:  DS 0H`) so that the text can be indented. `//` starts a
+comment that is never emitted.
+
+A second example shows how arguments steer the emitted code (own example,
+the shape is common in system macros):
 
 ```
-         MOVEA  AREA,SRC                     positional
-LBL      MOVEA  AREA,SRC,len=8,fill=YES      keywords
-         MOVEA  to=AREA,from=SRC             keywords may name positionals too
+// FILLZ  area,len [,pad=NO]   clear storage, optionally pad with blanks
+#macro FILLZ(area, len, pad = "NO") {
+    #if (len == "") {
+        #error "FILLZ: len is required"
+        #return
+    #}
+    #switch (attr(len, "T")) {
+    #case "N":                       // a number: MVC/XC reach 256 bytes
+        #if (int(len) <= 256) {
+            XC    &area(&len),&area
+        #} else {
+            #let rest = int(len)
+            #let off = 0
+            #while (rest > 256) {
+                XC    &area+&off(256),&area+&off
+                #off += 256
+                #rest -= 256
+            #}
+            XC    &area+&off(&rest),&area+&off
+        #}
+    #default:                        // a symbol or expression: length known at run time
+        LA    1,&area
+        LA    0,&len
+        XR    15,15
+        MVCL  0,14
+    #}
+    #if (pad == "YES") {
+        MVI   &area,C' '
+    #}
+#}
 ```
 
-Two kinds of line exist inside a macro body:
+(Parentheses after a name are plain text: `&area(&len)` is the value of
+`area` followed by `(`, the length, and `)`; a list element is written with
+brackets, `&regs[0]`.)
 
-* a line whose first non-blank character is `#` followed by a keyword is
-  **macro code**: it runs when the macro is expanded and uses names without
-  any marker (like C);
-* every other line is a **model statement**: a source line that is emitted
-  after substituting `&name` (section 6).
+## 3. Layout and markers
 
-## 3. The marker: `#` for macro code, `&` for substitution
+**Macro code lines.** Inside a macro body, and inside any `{ ... }` block
+opened by a `#` line, a line whose first non-blank character is `#` is macro
+code. At the top level of a file the existing rule stays: `#` in column 1,
+followed by a directive keyword (`#include`, `#define`, ...) or by a macro
+statement keyword; any other `#NAME` is a label such as `#COUNT`.
+The statement keywords are `macro let global if else while for switch case
+default break continue return goto label emit note warning error`; an
+assignment starts with a variable name (`#n += 1`). Variables named like a
+directive or a keyword cannot exist (`#define`, `#if`...).
 
-`#` is already the preprocessor marker (`#include`, `#define`, ...), and the
-existing rule stays: a directive is a `#` followed by a keyword from a fixed
-list; any other `#...` is an ordinary symbol such as `#COUNT`. The new
-keywords extend that list. Inside a macro body (and only there) macro code
-may be indented; at the top level `#` must still be in column 1.
+**Model statements.** Any other non-blank line in a body is a model statement:
 
-New keywords: `macro endmacro let set global if elif else endif while
-endwhile for endfor foreach switch case default endswitch break continue
-return goto label emit note` (`error` and `warning` exist already).
-Because the list is closed, a user symbol called `#LET` in column 1 is the
-only thing that stops working; `hlasm2za` can warn about such names.
+```
+    [label:]  operation  operands  [remark]
+```
 
-**D1 - the substitution marker.** Model statements need a way to insert a
-value, also *inside quoted strings* (`C'&text'`, `DC A(&n)`). Candidates:
+* Leading blanks are free (the body is indentable). A label is written with
+  a trailing colon; no colon, no label. A non-blank character in column 1 of a
+  body line that is not `#`, `//` or `*` is the error ZA4104 ("indent the
+  statement or write `label:`"): it is almost certainly a pasted assembler
+  line.
+* The colon is not part of the label; the emitted line is laid out as
+  `label` in column 1, the operation in column 10, the operands after it
+  (the remark is kept). A label that expands to nothing is no label.
+* A statement continues on the next line when it ends in a comma (as in the
+  assembler); continuation lines may be indented.
+* `*` as first non-blank character: an assembler comment line, emitted
+  (shows in the listing with `print gen`). `//` as first non-blank character,
+  or after macro code: a macro comment, never emitted. `/* ... */` is not
+  used.
+* Macro code continues while parentheses, brackets or a string are open, or
+  after a trailing `\`.
+* Blank lines are dropped. Tabs count to 8 columns.
 
-| marker | for | against |
-|---|---|---|
-| `&name`, `&{expr}` (recommended) | same marker as HLASM, so the model lines of converted macros stay almost as they were; `&` has no other meaning in zosasm source; works inside strings; `&&` = a literal `&` | none really, but it is the HLASM style the user said we need not follow |
-| `$name` | no clash with `&` | `$` is a symbol character: `$ABC` is a legal label |
-| `#{name}` | one marker for everything | noisy; macro code and model text look alike |
-| bare names (C `#define` style) | no marker | every parameter name becomes a keyword of the model text (`n`, `to`, `len` are also symbols and operands); too dangerous in assembler text |
+**Substitution (D1: `&`).**
 
-Recommendation: `&`, with two changes from HLASM: the name ends at the first
-character that is not a letter, digit or `_`, and `&{expr}` inserts the
-value of any macro expression. `&X.` (the HLASM end marker) is not accepted;
-`A&{n}B` replaces `A&N.B`. In **macro code** (the `#` lines) names are bare:
-`#if len != ""`, no `&`.
+| written | meaning |
+|---|---|
+| `&name` | the value of the variable; the name ends at the first character that is not a letter, digit or `_` |
+| `&name[i]`, `&name[i][j]` | element of a list (`i` is an integer literal or a name); `[` has no other meaning in assembler text |
+| `&{expr}` | the value of any macro expression: `L&{n+1}`, `&{upper(op)}` |
+| `&sys.label` | built-in (section 7); `sys.` names contain a dot |
+| `&&` | one literal `&` |
 
-## 4. Values, names and scope
+Substitution happens everywhere in a model statement, **also inside quoted
+strings** (`C'&text'`), and a name that is not a variable is the error
+ZA4110, never literal text. A value inserts as decimal (int), as written
+(string), or `(a,b,c)` (list). A reference to an HLASM style `&name.` end marker is not accepted; use
+`&{name}x` or put a non-name character after the name.
 
-**Types.** `int` (64 bit signed), `str` (text) and `list` (ordered values).
-There is no declaration syntax; the type is that of the value.
+## 4. Values, names, scope
 
-* Arguments arrive as text. A text of the form `(a,b,(c,d))` is also a list:
-  `count(x)` is 3, `x[0]` is `a`, `x[2][1]` is `d`. Indexing starts at **0**
-  (D2). Everything else is a plain string. `int(x)` reads a self-defining
-  term (`10`, `X'1F'`, `B'101'`, `-4`).
-* Strings are written `"..."` (the assembler's `'` is not used, so a
-  macro string can contain assembler quotes). Escapes: `\"`, `\\`, `\n`,
-  `\xHH`.
+* **Types:** `int` (64 bit signed; the literals `0`, `-4`, `0x1F`, `X'1F'`,
+  `B'101'`, `true`, `false`), `str` (`"text"`, escapes `\"` `\\` `\n` `\xHH`,
+  also usable for assembler quotes: `"C'A'"`), `list` (ordered values).
+* **Arguments** arrive as text. A text of the form `(a,b,(c,d))` is also a
+  list: `count(x)` is 3, `x[0]` is `a`, `x[2][1]` is `d`. Indexing is **0
+  based** everywhere (D2). Anything else is a plain string. `int(x)` reads a
+  self-defining term (`10`, `X'1F'`, `B'101'`, `C'A'`, `-4`).
+* **Truth:** `0`, `""` and the empty list are false; everything else is true.
+  Comparison and logic give `1` or `0`.
+* **Names** (variables, parameters, macros, functions) are case
+  insensitive, like mnemonics; string values keep their case. Assembler
+  symbols in model text keep their case rules (they are case sensitive).
+* **Scope:** `#let x = v` declares a variable in the **block** where it
+  stands (macro body, `if`, loop body...); declaring it twice in the same block
+  is an error, hiding an outer one is a warning (ZA4107). A `for` header
+  declaration lives in the loop. Parameters live in the macro's outer block.
+* **Globals:** `#global name = init` (any macro or open code). The first
+  declaration anywhere creates it with `init`; later declarations in other
+  macros only name it and ignore their `init`. This is exactly how system
+  macros share state (`&SYSALVL` set by one macro, read by the others).
+* **Open code:** the same statements work outside macros (file level
+  variables), which replaces the conditional assembly of the main source.
+
+## 5. Expressions
+
+C precedence: `[]` `()` calls, unary `- ! ~`, `* / %`, `+ -`, `<< >>`,
+`< <= > >=`, `== !=`, `&`, `^`, `|`, `&&`, `||`, `?:`. `&&`/`||` short circuit
+and give 0 or 1. Assignment operators `= += -= *= /= %= <<= >>= &= |= ^=`
+and `++`/`--` are statements, not expressions.
+
 * `+` joins strings when either side is a string (`"L" + n`), else adds.
+  `/` truncates toward zero.
+* **Comparison of two strings follows HLASM** (Language Reference, character
+  relations): character by character in the EBCDIC order, and **a shorter
+  string is always the lesser**; `==`/`!=` are exact. So `"9" < "15"` is true
+  and `"B" < "AA"` is true. The library relies on this (`'&C' LE '15'`).
+  A string against an int is converted with `int()` first (error if it is
+  not a number).
+* `x ? a : b`, parentheses, and `in`: `x in list` (true if equal to an
+  element).
 
-**D2 - indexing base.** HLASM counts from 1 (`&SYSLIST(1)`, substrings
-`'abc'(1,2)`). A C-like language counts from 0. Recommendation: 0 everywhere;
-`hlasm2za` converts constants (`&P(1)` -> `p[0]`) and writes `p[i - 1]` for
-variable indexes. The alternative is a language where every conversion is
-literal but every C programmer is tripped up.
-
-**Names.** Macro-time names (macros, parameters, variables, functions) are
-**case insensitive**, like mnemonics (zosasm symbols stay case sensitive).
-This keeps converted HLASM (upper case) and hand written code (`len`)
-interchangeable. String *values* keep their case.
-
-**Variables.**
-
-```
-#let   n = 0              declare in this expansion (error if it exists)
-#set   n = n + 1          assign (error if it does not exist)
-#set   t[3] = "x"         list element; the list grows, gap filled with ""
-#global count = 0         shared by all macros and open code; the first
-                          declaration gives the initial value, later ones
-                          (in other macros) only name it
-```
-
-Scope is the whole expansion (not the block). Parameters are variables.
-Open code (outside a macro) has its own variables with the same statements,
-which gives the `LCLA`/`SETA` of conditional assembly in the main source
-(DESIGN: no separate mechanism).
-
-**Built-in variables** (read only, in the spelling of the existing
-`__FILE__` family):
-
-| name | value | HLASM |
-|---|---|---|
-| `__LABEL__` | the name field of the call (`""` if none) | `&NAME` |
-| `__NDX__` | `"0001"`, `"0002"`...: unique per expansion | `&SYSNDX` |
-| `__SECT__`, `__SECTYPE__` | name and type (`CSECT`, `DSECT`, `RSECT`...) of the current control section | `&SYSECT`, `&SYSSTYP` |
-| `__MACRO__`, `__LEVEL__` | macro being expanded, nesting depth (1 = called from open code) | `&SYSMAC`, `&SYSNEST` |
-| `__ARGS__` | list of the positional arguments as written | `&SYSLIST` |
-| `__ARGC__` | their number | `N'&SYSLIST` |
-| `__FILE__`, `__LINE__` ... | as now; inside a macro: where the *call* is | |
-| `__GOFF__`/`__ELF__`, `__ASCII__`/`__EBCDIC__` | as now | `&SYSOPT_*` |
-
-## 5. Definition and call
-
-```
-#macro NAME(p1, p2 = default, p3, rest...)
-   ... body ...
-#endmacro
-```
-
-* The macro name is an operation code, folded like a mnemonic. A macro
-  hides an instruction or directive of the same name (warning ZA4106 once).
-  A later `#macro` of the same name replaces it (warning).
-* Parameters are listed in order. `= default` (any macro expression, may use
-  earlier parameters) makes a parameter optional. A parameter without a
-  default that is omitted is `""`; so the type of a missing argument is
-  always testable (`#if p3 == ""`).
-* `rest...` collects the remaining positional arguments as a list
-  (HLASM `&SYSLIST(n)` for n > fixed count). Without it, too many arguments
-  are an error (ZA4102).
-* **Call syntax is the ordinary statement syntax**: the operands are split
-  at top level commas by the reader's operand scanner, so `C'A,B'`, `(1,2)`
-  and `D(X,B)` are each one argument. An argument is the exact text written.
-  `name=value` (an identifier, `=`, and not the literal `=F'1'`) is a keyword
-  argument for the parameter of that name; the rest are positional, in order
-  of the parameters not already given by keyword. An empty argument
-  (`A,,C`) means "use the default".
-* An argument that must be an integer is converted by the macro with `int(x)`;
-  there are no parameter types. (HLASM has none either; the converter needs
-  none.)
-* Macros may call macros (also themselves); depth limit 64 (ZA4120). The
-  total number of macro statements executed per expansion is limited
-  (`-macro-steps N`, default 1,000,000, ZA4121), so a loop that never ends
-  is an error and not a hang.
-
-`#define` stays for token substitution (constants, one-line helpers used
-inside operands). A macro is a **statement**, found in the operation field;
-`#define` names are found anywhere and expanded first. They do not interfere:
-a macro body sees the call's arguments after `#define` expansion.
-
-**Library macros (needed).** An unknown operation code `FOO` is looked up in
-the macro directories (`-M DIR`, repeatable; the `-I` directories are searched
-last) as `foo.zmac`, then `foo.mac`; the file may hold several `#macro`
-definitions (a library member of HLASM is one macro, but converted code
-need not keep that). The first `#macro` in the file whose name is `FOO`
-defines the call; others in the same file are defined too. A found file is
-read once per run. This is HLASM's library macro search and makes macros
-that call macros (`SAVE` calls `SYSSTATE`) work with no `#include`. `hlasm2za -macro-dir DIR` converts a whole directory of members
-(one `.zmac` per macro). Case: the file name is the macro name in lower case.
-
-## 6. Model statements and `#emit`
-
-```
-&__LABEL__ MVC &to(&len),&from              &name  and  &{expr}
-           DC  C'&text'                     also inside strings
-           DC  C'AT&&T'                     && is one &
-           DC  F'&{n * 4}'                  any macro expression
-L&{__NDX__} DS 0H                           label made from a built-in
-```
-
-* A name must exist (parameter, variable, built-in); `&xyz` with no `xyz` is
-  an error (ZA4110), not literal text.
-* HLASM's subscript form `&REG(1)` (element of a sublist) becomes `&{reg[0]}`; `&REG(1)` in zosasm model text would be the whole value of `reg` followed by `(1)`. `&A.(0,13)` becomes `&a(0,13)`.
-* A value inserts as decimal (int), as written (string) or `(a,b,c)` (list).
-* The resulting text is **rescanned as source**: a line made by `&op` may
-  be another macro call. A line that expands to nothing but blanks is
-  dropped. A line with an empty label field simply starts with blanks.
-* Each emitted line keeps the file and line of the model statement and the
-  note "in expansion of macro X at file:line" (the diagnostics already have
-  this). In the listing the lines appear when `#pragma print gen` is on
-  (`PRINT GEN`; the default shows only the call, as HLASM does).
-* `#emit expr` emits the text of any expression as a line (`\n` splits it).
-  It replaces what HLASM macros do with `AINSERT` and computed statements:
-
-  ```
-  #foreach r in regs
-  #emit "         ST    " + r + "," + (off + 4 * i) + "(13)"
-  #endfor
-  ```
-
-## 7. Macro code
-
-```
-#if expr / #elif expr / #else / #endif
-#switch expr / #case v1, v2 / ... / #default / #endswitch     (no fall through)
-#while expr / #endwhile        #break  #continue
-#for i = 0 .. n - 1 [step 2] / #endfor                         inclusive range
-#foreach x in list / #endfor
-#return                         leave this macro                (MEXIT)
-#note "text"                    message, severity info          (MNOTE *,)
-#warning "text" / #error "text" message, assembly goes on / fails (MNOTE 4 / 8+)
-#emit expr                      section 6
-#goto name / #label name        section 8
-```
-
-`#if` here is the same directive as in the preprocessor: one evaluator.
-Expressions: integers, strings, lists; `+ - * / %`, `<< >> & | ^ ~`
-(bitwise), `&& || !`, `== != < <= > >=`, `?:`, parentheses, indexing `x[i]`,
-function calls. Comparison of two strings is character-wise and case
-sensitive (HLASM `EQ`); of a string and an int the string is converted with
-`int()` first. A condition is false when it is 0 or `""`.
-In open code `#if` keeps the C rule (an unknown identifier is 0, so that
-`#if DEBUG` works as it does today); inside a macro an unknown identifier is
-an error (ZA4111).
-
-`#error`/`#warning` take a string expression here (`#error "bad register "
-+ r`); with a plain unquoted text, outside macros, they keep their present
-form (ZA4050/4051). Severities: `#note` info, `#warning` ZA warning,
-`#error` error; `hlasm2za` maps `MNOTE n,` (0 note, 1-4 warning, 5+ error).
-
-**Functions** (names case insensitive; HLASM equivalent in brackets):
+**Functions** (HLASM equivalent in brackets):
 
 | function | result |
 |---|---|
-| `len(s)` | number of characters (`K'`) |
-| `count(x)` | number of list items; 1 for a plain string, 0 for `""` (`N'`) |
-| `substr(s, start, n)` | `n` characters from `start` (0 based) (`'..'(i,n)`) |
-| `index(s, t)` | position of `t` in `s`, or -1 (`INDEX`, `FIND`) |
-| `upper(s)`, `lower(s)`, `trim(s)` | (`UPPER`, `LOWER`) |
-| `repeat(s, n)` | `n` copies (duplication factor) |
-| `split(s, sep)`, `join(list, sep)` | string and list |
-| `list(a, b, ...)` | make a list |
-| `int(x)`, `str(n)`, `hex(n, digits)`, `bin(n, digits)` | conversions (`X2C`, `D2X`, `C2X`...) |
+| `len(s)` | characters (`K'`) |
+| `count(x)` | list items; 1 for a plain string, 0 for `""` (`N'`) |
+| `substr(s, start[, n])` | `n` characters from `start` (0 based); without `n` to the end (`'..'(i,*)`). `start` outside the string or `n` beyond the end is an error (ZA4112), as in HLASM |
+| `index(s, t)` | 0 based position of the first `t` in `s`, or -1 (`INDEX`) |
+| `upper(s)`, `lower(s)`, `trim(s)`, `repeat(s, n)` | (`UPPER`, `LOWER`, duplication factor) |
+| `double(s)`, `quote(s)` | double the `'` and `&` of s; `'s'` with `'` doubled (`DOUBLE`) |
+| `byte(n)`, `chars(s)` | one character of code n (`BYTE`); the list of characters |
+| `split(s, sep)`, `join(list, sep)`, `list(a, b, ...)` | |
+| `int(x)`, `str(n)`, `hex(n, digits)`, `bin(n, digits)` | conversions (`D2X`, `X2D`...) |
 | `min`, `max`, `abs` | |
-| `empty(x)`, `defined(name)` | `x == ""`; a variable, parameter, `#define` or macro is defined |
-| `attr(x, "T")` | an HLASM attribute of the **text** of `x`: `T` type, `L` length, `S` scale, `I` integer, `D` defined, `O` operation code, `K`, `N` as above |
+| `empty(x)`, `defined(name)` | `x == ""`; a variable, parameter, `#define` or macro of that name exists |
+| `attr(x, "T")` | HLASM attribute of the text `x`: `T` type (`N` self-defining, `O` omitted, `U` anything else), `L` length of a constant, `D` defined (see section 9) |
 
-`attr()` is where macro code needs the assembler's symbol table; see
-section 9.
-
-## 8. Control flow without structure: `#goto`
-
-In SYS1.MACLIB this is the **main path, not a fallback** (section 0): the macros are written as branches. Any HLASM macro can be converted if the language has an unconditional jump,
-because `AIF`/`AGO`/`ANOP` and sequence symbols are exactly that:
+## 6. Statements
 
 ```
-#label top
-#if i > n
-#goto done
-#endif
- ...
-#goto top
-#label done
+#let x = expr                       declare
+#x = expr   #x += 1   #x++          assign (also #x[i] = v: a list grows, the gap is "")
+#global x = expr
+
+#if (cond) {                        #while (cond) {
+    ...                                 ...
+#} else if (cond) {                 #}
+    ...
+#} else {                           #for (let i = 0; i < n; i++) {   ...  #}
+    ...                             #for (let r : regs) {            ...  #}
+#}                                  #for (let ch : chars(s)) {       ...  #}
+
+#switch (expr) {                    #break   #continue   #return
+#case "A", "B":                     #emit expr           emit the text of expr as a line ("\n" splits)
+    ...                             #note expr           message, severity info
+#case "C":                          #warning expr        message, assembly goes on
+    ...                             #error expr          message, assembly fails
+#default:                           #goto name  /  #label name     last resort (section 10)
+    ...
+#}
 ```
 
-`hlasm2za` first tries to recognise the common patterns (a forward `AIF`
-skipping lines becomes `#if`, a backward `AIF` to a label above becomes
-`#while`, `AGO` over an `ANOP` pair becomes `#else`) and falls back to
-`#goto`/`#label` otherwise, so that the conversion **never fails** on
-control flow. Rules: labels are local to a macro or to open code, a jump may
-leave any block and enter none (it may not jump into a `#while`, `#for`,
-`#foreach`, `#switch` or `#if` body; ZA4113). The computed `AGO (&I).A,.B,.C`
-becomes a `#switch`.
+* `if`, `while`, `for`, `switch` take their condition in parentheses and
+  open a block with `{` at the end of the line; `#}` closes it; `else` and
+  `else if` follow the `}` on the same line (`#} else {`).
+* `switch` compares with `==` (strings and ints), has no fall through and no
+  need for `break` (a `#break` leaves the switch early); `#case a, b:` lists
+  several values; `#default:` is optional.
+* `#return` leaves the macro (HLASM `MEXIT`); at the end of the body the macro
+  ends by itself (`MEND`).
+* `#error`/`#warning`/`#note` take an expression; the text is reported with the
+  position of the macro body line and "in expansion of macro X at file:line".
+  HLASM `MNOTE` maps: severity 0 and `*` to `#note`, 1-4 to `#warning`,
+  5 and more to `#error`.
+* `#emit` produces a line of **computed** text, for the rare case that a
+  model statement cannot say it (`#emit op + " " + operands`). A model
+  statement is always preferred.
+* Open code accepts the same statements; the old unbraced preprocessor `#if
+  expr` ... `#endif` stays for conditional text (a `#if` that ends in `{` is the
+  braced form). `#error text` and `#warning text` outside a macro keep their
+  raw text form.
+* A loop runs at most `-macro-steps N` statements per expansion in total
+  (default 1,000,000, ZA4121): this stands in for HLASM's `ACTR`.
 
-Implementation note: the body is compiled once into a flat array of
-statements with resolved jump targets (`#if` = conditional jump to the next
-`#elif`/`#else`/`#endif`, `#while` = jump back), so `#goto`, `#break` and
-`#continue` are plain jumps and there is no recursion in the interpreter.
+## 7. Macro definition, call, library
 
-## 9. When the macro needs the assembler's symbols
+```
+#macro [name:] NAME(p1, p2 = default, p3, rest..., kw = default) {
+    ...
+#}
+```
 
-**Status after the survey (section 0): not needed for SYS1.MACLIB.** No macro asks `D'`, `I'`, `S'` or `O'`, `L'&x` appears 17 times and `T'` is only compared with `N`, `O`, `U`, all answerable from the argument text. M1 is therefore the whole plan for now, and M2 stays as an extension if a user macro needs it.
+* The macro name is an operation code, folded like a mnemonic. A macro
+  hides an instruction or directive of the same name (warning ZA4106). A
+  later `#macro` of the same name replaces the earlier one (warning).
+* Parameters: `p` is positional; `p = expr` is optional with a default
+  (any expression, may use earlier parameters); a missing argument without
+  default is `""` (testable with `empty(p)`). `rest...` collects the
+  remaining positional arguments as a list (HLASM `&SYSLIST(n)` beyond the
+  named ones); parameters after it, or after a bare `*`, can only be given by
+  keyword (HLASM keyword parameters). Without `rest...` too many positional
+  arguments are an error (ZA4102).
+* The optional `name:` before the macro name names the **name field** of the
+  call: `#macro lbl: SAVE(regs)` ... `&lbl:  DS 0H`. It is also always
+  available as `sys.label`.
+* **Call syntax is the ordinary statement syntax**: operands split at top
+  level commas by the reader's operand scanner, so `C'A,B'`, `(1,2)` and
+  `D(X,B)` are each one argument, and an argument is the exact text written
+  (after `#define` expansion). `name=value` is a keyword argument; an empty
+  argument (`A,,C`) means "use the default". Calls may continue over
+  several lines with a trailing comma.
+* **Built-ins** (read only): `sys.label` (name field of the call, `""` if
+  none; `&NAME`), `sys.ndx` (`"0001"`, `"0002"`..., unique per expansion;
+  `&SYSNDX`), `sys.sect` and `sys.sectype` (current control section and its
+  kind; `&SYSECT`, `&SYSSTYP`), `sys.macro`, `sys.level` (`&SYSMAC`,
+  nesting), `sys.args` (all positional arguments as a list; `&SYSLIST`),
+  `sys.argc`; `__FILE__`, `__LINE__` (the call), `__GOFF__`/`__ELF__`,
+  `__ASCII__`/`__EBCDIC__` as in the preprocessor.
+* **Library macros.** An unknown operation code `FOO` is looked up in the
+  macro directories (`-M DIR`, repeatable; the `-I` directories last) as
+  `foo.zmac`, then `foo.mac`. The file may hold several `#macro`s; those
+  named `FOO` define the call, all are defined. A file is read once per run.
+  This is HLASM's library macro search and makes macros that call macros
+  (`SAVE` calls `SYSSTATE`) work without `#include`. `hlasm2za -macro-dir
+  DIR` converts a directory of members to `.zmac` files.
+* Nesting: a macro may call macros and itself (depth limit 64, ZA4120).
+  `#macro` inside a macro body is not allowed.
+* `#define` stays for token substitution inside operands. A macro is found
+  in the operation field only; `#define` names are expanded first.
 
-Most macros decide from their *arguments*. Some ask about symbols the
-assembler has already seen: `AIF (D'&X)`, `L'&X`, `T'&X`, or use `&SYSECT`.
-The preprocessor runs before the assembler (`pp_run` produces all lines,
-then pass 1, then pass 2), so these have to be provided in two steps:
+## 8. Emitted text
 
-* **M1 (text time).** `attr(x, ...)` answers only from the argument text:
-  `T` gives `N` for a self-defining term (decimal, `X'..'`, `B'..'`, `C'..'`), `O` for an omitted (empty) argument and `U` for everything else, which is exactly what the library compares with; `L` the byte length of a self-defining constant, `D` false for every symbol. `__SECT__` is the last `CSECT`/`DSECT`/... name found by a
-  light scan. Asking `L`, `S`, `I` or `D` of a symbol gives the warning ZA4130 "attribute of a symbol is not known at macro time" and the "undefined" answer.
-* **M2 (pass 1 interleaved).** The expansion happens inside assembler pass
-  1, line by line, like HLASM: a statement whose operation code is a macro
-  is expanded when pass 1 reaches it, with the symbol table as it is at that
-  point (forward references are undefined, as in HLASM), and the generated
-  lines are inserted into the line array that pass 2 reads. Open-code
-  `#if`/`#while` that use `attr()` are executed the same way. This
-  needs `pp.c` to become a pull interface (`pp_next_line`) and the
-  assembler's pass 1 loop to ask it for lines; that is the larger change
-  and is done after M1.
+* A model statement becomes one source line after substitution; the result
+  is **rescanned as source**, so a variable operation field (`&op &a,&b`)
+  can name an instruction, a directive or another macro. A line that is only
+  blanks is dropped.
+* The line keeps the file and line of the model statement; diagnostics add
+  "in expansion of macro X at file:line" (the call is the outer position).
+  The listing shows the generated lines with `#pragma print gen` (HLASM
+  `PRINT GEN`); the default shows the call line only.
+* `-E` prints the expansion: every call line followed by the lines it made,
+  indented as emitted.
 
-## 10. Conversion by `hlasm2za` (planned)
+## 9. Kept from HLASM, and the symbol table
+
+Where the semantics matter for the 1958 macros of SYS1.MACLIB (section 0):
+
+* conditions and comparisons behave as section 5 says; `SETB` values are
+  0/1 in arithmetic and `"1"`/`"0"` in strings (`str(b)` gives `"1"`);
+* `SETA` is 32 bit in HLASM and 64 bit here (differs only on overflow);
+* string length limit 4064 as in HLASM is not enforced;
+* sublists: `&REG(1)` in HLASM is `reg[0]` (element 0), `N'&REG` is
+  `count(reg)`, `K'&REG` is `len(reg)`; an argument that is not a list has
+  count 1 (as `N'`), and an omitted one count 0 and `T'` = `O`.
+
+**Symbol table.** Nothing in SYS1.MACLIB asks the assembler for `D'`, `I'`,
+`S'` or `O'`, `L'&x` of a symbol appears 17 times and `T'` is only
+compared with `N`, `O`, `U`. So `attr()` answers from the argument text only
+(`T`: `N` for a self-defining term, `O` for omitted, `U` otherwise; `L`
+for a constant); `D`, `I`, `S` of a symbol give the warning ZA4130 and the
+"undefined" answer. `sys.sect` is the last `CSECT`/`RSECT`/`DSECT`/`START`/`COM`
+name found by a light scan of the lines already read.
+An extension M2 (macros expanded inside assembler pass 1, with the real symbol
+table) is possible later (`pp.c` becoming a pull interface) and is not
+planned.
+
+## 10. Conversion by `hlasm2za`: recovering structure
+
+Only the **semantics** are carried over. Statement by statement:
 
 | HLASM | zosasm |
 |---|---|
-| `MACRO` / prototype / `MEND` | `#macro NAME(params)` / `#endmacro`; `&NAME` -> `__LABEL__`; `&K=v` -> `k = "v"`; `&P,&Q` -> `p, q` |
-| `LCLA/LCLB/LCLC &X`, `GBLx` | `#let x = 0` / `""`, `#global x = 0` (declared where first assigned if the local scope is simple) |
-| `&X SETA expr`, `SETB`, `SETC` | `#set x = expr` (`SETB` -> 0/1, `SETC` strings) |
-| `AIF (cond).L`, `AGO .L`, `ANOP`, `.L` | `#if`/`#while`/`#else` when recognised, else `#goto`/`#label` |
-| `MEXIT` | `#return` |
+| `MACRO` / prototype / `MEND` | `#macro NAME(params) {` / `#}`; `&NAME` -> `name:` binding or `sys.label`; `&K=v` -> keyword parameter with default; stops at `MEND`, drops columns 73-80 and what follows `MEND` |
+| `LCLA/B/C &X(n)` | `#let x = 0` / `0` / `""`, `#let x = list()` for arrays |
+| `GBLx` | `#global x = 0` / `""` (the first declaration's initial value) |
+| `&X SETA e`, `SETB`, `SETC` | `#x = e` (declared with `#let` where first assigned in the block) |
+| `AIF`, `AGO`, `ANOP`, `.SEQ`, `MEXIT`, `MEND` reached | structured control flow (below) |
+| `AIF ('&X' EQ '')` | `#if (x == "")` ; `AND/OR/NOT` -> `&& \|\| !` |
+| `'&X'(i,n)`, `K'&X`, `N'&X`, `T'&X`, `INDEX` | `substr(x, i-1, n)`, `len(x)`, `count(x)`, `attr(x,"T")`, `index(x, ...)` (0-based, `+1-1` folded) |
+| `&X`, `&X.`, `&X.Y` in model text | `&x`, `&x`, `&{x}Y`; `&REG(1)` -> `&reg[0]` |
+| `&NAME  DS 0H` | `&sys.label:  DS 0H` |
+| model statement with label `L1  LA ...` | `L1:  LA ...` (colon) |
+| `.* text` comment | `// text` |
 | `MNOTE sev,'text'` | `#note`, `#warning`, `#error` |
-| `AIF ('&X' EQ '')` | `#if x == ""` |
-| `&X`, `&X.`, `&X.Y` in model text | `&x`, `&x`, `&{x}Y` |
-| `&&` | `&&` |
-| `&P(n)`, `&SYSLIST(n)`, `N'&P`, `K'&P` | `p[n-1]`, `__ARGS__[n-1]`, `count(p)`, `len(p)` |
-| `T'&P`, `L'&P` ... in `AIF` | `attr(p, "T")`, `attr(p, "L")` (macro time); `L'&P` inside a model statement stays (the assembler does it) |
-| `&SYSNDX`, `&SYSECT`, `&SYSLIST`, `&SYSMAC` | `__NDX__`, `__SECT__`, `__ARGS__`, `__MACRO__` |
-| `&(&A)` created names, `&A(&I)` subscripted SET symbols | `#set` on a list; created names are not convertible (reported) |
-| `AINSERT`, `AREAD`, macro generating macros, `OPSYN` | reported, left commented |
-| `COPY` inside a macro | `#include` at definition time (as HLASM) |
+| `&SYSNDX`, `&SYSECT`, `&SYSLIST(n)` | `sys.ndx`, `sys.sect`, `sys.args[n-1]` |
+| `ACTR` | dropped (the step limit replaces it) |
+| `AREAD`, `OPSYN`, `PUNCH`, `AINSERT`, macro definitions inside macros, created names | reported, left as comments |
 
-Arithmetic in `SETA` is 32 bit in HLASM and 64 bit here; the difference
-shows only on overflow (documented; no conversion needed).
+**Control flow.** The converter does not translate branch by branch. A
+quick feasibility check on the library (a crude reading of `AIF`/`AGO`/`MEXIT`
+at statement level, so only indicative): of 1958 macros, **585 (30%) have a
+backward branch** (a loop), and **21 (1%) have an irreducible flow graph**
+(the smallest are `IGGCSIF`, `QEDIT`, `STCKSYNC`, `IHADVA`, `TGET`); the other
+99% can be written with `if`/`while`/`break`/`return` only. The converter
+
+
+
+1. cuts the body into basic blocks at sequence symbols, `AIF`, `AGO`, `MEXIT`
+   and builds the flow graph (a `.SEQ ANOP` with one predecessor is merged away);
+2. removes unreachable blocks and `ACTR`;
+3. copies small **exit blocks** (a message call plus `MEXIT`, such as
+   `.E1  IHBERMAC 28,303 / MEXIT`) into every branch to them, so error
+   exits become `#if (cond) { ...; #return }` guard clauses at the top;
+4. finds loops (natural loops, a back edge to a dominating header) and writes
+   `#while (cond)` when the header tests the exit first, otherwise
+   `#while (true) { ... #if (!cond) { #break } ... }`; counted loops (`i`
+   initialised, tested, stepped by a constant) are written as `#for`;
+5. finds `if` / `else` by branch and join (the immediate post dominator is the
+   end of the construct; a branch that only leaves the construct
+   becomes a `#break`/`#continue`/`#return` without `else`);
+6. turns a chain of `AIF ('&X' EQ 'A')` tests of one variable against
+   constants into `#switch`;
+7. for what is still unstructured (several entries into a loop): `#let pc = 0`
+   plus a `#while`/`#switch` over `pc`; only if that is refused, `#goto`;
+8. negates conditions the readable way (`!(a == b)` -> `a != b`, De Morgan),
+   lower-cases names, keeps `.*` comments as `//`, indents by block.
+
+Each conversion is checked mechanically: `hlasm2za -flat` writes the plain
+branch version (`#goto`/`#label` for every sequence symbol) and the
+tests expand the flat and the structured version of a macro for many argument
+sets and require **identical output**. The quality measure is the number of
+`#goto` and `pc` fallbacks over the library (goal: none for reducible
+macros; the real number is unknown until it is built).
 
 ## 11. Diagnostics (ZA41xx, new block)
 
 | code | meaning |
 |---|---|
-| ZA4100 | macro syntax: definition, unclosed `#macro`/`#if`/`#while`, nested `#macro` |
+| ZA4100 | macro syntax: unclosed `{`, `#macro` inside a body, bad statement |
 | ZA4101 | unknown or duplicate parameter / keyword in a call |
 | ZA4102 | too many or too few arguments |
 | ZA4103 | argument text is unbalanced (quote, parenthesis) |
+| ZA4104 | model statement in column 1 of a macro body without `#`, `//`, `*` |
 | ZA4106 | macro hides an instruction (warning) |
+| ZA4107 | variable hides an outer one (warning) |
 | ZA4110 | `&name` with no such variable |
 | ZA4111 | unknown identifier in a macro expression |
-| ZA4112 | type error (list index out of range, `int()` of text, divide by 0) |
-| ZA4113 | `#goto` to an unknown label or into a block |
+| ZA4112 | type or range error (index, `substr`, `int()` of text, division by 0) |
+| ZA4113 | `#goto` to an unknown label, or into a block |
 | ZA4120 | macro nesting too deep |
 | ZA4121 | step limit reached |
-| ZA4130 | attribute of a symbol is not available at macro time (M1) |
+| ZA4130 | attribute of a symbol is not available at macro time (warning) |
 
-Each message points at the macro body line and carries "in expansion of
-macro X at file:line", the call being the outer position.
+Each message points at the macro body line and carries "in expansion of macro X
+at file:line".
 
 ## 12. Plan and tests
 
-1. **M1: language core** (`src/macro.c`, `macro.h`; hooks in `pp.c`):
-   expression parser and evaluator, `#macro` collection, call matching
-   (reusing `split_operands`), model-statement substitution, the compiled
-   statement array with jumps, built-ins, `attr()` over text, `__SECT__`
-   from a light scan of `CSECT`/`DSECT`/`START`/`RSECT`, diagnostics, open-code
-   `#let/#set/#while`, `-M` library lookup. Tests: `tests/test_macro.c`
-   golden expansions per construct, error cases, step limit, recursion,
-   keyword/default/variadic calls, `#goto`, nested macros, an expression
-   parser fuzz loop.
-2. **C1: `hlasm2za` conversion** of `MACRO`..`MEND` (statement by
-   statement with `#goto`/`#label`; structure patterns later), `&X.`
-   rewriting, 1-based to 0-based indexes (`x + 1 - 1` folded), `''` to `"'"`,
-   `AND/OR/NOT` to `&& || !`, `-macro-dir`; stops at `MEND`, drops columns
-   73-80; reports `AREAD`, `OPSYN`, `PUNCH`, `AINSERT`. **Acceptance test
-   (local, not in the repository, the directory is read in place via
-   `ZASM_MACLIB=/path/maclib_utf8 make test-maclib`):** every one of the
-   1656 macros converts and the result *compiles* (definition parsed, bodies
-   checked) with no error; then a hand selected set (`SAVE`, `RETURN`,
-   `ABEND`, a keyword heavy one) is expanded for several argument sets and
-   the output checked by hand against the HLASM source (**no HLASM is
-   available**, so the expected text is our reading of the Language
-   Reference and the macro source).
-3. Guide chapter, `-E` shows expansions, listing `PRINT GEN`.
-4. **M2 (only if needed):** interleaved expansion with the symbol table
-   (section 9).
+1. **M1: the language** (`src/macro.c`, `macro.h`; hooks in `pp.c`): lexer
+   and parser for macro code (line oriented, braces), compile to a flat
+   statement array with jumps, evaluator with the value types and functions,
+   argument splitting (reusing `split_operands`), model statement
+   substitution and layout, `-M` library lookup, built-ins, `-E`
+   expansion, diagnostics. Tests (`tests/test_macro.c`): every statement and
+   function, scoping, globals, keyword/default/variadic calls, nested
+   macros, string comparison rule, step limit, error cases, an expression
+   fuzz loop.
+2. **C1: `hlasm2za`** (`src/convert.c`, a new `src/flow.c`): statement
+   translation, flow graph and structuring (section 10), `-flat`,
+   `-macro-dir`. Tests: the flat/structured equivalence on generated argument
+   sets; hand made macros with each idiom (forward skip, backward loop,
+   join, shared error exit, `AIF` chain on one variable); acceptance run
+   over the 1958 macros of `maclib_utf8` (local, not in the repository:
+   `ZASM_MACLIB=/home/knoppix/go-dev/maclib_utf8 make test-maclib`): all
+   convert, all compile, `#goto` count reported, a selected set
+   (`SAVE`, `RETURN`, `ABEND`, a keyword heavy one) expanded and read by a
+   human against the HLASM source (**no HLASM is available** to compare
+   with).
+3. Guide chapter, listing `PRINT GEN`, `-E` polish.
 
-Open points for the user: **D1** (`&` marker), **D2** (0-based indexing; the
-survey shows 143k subscript uses, so converted code will carry many
-`- 1`s that the converter folds when the index is a constant; a 1-based
-list type would avoid them but is unlike C), case insensitive names
-(section 4), whether `MNOTE *,` (237 uses, comment-like) becomes `#note`,
-and the file naming for converted macros (`.zmac`, section 5).
+Decided: D1 `&` as the substitution marker; D2 0-based indexing, `-1`
+adjustments by the converter. Remaining questions: file extension `.zmac`
+for converted macros, and whether `MNOTE *,` (237 uses, comment-like) should
+become `#note` (current plan: yes).
