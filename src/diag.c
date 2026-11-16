@@ -185,6 +185,23 @@ int rep_error_count(const Reporter *r) { return r->nerr; }
 int rep_warning_count(const Reporter *r) { return r->nwarn; }
 int rep_too_many(const Reporter *r) { return r->max_errors > 0 && r->nerr >= r->max_errors; }
 size_t rep_count(const Reporter *r) { return r->diags.n; }
+size_t rep_mark(const Reporter *r) { return r->diags.n; }
+
+void rep_rewind(Reporter *r, size_t mark) {
+    size_t i;
+    if (mark > r->diags.n) return;
+    r->diags.n = mark;
+    r->nerr = r->nwarn = 0;
+    for (i = 0; i < mark; i++) {
+        Severity sev = r->diags.v[i]->sev;
+        if (sev >= SEV_ERROR)
+            r->nerr++;
+        else if (sev == SEV_WARNING) {
+            r->nwarn++;
+            if (r->warn_error) r->nerr++;
+        }
+    }
+}
 const Diag *rep_get(const Reporter *r, size_t i) { return r->diags.v[i]; }
 
 static int cmp_span(const Diag *x, const Diag *y) {

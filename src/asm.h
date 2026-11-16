@@ -25,6 +25,7 @@ typedef struct Asm Asm;
 typedef enum { K_CSECT, K_RSECT, K_DSECT, K_COM } SectKind;
 const char *sectkind_name(SectKind k);
 
+#define CLASS_RMODE_NONE 0xFF /* CATTR RMODE(NONE): the class ED carries no RMODE */
 typedef struct {
     int align; /* log2, -1 = unset */
     uint8_t rmode;
@@ -34,6 +35,8 @@ typedef struct {
     int priority; /* -1 = none */
     int merge;
     int tasking;
+    int movable, removable;
+    int cattr; /* made by CATTR: no AMODE, defaults of CATTR (oracle) */
 } ClassAttr;
 
 typedef enum { REL_ADDR, REL_V, REL_Q, REL_CXD, REL_RI, REL_LEN, REL_R, REL_QY } RelocKind;
@@ -56,6 +59,7 @@ struct Piece {
     int64_t loc;   /* current location counter, relative to start */
     int64_t max;   /* highest location reached (ORG can move back) */
     int64_t start; /* offset in the class after layout */
+    int64_t hint;  /* start found by the previous assembly run: items align to hint + loc */
 };
 
 int64_t piece_len(const Piece *p);
@@ -86,6 +90,8 @@ struct Section {
     ClassVec classes;
     uint8_t amode, rmode; /* GOFF_AMODE_* / GOFF_RMODE_*, 0 = unset */
     Piece *cur;           /* location counter to resume with */
+    Section *prv_owner;   /* DSECT: the section started last when it was defined (owns its pseudo register) */
+    Piece *text_cur;      /* last location counter of the first class (B_TEXT): CSECT resumes there */
     uint32_t esd;
     int max_align;        /* strictest alignment of the data (bytes) */
     int prv;              /* needs the pseudo register class B_PRV */
@@ -158,6 +164,7 @@ struct Symbol {
     int used;
     uint32_t esd;    /* ER esdid */
     uint32_t ld_esd; /* LD esdid */
+    uint32_t r_er;   /* ER esdid made for an R-type constant naming this local symbol */
     /* external dummy section (SYM_DXD, or a DSECT used in Q/J: xd) */
     int64_t xd_len;
     int xd_align;     /* bytes */
@@ -460,6 +467,8 @@ struct Asm {
     size_t lit_owner; /* LitRec.owner of the literals being assembled */
     int using_logged; /* highest Using.id copied to Module.usings */
     int strict;       /* registers only as %r<n> or a name made with EQU %r<n> */
+    StrMap *hints;    /* piece key -> int64_t start of the previous run (LOCTR alignment) */
+    int round8;       /* fallback when the starts do not settle: pieces start on a doubleword */
     StrMap opsyn;     /* OPSYN: upper case operation code -> its meaning ("" = deleted) */
     int afpr;         /* ACONTROL AFPR: FP registers 1, 3, 5, 7 to 15 are allowed */
     int print_depth;  /* PUSH PRINT entries (the listing keeps the saved states) */

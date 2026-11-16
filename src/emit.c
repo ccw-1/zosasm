@@ -49,11 +49,11 @@ static uint32_t class_target(const Class *c) { return c->part ? c->pr : c->esd; 
     } while (0)
 
 static const char *emit_class(GoffWriter *w, const Module *m, Section *s, Class *c) {
-    uint8_t rmode = c->attr.rmode ? c->attr.rmode : s->rmode;
+    uint8_t rmode = c->attr.rmode == CLASS_RMODE_NONE ? 0 : c->attr.rmode ? c->attr.rmode : s->rmode;
     uint8_t align = c->attr.align >= 0 ? (uint8_t)c->attr.align : GOFF_ALIGN_DBL;
     uint8_t exec = (uint8_t)c->attr.executable;
     uint8_t loading = GOFF_LOAD_NOW;
-    uint8_t bind = c->attr.merge ? GOFF_BIND_MERGE : GOFF_BIND_CAT;
+    uint8_t bind = c->attr.merge || c->part ? GOFF_BIND_MERGE : GOFF_BIND_CAT;
     GoffESD ed, pr;
     const char *e;
     if (c->attr.noload)
@@ -67,7 +67,7 @@ static const char *emit_class(GoffWriter *w, const Module *m, Section *s, Class 
     set_name(&ed, c->name);
     ed.name_space = GOFF_NS_NORMAL;
     ed.length = (uint32_t)c->len;
-    ed.attr.amode = s->amode;
+    ed.attr.amode = c->attr.cattr ? 0 : s->amode;
     ed.attr.rmode = rmode;
     ed.attr.bind_algorithm = bind;
     ed.attr.tasking = (uint8_t)c->attr.tasking;
@@ -75,7 +75,7 @@ static const char *emit_class(GoffWriter *w, const Module *m, Section *s, Class 
     ed.attr.executable = exec;
     ed.attr.loading = loading;
     ed.attr.alignment = align;
-    ed.attr.common = s->kind == K_COM;
+    ed.removable = c->attr.removable;
     if (c->attr.fill >= 0) {
         ed.has_fill = 1;
         ed.fill = (uint8_t)c->attr.fill;
@@ -94,7 +94,8 @@ static const char *emit_class(GoffWriter *w, const Module *m, Section *s, Class 
     set_name(&pr, c->part);
     pr.name_space = GOFF_NS_PARTS3;
     pr.length = (uint32_t)c->len;
-    pr.attr.amode = s->amode;
+    pr.attr.amode = c->attr.cattr ? 0 : s->amode;
+    pr.attr.rmode = rmode;
     pr.attr.bind_algorithm = bind;
     pr.attr.tasking = (uint8_t)c->attr.tasking;
     pr.attr.read_only = c->attr.readonly;
@@ -103,10 +104,6 @@ static const char *emit_class(GoffWriter *w, const Module *m, Section *s, Class 
     pr.attr.alignment = align;
     if (c->attr.priority >= 0) pr.priority = (uint32_t)c->attr.priority;
     apply_xattr(&pr.attr, xattr_of(m, c->part));
-    if (c->attr.fill >= 0) {
-        pr.has_fill = 1;
-        pr.fill = (uint8_t)c->attr.fill;
-    }
     if ((e = goff_write_esd(w, &pr)) != NULL) return e;
     c->pr = pr.id;
     return NULL;
@@ -117,23 +114,15 @@ static const char *emit_class(GoffWriter *w, const Module *m, Section *s, Class 
 static const char *emit_prv(GoffWriter *w, const Module *m, Section *s) {
     GoffESD ed;
     size_t i;
-    int64_t max = 0;
     const char *e;
-    for (i = 0; i < m->sym_order.n; i++) {
-        Symbol *sym = m->sym_order.v[i];
-        if (sym->xd && sym->xd_sect == s && sym->xd_len > max) max = sym->xd_len;
-    }
     memset(&ed, 0, sizeof ed);
     ed.type = GOFF_ED;
     ed.parent = s->esd;
     set_name(&ed, "B_PRV");
-    ed.name_space = GOFF_NS_NORMAL;
-    ed.length = (uint32_t)max;
-    ed.attr.amode = s->amode;
-    ed.attr.rmode = s->rmode;
+    ed.name_space = GOFF_NS_PSEUDO;
+    ed.length = 0;
     ed.attr.bind_algorithm = GOFF_BIND_MERGE;
-    ed.attr.executable = GOFF_EXEC_DATA;
-    ed.attr.loading = GOFF_LOAD_NOW;
+    ed.attr.loading = GOFF_NOLOAD;
     ed.attr.alignment = GOFF_ALIGN_DBL;
     if ((e = goff_write_esd(w, &ed)) != NULL) return e;
     s->prv_esd = ed.id;
@@ -149,10 +138,8 @@ static const char *emit_prv(GoffWriter *w, const Module *m, Section *s) {
         set_name(&pr, sym->name);
         pr.name_space = GOFF_NS_PSEUDO;
         pr.length = (uint32_t)sym->xd_len;
-        pr.attr.amode = s->amode;
         pr.attr.bind_algorithm = GOFF_BIND_MERGE;
-        pr.attr.executable = GOFF_EXEC_DATA;
-        pr.attr.loading = GOFF_LOAD_NOW;
+        pr.attr.bind_strength = GOFF_STRENGTH_WEAK;
         pr.attr.alignment = lg;
         apply_xattr(&pr.attr, sym->xattr);
         if ((e = goff_write_esd(w, &pr)) != NULL) return e;
@@ -189,12 +176,12 @@ static int reloc_xd(const Class *c, const Reloc *r, GoffReloc *g, char *err, siz
         return 1;
     case REL_Q:
         g->reference = GOFF_REF_OFFSET;
-        g->referent = GOFF_REFERENT_LABEL;
+        g->referent = GOFF_REFERENT_CLASS;
         g->rid = t ? t->esd : r->cls->pr;
         return 1;
     case REL_QY: /* 20 bit long displacement field: bits 4 to 23 of 3 bytes */
         g->reference = GOFF_REF_LONGDISP;
-        g->referent = GOFF_REFERENT_LABEL;
+        g->referent = GOFF_REFERENT_CLASS;
         g->rid = t ? t->esd : r->cls->pr;
         g->length = 2;
         g->bit_length = 4;
@@ -218,7 +205,7 @@ static int reloc_xd(const Class *c, const Reloc *r, GoffReloc *g, char *err, siz
         g->reference = GOFF_REF_RTYPE;
         g->referent = GOFF_REFERENT_LABEL;
         g->store = 1;
-        g->rid = t->kind == SYM_EXT ? t->esd : t->ld_esd;
+        g->rid = t->kind == SYM_EXT ? t->esd : t->ld_esd ? t->r_er : 0;
         if (!g->rid) {
             snprintf(err, errsz, "R-type constant: \"%s\" has no label definition", t->name);
             return 0;
@@ -331,12 +318,13 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
     }
 
     /* external references: one ER per symbol, below the first section using it */
-#define NOTE(SYM, SECT)                                           \
+#define NOTE(SYM, SECT) NOTE_IF(SYM, SECT, sym_->kind == SYM_EXT)
+#define NOTE_IF(SYM, SECT, COND)                                  \
     do {                                                          \
         Symbol *sym_ = (SYM);                                     \
         int seen_ = 0;                                            \
         size_t q_;                                                \
-        if (sym_ && sym_->kind == SYM_EXT) {                      \
+        if (sym_ && (COND)) {                                     \
             for (q_ = 0; q_ < er_order.n; q_++)                   \
                 if (er_order.v[q_] == sym_) seen_ = 1;            \
             if (!seen_) {                                         \
@@ -349,7 +337,11 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
         for (ci = 0; ci < secs.v[si]->classes.n; ci++) {
             Class *c = secs.v[si]->classes.v[ci];
             SortKey *keys = sorted_relocs(c);
-            for (k = 0; k < c->relocs.n; k++) NOTE(c->relocs.v[keys[k].idx].target, secs.v[si]);
+            for (k = 0; k < c->relocs.n; k++) {
+                const Reloc *r_ = &c->relocs.v[keys[k].idx];
+                /* IBM HLASM makes an ER of the same name for an R-type constant naming a local entry */
+                NOTE_IF(r_->target, secs.v[si], sym_->kind == SYM_EXT || r_->kind == REL_R);
+            }
             free(keys);
         }
     if (m->entry) {
@@ -357,6 +349,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
         if (e && e->kind == SYM_EXT) NOTE(e, secs.v[0]);
     }
 #undef NOTE
+#undef NOTE_IF
 
     for (si = 0; si < secs.n; si++) {
         Section *s = secs.v[si];
@@ -425,7 +418,10 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
             if (sym->weak) er.attr.bind_strength = GOFF_STRENGTH_WEAK;
             apply_xattr(&er.attr, sym->xattr);
             TRY(goff_write_esd(w, &er));
-            sym->esd = er.id;
+            if (sym->kind == SYM_EXT)
+                sym->esd = er.id;
+            else
+                sym->r_er = er.id;
         }
     }
 
@@ -454,7 +450,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
     for (si = 0; si < secs.n; si++)
         for (ci = 0; ci < secs.v[si]->classes.n; ci++) {
             Class *c = secs.v[si]->classes.v[ci];
-            if (c->len == 0) continue;
+            if (c->len == 0 || secs.v[si]->kind == K_COM) continue;
             TRY(goff_write_text(w, class_target(c), 0, GOFF_STYLE_BYTE, c->data, (size_t)c->len));
         }
     for (k = 0; k < 2; k++)

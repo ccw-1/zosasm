@@ -414,9 +414,9 @@ static int xcon_reloc(Ctx *x, const GoffReloc *r, DRel *d) {
     char *name = NULL;
     DEr *er = NULL;
     if (!t || r->reference == GOFF_REF_ADDRESS || r->reference == GOFF_REF_RELIMM) return 0;
-    if ((r->reference == GOFF_REF_OFFSET && r->referent == GOFF_REFERENT_LABEL && !r->store &&
+    if ((r->reference == GOFF_REF_OFFSET && r->referent == GOFF_REFERENT_CLASS && !r->store &&
          n >= 1 && n <= 8) ||
-        (r->reference == GOFF_REF_LONGDISP && r->referent == GOFF_REFERENT_LABEL && !r->store &&
+        (r->reference == GOFF_REF_LONGDISP && r->referent == GOFF_REFERENT_CLASS && !r->store &&
          n == 2 && r->bit_length == 4 && r->bit_offset == 4)) {
         char kind = r->reference == GOFF_REF_LONGDISP ? 'q' : 'Q'; /* q = QY, 3 bytes */
         if (r->reference == GOFF_REF_LONGDISP) n = 3;
@@ -445,9 +445,20 @@ static int xcon_reloc(Ctx *x, const GoffReloc *r, DRel *d) {
     } else if (r->reference == GOFF_REF_RTYPE && r->referent == GOFF_REFERENT_LABEL && r->store &&
                (n == 3 || n == 4 || n == 8)) {
         if (t->kind == 'E') {
+            size_t q;
             k = 'R';
             er = t->p;
             name = er->name;
+            /* an ER named like a label definition of the module is what the assembler
+             * makes of R(label): no EXTRN for it (IBM HLASM, probe st6) */
+            for (q = 0; q < m->esds.n; q++) {
+                const GoffESD *ld = m->esds.v[q];
+                if (ld->type == GOFF_LD && ld->name_len == te->name_len &&
+                    !memcmp(ld->name, te->name, te->name_len)) {
+                    er = NULL;
+                    break;
+                }
+            }
         } else if (t->kind == 'L') {
             k = 'R';
             name = src_name(x, te, "label");
@@ -1172,7 +1183,7 @@ static void emit_body(Ctx *x, DClass *c) {
 
 /* ---- sections -------------------------------------------------------------------- */
 
-static void cattr_stmt(Ctx *x, DClass *c, uint8_t sect_rmode) {
+static void cattr_stmt(Ctx *x, DClass *c) {
     Buf ops = {0};
     const GoffESD *e = c->ed;
     const GoffBehavior *b = &e->attr;
@@ -1193,8 +1204,14 @@ static void cattr_stmt(Ctx *x, DClass *c, uint8_t sect_rmode) {
     if (b->read_only) ADD("READONLY");
     if (b->tasking == GOFF_TASK_RENT) ADD("RENT");
     if (b->tasking == GOFF_TASK_REUS) ADD("REUS");
-    if (b->tasking == GOFF_TASK_NONREUS) ADD("NONREUS");
-    if (b->rmode != sect_rmode && rmode_name(b->rmode)) ADD("RMODE(%s)", rmode_name(b->rmode));
+    /* a class made by CATTR is NONREUS and RMODE(24) unless told otherwise (IBM HLASM) */
+    if (b->tasking == GOFF_TASK_UNSPEC) ADD("TASKING(NONE)");
+    if (b->rmode != GOFF_RMODE_24) {
+        if (!b->rmode)
+            ADD("RMODE(NONE)");
+        else if (rmode_name(b->rmode))
+            ADD("RMODE(%s)", rmode_name(b->rmode));
+    }
 #undef ADD
     stmt(&x->out, c->name, "CATTR", buf_cstr(&ops));
 }
@@ -1262,7 +1279,7 @@ static void emit_section(Ctx *x, DSect *s, size_t sect_idx) {
     }
     for (i = 0; i < s->classes.n; i++) {
         DClass *c = s->classes.v[i];
-        if (i || strcmp(c->name, DEFAULT_CLASS) != 0) cattr_stmt(x, c, rmode);
+        if (i || strcmp(c->name, DEFAULT_CLASS) != 0) cattr_stmt(x, c);
         emit_body(x, c);
     }
 }

@@ -276,9 +276,9 @@ static void test_scopes(void) {
     /* every statement range lies in its scope */
     for (i = 0; i < z->stmts.n; i++) CHECK(z->stmts.v[i].scope < (int64_t)z->scopes.n);
     /* the LOCTR does not make a scope of its own, its bytes follow the first */
-    CHECK(z->stmts.v[3].scope == 0 && z->stmts.v[3].off == 8 && z->stmts.v[3].len == 4);
+    CHECK(z->stmts.v[3].scope == 0 && z->stmts.v[3].off == 4 && z->stmts.v[3].len == 4);
     /* re-entering the section resumes the last location counter */
-    CHECK(z->stmts.v[5].scope == 0 && z->stmts.v[5].off == 12 && z->stmts.v[5].len == 4);
+    CHECK(z->stmts.v[5].scope == 0 && z->stmts.v[5].off == 8 && z->stmts.v[5].len == 4);
     CHECK(z->scopes.v[3].kind == K_RSECT);
 }
 

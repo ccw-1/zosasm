@@ -751,7 +751,7 @@ void asm_align(Asm *a, int64_t n) {
     if (!a->cur || n <= 1) return;
     if (n > a->cur->cls->sect->max_align) a->cur->cls->sect->max_align = (int)n;
     a->in_align = 1;
-    asm_advance(a, (n - a->cur->loc % n) % n);
+    asm_advance(a, (n - (a->cur->hint + a->cur->loc) % n) % n);
     a->in_align = 0;
 }
 
@@ -840,13 +840,13 @@ static void layout(Asm *a) {
     size_t si, ci, pi;
     for (si = 0; si < a->mod->sections.n; si++) {
         Section *s = a->mod->sections.v[si];
-        s->cur = s->classes.v[0]->pieces.v[0];
+        s->cur = s->text_cur = s->classes.v[0]->pieces.v[0];
         for (ci = 0; ci < s->classes.n; ci++) {
             Class *c = s->classes.v[ci];
             int64_t off = 0;
             for (pi = 0; pi < c->pieces.n; pi++) {
                 Piece *p = c->pieces.v[pi];
-                if (s->kind != K_DSECT && off % 8 != 0) off += 8 - off % 8;
+                if (a->round8 && s->kind != K_DSECT && off % 8 != 0) off += 8 - off % 8;
                 p->start = off;
                 if (s->kind == K_DSECT) p->start = 0;
                 off = p->start + piece_len(p);
@@ -888,10 +888,10 @@ static void resolve_xd(Asm *a) {
         d = s->sect;
         if (!s->xd) {
             s->xd = 1;
-            s->xd_sect = r->sect;
+            s->xd_sect = d->prv_owner ? d->prv_owner : r->sect; /* IBM HLASM, probes st8 st9 */
             s->xd_len = d->classes.v[0]->len;
-            s->xd_align = d->max_align > 1 ? d->max_align : 1;
-            if (r->sect) r->sect->prv = 1;
+            s->xd_align = 8; /* doubleword whatever the DSECT contains (IBM HLASM, probes st8 st9) */
+            s->xd_sect->prv = 1;
         }
     }
 }
@@ -1060,6 +1060,15 @@ static void finish(Asm *a) {
             if (m->is_amode) s->amode = m->val; else s->rmode = m->val;
         }
     }
+    /* one-sided specifications (IBM HLASM, probe am1): RMODE 31/ANY implies AMODE 31,
+     * RMODE 64 AMODE 64 and AMODE 64 RMODE 31 */
+    for (i = 0; i < a->mod->sections.n; i++) {
+        Section *sc = a->mod->sections.v[i];
+        if (sc->kind == K_DSECT) continue;
+        if (!sc->amode && sc->rmode == GOFF_RMODE_31) sc->amode = GOFF_AMODE_31;
+        if (!sc->amode && sc->rmode == GOFF_RMODE_64) sc->amode = GOFF_AMODE_64;
+        if (!sc->rmode && sc->amode == GOFF_AMODE_64) sc->rmode = GOFF_RMODE_31;
+    }
     for (i = 0; i < a->xattrs.n; i++) {
         XattrStmt *x = a->xattrs.v[i];
         Symbol *s = asm_lookup(a, x->name);
@@ -1096,17 +1105,62 @@ static void run(Asm *a) {
 
 int za_strict_registers;
 
-Module *asm_assemble_all(const SrcLine *lines, size_t n, const char *name, Reporter *rep) {
+static Asm *assemble_once(const SrcLine *lines, size_t n, const char *name, Reporter *rep,
+                          StrMap *hints, int round8) {
     Asm *a = xcalloc(sizeof *a);
     a->rep = rep;
     a->scratch = rep_new(0);
     a->strict = za_strict_registers;
+    a->hints = hints;
+    a->round8 = round8;
     a->mod = xcalloc(sizeof *a->mod);
     a->mod->name = xstrdup(name);
     read_statements(&a->stmts, lines, n, rep);
     a->mod->stmts = a->stmts;
     run(a);
-    return a->mod;
+    return a;
+}
+
+/* Location counters (LOCTR) do not force alignment: a piece starts at the end of
+ * the one before it and its items align to the final address (HLASM, checked with
+ * the oracle probes lc1, lc2, st2, st5).  The start of a piece is only known
+ * after the whole source was read, so the assembly is repeated with the starts of
+ * the previous run as hints until they agree (modulo 4096, the largest alignment);
+ * this is only needed when a class has several pieces. */
+static StrMap *piece_starts(const Module *m, int *settled) {
+    StrMap *h = xcalloc(sizeof *h);
+    size_t si, ci, pi;
+    *settled = 1;
+    for (si = 0; si < m->sections.n; si++) {
+        const Section *s = m->sections.v[si];
+        for (ci = 0; ci < s->classes.n; ci++) {
+            const Class *c = s->classes.v[ci];
+            for (pi = 0; pi < c->pieces.n; pi++) {
+                const Piece *p = c->pieces.v[pi];
+                int64_t *v = xmalloc(sizeof *v);
+                char *key = xasprintf("%s\x01%s\x01%s", s->name, c->name, p->name);
+                *v = s->kind == K_DSECT ? 0 : p->start;
+                strmap_put(h, key, v);
+                if ((*v - p->hint) % 4096 != 0) *settled = 0;
+            }
+        }
+    }
+    return h;
+}
+
+Module *asm_assemble_all(const SrcLine *lines, size_t n, const char *name, Reporter *rep) {
+    StrMap *hints = NULL;
+    size_t mark = rep_mark(rep);
+    int it;
+    for (it = 0; it < 5; it++) {
+        Asm *a = assemble_once(lines, n, name, rep, hints, 0);
+        int settled;
+        StrMap *h = piece_starts(a->mod, &settled);
+        if (settled || rep_too_many(rep)) return a->mod;
+        hints = h;
+        rep_rewind(rep, mark);
+    }
+    return assemble_once(lines, n, name, rep, NULL, 1)->mod;
 }
 
 Module *asm_assemble(const SrcLine *lines, size_t n, const char *name, Reporter *rep) {

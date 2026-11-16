@@ -99,19 +99,21 @@ static void test_r_and_indirect(void) {
                              " EXTRN EXT1\n"
                              "EXT1 XATTR REFERENCE(DATA,INDIRECT)\n"
                              "LAB XATTR REFERENCE(INDIRECT)\n");
-    uint32_t lab_id = 0, ext_id = 0, t_id = 0;
+    uint32_t lab_id = 0, ext_id = 0, t_id = 0, labr_id = 0;
     const GoffESD *lab, *ext;
     const GoffReloc *r;
     if (!g) return;
     lab = find_esd(g, GOFF_LD, "LAB", &lab_id);
     ext = find_esd(g, GOFF_ER, "EXT1", &ext_id);
-    find_esd(g, GOFF_LD, "T", &t_id);
+    /* an R-type constant naming a local entry refers to an ER of the same name (IBM HLASM, probe st6) */
+    CHECK(find_esd(g, GOFF_ER, "LAB", &labr_id) != NULL);
+    CHECK(find_esd(g, GOFF_ER, "T", &t_id) != NULL);
     CHECK(lab && ext);
     if (!lab || !ext) return;
     CHECK(ext->attr.indirect && ext->attr.executable == GOFF_EXEC_DATA);
     CHECK(lab->attr.indirect);
     r = reloc_at(g, 0);
-    CHECK(r && r->rid == lab_id && r->reference == GOFF_REF_RTYPE && r->store && r->length == 4);
+    CHECK(r && r->rid == labr_id && lab_id && r->reference == GOFF_REF_RTYPE && r->store && r->length == 4);
     r = reloc_at(g, 4);
     CHECK(r && r->rid == ext_id && r->reference == GOFF_REF_RTYPE);
     r = reloc_at(g, 8);

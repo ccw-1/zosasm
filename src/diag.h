@@ -66,6 +66,9 @@ int rep_error_count(const Reporter *r);
 int rep_warning_count(const Reporter *r);
 int rep_too_many(const Reporter *r);
 size_t rep_count(const Reporter *r);
+/* a position in the report; rep_rewind drops the diagnostics added since (used when an assembly is repeated) */
+size_t rep_mark(const Reporter *r);
+void rep_rewind(Reporter *r, size_t mark);
 const Diag *rep_get(const Reporter *r, size_t i); /* in report order */
 /* Diagnostics ordered by file, line, column (stable); caller frees array. */
 const Diag **rep_sorted(const Reporter *r, size_t *n);

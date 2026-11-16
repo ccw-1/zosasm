@@ -35,7 +35,17 @@ static ClassAttr new_class_attr(void) {
     return c;
 }
 
-static Class *new_class(const char *name, Section *sect) {
+/* the start the piece had in the previous assembly run (asm_assemble_all) */
+static void piece_hint(Asm *a, Piece *p) {
+    char *key;
+    int64_t *v;
+    if (!a->hints || !p->cls->sect) return;
+    key = xasprintf("%s\x01%s\x01%s", p->cls->sect->name, p->cls->name, p->name);
+    v = strmap_get(a->hints, key);
+    if (v) p->hint = *v;
+}
+
+static Class *new_class(Asm *a, const char *name, Section *sect) {
     Class *c = xcalloc(sizeof *c);
     Piece *p = xcalloc(sizeof *p);
     c->name = xstrdup(name);
@@ -44,6 +54,7 @@ static Class *new_class(const char *name, Section *sect) {
     p->name = c->name;
     p->cls = c;
     vec_push(&c->pieces, p);
+    piece_hint(a, p);
     return c;
 }
 
@@ -97,13 +108,21 @@ void dir_section(Asm *a, Stmt *st) {
             sym->kind = SYM_SECT;
             sym->sect = sec;
         }
-        c = new_class("B_TEXT", sec);
+        c = new_class(a, "B_TEXT", sec);
         if (kind == K_RSECT) c->attr.readonly = 1;
         c->pieces.v[0]->name = sec->name;
         vec_push(&sec->classes, c);
-        sec->cur = c->pieces.v[0];
+        sec->cur = sec->text_cur = c->pieces.v[0];
         if (st->name[0]) asm_lookup(a, st->name)->piece = c->pieces.v[0];
         strmap_put(&a->secs, st->name, sec);
+        if (kind == K_DSECT) {
+            size_t q;
+            for (q = a->mod->sections.n; q > 0; q--)
+                if (a->mod->sections.v[q - 1]->kind != K_DSECT) {
+                    sec->prv_owner = a->mod->sections.v[q - 1];
+                    break;
+                }
+        }
         vec_push(&a->mod->sections, sec); /* dsects are laid out but never emitted */
     } else if (sec->kind != kind && !(sec->kind == K_CSECT && kind == K_RSECT) && a->pass == 1) {
         diag_note(rep_errorf(a->rep, "ZA3003", st->op_span,
@@ -114,7 +133,7 @@ void dir_section(Asm *a, Stmt *st) {
         return;
     }
     a->sect = sec;
-    a->cur = sec->cur;
+    a->cur = sec->text_cur;
     free(op);
 }
 
@@ -141,6 +160,7 @@ void dir_loctr(Asm *a, Stmt *st) {
         p->name = xstrdup(st->name);
         p->cls = cl;
         vec_push(&cl->pieces, p);
+        piece_hint(a, p);
         s = asm_define(a, st, st->name, st->name_span, &created);
         if (created) {
             s->kind = SYM_SECT;
@@ -150,6 +170,7 @@ void dir_loctr(Asm *a, Stmt *st) {
     }
     a->cur = p;
     a->sect->cur = p;
+    if (cl == a->sect->classes.v[0]) a->sect->text_cur = p;
 }
 
 /* ---- CATTR / XATTR ---------------------------------------------------- */
@@ -246,7 +267,15 @@ static int want_args(Asm *a, Stmt *st, const AttrArg *at, size_t n, const char *
 
 static const char *const cattr_keys[] = {"ALIGN",    "DEFLOAD",  "EXECUTABLE",    "FILL", "MERGE",
                                          "NOLOAD",   "NOTEXECUTABLE", "PART",   "PRIORITY",
-                                         "READONLY", "RENT",     "REUS",          "NONREUS", "RMODE"};
+                                         "READONLY", "RENT",     "REUS",          "NONREUS", "NOTREUS", "MOVABLE",
+                                         "REMOVABLE", "RMODE", "TASKING"};
+
+static int attr_is_none(const char *v) {
+    char *u = za_strupper(v);
+    int r = !strcmp(u, "NONE");
+    free(u);
+    return r;
+}
 
 static int attr_num(Asm *a, Stmt *st, const AttrArg *at, int64_t lo, int64_t hi, int *out) {
     char *usage;
@@ -277,15 +306,29 @@ static void apply_cattr(Asm *a, Stmt *st, Class *cl, const AttrArg *at) {
         if (attr_num(a, st, at, 0, 1 << 30, &n)) cl->attr.priority = n;
     } else if (!strcmp(k, "RMODE")) {
         uint8_t r;
-        if (!want_args(a, st, at, 1, "RMODE(24|31|64|ANY)")) return;
+        if (!want_args(a, st, at, 1, "RMODE(24|31|64|ANY|NONE)")) return;
+        if (attr_is_none(at->args.v[0])) { /* zosasm extension: no RMODE in the object */
+            cl->attr.rmode = CLASS_RMODE_NONE;
+            return;
+        }
         if (!rmode_byte(at->args.v[0], &r)) {
             diag_help(rep_errorf(a->rep, "ZA3034", at->asp.v[0], "invalid RMODE \"%s\"",
                                  at->args.v[0]),
-                      "use 24, 31, 64 or ANY");
+                      "use 24, 31, 64, ANY or NONE");
             st->bad = 1;
             return;
         }
         cl->attr.rmode = r;
+    } else if (!strcmp(k, "TASKING")) { /* zosasm extension: TASKING(NONE) = unspecified */
+        if (!want_args(a, st, at, 1, "TASKING(NONE)")) return;
+        if (!attr_is_none(at->args.v[0])) {
+            diag_help(rep_errorf(a->rep, "ZA3034", at->asp.v[0], "invalid TASKING \"%s\"",
+                                 at->args.v[0]),
+                      "use TASKING(NONE), or one of RENT, REUS and NONREUS");
+            st->bad = 1;
+            return;
+        }
+        cl->attr.tasking = GOFF_TASK_UNSPEC;
     } else if (!strcmp(k, "EXECUTABLE")) {
         cl->attr.executable = GOFF_EXEC_CODE;
     } else if (!strcmp(k, "NOTEXECUTABLE")) {
@@ -302,7 +345,11 @@ static void apply_cattr(Asm *a, Stmt *st, Class *cl, const AttrArg *at) {
         cl->attr.tasking = GOFF_TASK_RENT;
     } else if (!strcmp(k, "REUS")) {
         cl->attr.tasking = GOFF_TASK_REUS;
-    } else if (!strcmp(k, "NONREUS")) {
+    } else if (!strcmp(k, "MOVABLE")) {
+        cl->attr.movable = 1;
+    } else if (!strcmp(k, "REMOVABLE")) {
+        cl->attr.removable = 1;
+    } else if (!strcmp(k, "NONREUS") || !strcmp(k, "NOTREUS")) {
         cl->attr.tasking = GOFF_TASK_NONREUS;
     } else if (!strcmp(k, "PART")) {
         int created;
@@ -370,7 +417,10 @@ void dir_cattr(Asm *a, Stmt *st) {
             st->bad = 1;
             return;
         }
-        cl = new_class(st->name, a->sect);
+        cl = new_class(a, st->name, a->sect);
+        cl->attr.cattr = 1;
+        cl->attr.rmode = 1; /* RMODE(24) is the default of CATTR */
+        cl->attr.tasking = GOFF_TASK_NONREUS;
         parse_attrs(a, st, &ops, &ats);
         for (i = 0; i < ats.n; i++) apply_cattr(a, st, cl, &ats.v[i]);
         if (st->bad) return;
@@ -770,7 +820,9 @@ void dir_cnop(Asm *a, Stmt *st) {
     OperandVec ops = {0};
     int64_t b = 0, n = 0;
     int ok1, ok2;
-    static const uint8_t nop[2] = {0x07, 0x00};
+    /* HLASM pads with BCR 0,0 for a gap of 2 bytes and then as many
+     * 47000700 as fit (oracle: gap 6 = 0700 47000700) */
+    static const uint8_t nop[2] = {0x07, 0x00}, nop4[4] = {0x47, 0x00, 0x07, 0x00};
     if (!asm_need_section(a, st)) return;
     if (!asm_ops(a, st, 2, 2, &ops)) return;
     ok1 = asm_abs_expr(a, st, ops.v[0], "the CNOP byte offset", &b);
@@ -787,7 +839,10 @@ void dir_cnop(Asm *a, Stmt *st) {
     }
     asm_align(a, 2);
     asm_define_label(a, st, 2, 0);
-    while (a->cur->loc % n != b) asm_put(a, nop, 2);
+    if ((a->cur->hint + a->cur->loc) % n != b &&
+        ((b - (a->cur->hint + a->cur->loc) % n + n) % n) % 4 == 2)
+        asm_put(a, nop, 2);
+    while ((a->cur->hint + a->cur->loc) % n != b) asm_put(a, nop4, 4);
 }
 
 void dir_end(Asm *a, Stmt *st) {

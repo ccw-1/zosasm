@@ -1321,9 +1321,16 @@ void dir_dxd(Asm *a, Stmt *st) {
     s->xd = 1;
     s->xd_len = loc;
     s->xd_align = (int)align;
+    /* IBM HLASM (probe st6): the pseudo register belongs to the section started last,
+     * not to the one resumed by a later CSECT */
     s->xd_sect = a->sect;
+    for (k = a->mod->sections.n; k > 0; k--)
+        if (a->mod->sections.v[k - 1]->kind != K_DSECT) {
+            s->xd_sect = a->mod->sections.v[k - 1];
+            break;
+        }
     s->sect = a->sect;
-    a->sect->prv = 1;
+    s->xd_sect->prv = 1;
 }
 
 /* CXD: a fullword for the total length of the external dummy sections */

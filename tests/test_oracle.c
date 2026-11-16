@@ -290,6 +290,97 @@ static void test_dc_rules(void) {
     ok("DC EL3'1'", "411000");
 }
 
+/* the object conventions found with tools/oracle_obj.sh (probes cat1, cn1, com1, am1,
+ * lc1, st5, st6, st8, st9) */
+static void test_object_rules(void) {
+    GoffModule *g;
+    const GoffESD *e, *prv, *pr;
+    char *hex = NULL;
+    Reporter *rep;
+    Module *m;
+    /* CATTR classes: ALIGN(3), RMODE(24), NONREUS, AMODE none; PART = merge, no PR fill */
+    g = emit_src("S CSECT\nS AMODE 31\nS RMODE 31\n DC F'1'\n"
+                 "C1 CATTR\n DC F'2'\n"
+                 "C2 CATTR PART(PP),FILL(0),REMOVABLE,NOTEXECUTABLE\n DC F'3'\n END\n");
+    if (g) {
+        e = find_esd(g, GOFF_ED, "C1");
+        CHECK(e && e->attr.amode == 0 && e->attr.rmode == GOFF_RMODE_24 && e->attr.alignment == 3 &&
+              e->attr.tasking == GOFF_TASK_NONREUS);
+        e = find_esd(g, GOFF_ED, "C2");
+        CHECK(e && e->has_fill && e->removable && e->attr.bind_algorithm == GOFF_BIND_MERGE);
+        pr = find_esd(g, GOFF_PR, "PP");
+        CHECK(pr && !pr->has_fill && pr->attr.amode == 0 && pr->attr.rmode == GOFF_RMODE_24 &&
+              pr->attr.bind_algorithm == GOFF_BIND_MERGE);
+        e = find_esd(g, GOFF_ED, "B_TEXT");
+        CHECK(e && e->attr.amode == GOFF_AMODE_31 && e->attr.rmode == GOFF_RMODE_31);
+    }
+    /* one-sided AMODE and RMODE */
+    g = emit_src("A CSECT\nA RMODE ANY\n DC F'1'\nB CSECT\nB RMODE 64\n DC F'1'\n"
+                 "C CSECT\nC AMODE 64\n DC F'1'\nD CSECT\nD RMODE 24\n DC F'1'\n END\n");
+    if (g) {
+        size_t i, seen = 0;
+        for (i = 0; i < g->esds.n; i++) {
+            const GoffESD *x = g->esds.v[i];
+            char *nm;
+            if (x->type != GOFF_ED) continue;
+            nm = ebcdic_decode(g->esds.v[x->parent - 1]->name, g->esds.v[x->parent - 1]->name_len);
+            if (!strcmp(nm, "A")) { CHECK(x->attr.amode == GOFF_AMODE_31 && x->attr.rmode == GOFF_RMODE_31); seen++; }
+            if (!strcmp(nm, "B")) { CHECK(x->attr.amode == GOFF_AMODE_64 && x->attr.rmode == GOFF_RMODE_64); seen++; }
+            if (!strcmp(nm, "C")) { CHECK(x->attr.amode == GOFF_AMODE_64 && x->attr.rmode == GOFF_RMODE_31); seen++; }
+            if (!strcmp(nm, "D")) { CHECK(x->attr.amode == 0 && x->attr.rmode == GOFF_RMODE_24); seen++; }
+            free(nm);
+        }
+        CHECK(seen == 4);
+    }
+    /* COM: no common flag on the class, no text */
+    g = emit_src("S CSECT\n DC A(CM)\nCM COM\n DS CL16\n END\n");
+    if (g) {
+        size_t i, txt = 0;
+        e = find_esd(g, GOFF_SD, "CM");
+        CHECK(e && e->attr.common);
+        for (i = 0; i < g->esds.n; i++)
+            if (g->esds.v[i]->type == GOFF_ED && !g->esds.v[i]->attr.common) txt++;
+        CHECK(txt > 0);
+        for (i = 0; i < g->esds.n; i++) CHECK(!(g->esds.v[i]->type == GOFF_ED && g->esds.v[i]->attr.common));
+        CHECK(g->texts.n == 1);
+    }
+    /* pseudo registers: B_PRV is namespace 2, NOLOAD, length 0; the PR is weak, amode 0;
+     * Q constants refer to the class */
+    g = emit_src("S CSECT\n DC Q(DX)\n DC QY(DX)\nDX DXD F\n END\n");
+    if (g) {
+        prv = find_esd(g, GOFF_ED, "B_PRV");
+        CHECK(prv && prv->name_space == GOFF_NS_PSEUDO && prv->length == 0 && prv->attr.loading == GOFF_NOLOAD &&
+              prv->attr.amode == 0 && prv->attr.bind_algorithm == GOFF_BIND_MERGE);
+        pr = find_esd(g, GOFF_PR, "DX");
+        CHECK(pr && pr->attr.amode == 0 && pr->attr.bind_strength == GOFF_STRENGTH_WEAK && pr->attr.executable == 0);
+        CHECK(g->relocs.n == 2 && g->relocs.v[0].referent == GOFF_REFERENT_CLASS &&
+              g->relocs.v[1].referent == GOFF_REFERENT_CLASS);
+    }
+    /* CNOP pads with 0700 and 47000700 (probe cn1) */
+    m = assemble("S CSECT\n DC X'11'\n DS 0H\n CNOP 0,4\n DC X'22'\n DS 0H\n CNOP 0,8\n DC X'33'\n END\n", &rep);
+    CHECK(m && rep_error_count(rep) == 0);
+    if (m) {
+        Class *k = m->sections.v[0]->classes.v[0];
+        int64_t i;
+        hex = xmalloc((size_t)k->len * 2 + 1);
+        for (i = 0; i < k->len; i++) sprintf(hex + 2 * i, "%02X", k->data[i]);
+        CHECK_MSG(!strncmp(hex, "110007002200070033", 18), "%s", hex);
+    }
+    /* LOCTR pieces start at the next byte, items align to the final address, CSECT
+     * resumes the last location counter of B_TEXT (probes lc1, st5) */
+    m = assemble("Q1 CSECT\n DC X'01'\nL1 LOCTR\n DC X'02'\nA1 DC F'3'\n DC X'04'\nA2 DC D'5'\n DC X'09'\n"
+                 "L2 LOCTR\n DC X'06'\nA3 DC H'7'\n DC X'0A'\nL3 LOCTR\n DC X'0B'\nA4 DC X'0C'\n"
+                 "Q2 CSECT\n DC X'08'\nQ1 CSECT\n DC X'0D'\n END\n", &rep);
+    CHECK(m && rep_error_count(rep) == 0);
+    if (m) {
+        Class *k = m->sections.v[0]->classes.v[0];
+        int64_t i;
+        hex = xmalloc((size_t)k->len * 2 + 1);
+        for (i = 0; i < k->len; i++) sprintf(hex + 2 * i, "%02X", k->data[i]);
+        CHECK_MSG(!strncmp(hex, "01020000000000030400000000000000415000000000000009060007" "0A0B0C0D", 62), "%s", hex);
+    }
+}
+
 int main(void) {
     test_pairs();
     test_lengths();
@@ -299,5 +390,6 @@ int main(void) {
     test_goff_flags();
     test_elf_relimm();
     test_dc_rules();
+    test_object_rules();
     TEST_MAIN_END();
 }

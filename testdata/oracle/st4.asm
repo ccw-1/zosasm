@@ -1,0 +1,20 @@
+* XATTR and CATTR PART forms.
+P1       CSECT
+C1       CATTR PART(PT1)
+PT1      XATTR SCOPE(EXPORT)
+         DC    F'1'
+C2       CATTR PART(PT2)
+PT2      XATTR LINKAGE(XPLINK),SCOPE(LIBRARY)
+         DC    F'2'
+C3       CATTR PART(PT3)
+PT3      XATTR REFERENCE(CODE,DIRECT)
+         DC    F'3'
+C4       CATTR PART(PT4)
+PT4      XATTR REFERENCE(DATA,INDIRECT)
+         DC    F'4'
+P1       CSECT
+         DC    A(PT1,PT2),J(PT3),J(PT4)
+         ENTRY P1X
+P1X      DS    0H
+P1X      XATTR LINKAGE(XPLINK),SCOPE(EXPORT)
+         END

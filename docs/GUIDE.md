@@ -401,7 +401,13 @@ How the source maps to the object:
 
 `CATTR` attributes: `ALIGN(n)` (power of two, 0 to 12), `FILL(n)`,
 `PRIORITY(n)`, `RMODE(24|31|64|ANY)`, `EXECUTABLE`, `NOTEXECUTABLE`, `READONLY`,
-`NOLOAD`, `DEFLOAD`, `MERGE`, `RENT`, `REUS`, `NONREUS`, `PART(name)`.
+`NOLOAD`, `DEFLOAD`, `MERGE`, `RENT`, `REUS`, `NONREUS` (also written `NOTREUS`),
+`MOVABLE` (no effect on the object), `REMOVABLE`, `PART(name)`. A class made by
+`CATTR` has the defaults of IBM's assembler: `ALIGN(3)`, `RMODE(24)`,
+`NONREUS`, no AMODE (it does not take the AMODE of the section); `PART`
+classes are merged. Two zosasm extensions state "not specified" for objects
+of other tools (the disassembler writes them): `RMODE(NONE)` and
+`TASKING(NONE)`.
 
 `XATTR` attributes: `LINKAGE(OS|XPLINK)`, `SCOPE(SECTION|MODULE|LIBRARY|EXPORT|IMPORT)`,
 `REFERENCE(CODE|DATA[,DIRECT|INDIRECT])`, `PSECT(name)`.
@@ -1419,8 +1425,23 @@ run). `tools/oracle.sh testdata/oracle/X.asm` repeats such a run (it needs
 `ssh` access to a z/OS host with `as`; see the script header) and
 `tools/oracle_cmp.py` compares the listing. Known differences that remain:
 HLASM does the arithmetic of expressions in 32 bits (zosasm in 64),
-HLASM writes some extra empty classes (`B_IDRL`, `B_PRV`), and the parent
-section of an `EXTRN` is the section current at the statement in HLASM.
+HLASM writes some extra empty classes (`B_IDRL`, an empty `B_PRV`) that zosasm
+does not, and the parent section of an `EXTRN` is the section current at the
+statement in HLASM.
+
+A second oracle run compared the objects themselves (`tools/oracle_obj.sh`:
+`as -mgoff`, fetch the object, `zosasm -dump` of both, `tools/oracle_obj.py`
+compares ESD, text and RLD items structurally). What it changed: the CATTR
+defaults above, the padding of `CNOP` (`0700`, `47000700`), no common flag and
+no text for a `COM` class, `Q`/`QY` constants refer to the class of the pseudo
+register, `B_PRV` and its pseudo registers have the attributes of HLASM, a
+pseudo register (`DXD`, or a DSECT used in `Q`/`J`) belongs to the section
+started last (not the one resumed), `R(label)` of a local entry refers to an
+ER of the same name, `RMODE 31|ANY` alone gives `AMODE 31`, `RMODE 64` gives
+`AMODE 64`, `AMODE 64` gives `RMODE 31`, a `CSECT` statement resumes the last
+location counter of `B_TEXT`, and the location counters (`LOCTR`) of a class
+follow each other without padding, their items aligning to the final address
+(the assembly is repeated until the piece starts settle).
 
 **Not verified against IBM.** The
 following encodings were made from the documentation and from tests that

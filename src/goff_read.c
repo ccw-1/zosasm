@@ -284,10 +284,13 @@ void goff_dump(const GoffModule *m, FILE *w) {
         uint8_t ba[10];
         goff_behavior_pack(&e->attr, ba);
         fprintf(w, "ESD %-2d id=%u parent=%u off=%u len=%d ns=%d amode=%d rmode=%d scope=%d exec=%d align=%d "
-                   "ba=%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X \"%s\"\n",
+                   "ba=%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X fill=%d,%u fl=%d%d%d q=%u pri=%u ada=%u ext=%u,%u \"%s\"\n",
                 (int)e->type, (unsigned)e->id, (unsigned)e->parent, (unsigned)e->offset, (int)(int32_t)e->length,
                 e->name_space, e->attr.amode, e->attr.rmode, e->attr.scope, e->attr.executable,
-                e->attr.alignment, ba[0], ba[1], ba[2], ba[3], ba[4], ba[5], ba[6], ba[7], ba[8], ba[9], nm);
+                e->attr.alignment, ba[0], ba[1], ba[2], ba[3], ba[4], ba[5], ba[6], ba[7], ba[8], ba[9],
+                e->has_fill, (unsigned)e->fill, e->mangled, e->renameable, e->removable,
+                (unsigned)e->reserved_qwords, (unsigned)e->priority, (unsigned)e->ada_id,
+                (unsigned)e->ext_attr_id, (unsigned)e->ext_attr_off, nm);
         free(nm);
     }
     for (i = 0; i < m->texts.n; i++) {

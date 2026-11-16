@@ -1,0 +1,32 @@
+* CNOP padding bytes for every gap size.
+CN       CSECT
+         DC    X'11'
+         DS    0H
+         CNOP  0,4
+         DC    X'22'
+         DS    0H
+         CNOP  2,4
+         DC    X'33'
+         DS    0H
+         CNOP  0,8
+         DC    X'44'
+         DS    0H
+         CNOP  2,8
+         DC    X'55'
+         DS    0H
+         CNOP  4,8
+         DC    X'66'
+         DS    0H
+         CNOP  6,8
+         DC    X'77'
+         DS    0H
+         CNOP  0,8
+         DC    H'0'
+         CNOP  6,8
+         DC    X'88'
+         DS    0H
+         DC    H'0'
+         DC    H'0'
+         CNOP  0,8
+         DC    X'99'
+         END
