@@ -1044,3 +1044,6 @@ object round trip through `object_base64`, `zosasm_dump`, `zosasm_disasm`).
 transport, JSON-RPC batches, restricting `path`/`output` to a directory, a
 `zosasm_link`-style tool (there is nothing to link with here).
 
+## 19. Macro language (design only)
+
+See `MACRO.md`: a C-like macro language in the preprocessor stage (`#macro`, `#let`, `#if`, `#while`, `#switch`, `#goto`, model statements with `&name` substitution) that can express every HLASM macro, so `hlasm2za` can convert them. Not implemented; decisions D1/D2 and a sample of real macros are needed first.
