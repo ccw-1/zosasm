@@ -39,6 +39,7 @@ printed here is that file, and the test suite assembles each of them.
 15. Recipes: a subroutine, a table, build variants, source round trip
 16. Converting HLASM source: `hlasm2za`
 17. Linux on Z: ELF output (`-elf`) and the ASCII character set
+18. For AI agents: the MCP server `zosasm-mcp`
 
 ### Feature index
 
@@ -61,6 +62,8 @@ printed here is that file, and the test suite assembles each of them.
 | know what differs from HLASM, what is unverified | 14 | |
 | a subroutine, a table search, build variants | 15 | `linkage.za`, `table.za`, `config.za` |
 | convert existing HLASM source (columns, registers, `COPY`) | 16 | `hlasm-demo.asm`, `hlasm-demo.za` |
+| write objects for Linux on Z (ELF, ASCII text) | 17 | `linux-hello.za` |
+| let an AI agent assemble, inspect and read this guide (MCP) | 18 | |
 
 ---
 
@@ -1747,3 +1750,139 @@ displacements), and its relocation types and addends agree with what clang
 produces for the same instructions (`brasl` gets `R_390_PLT32DBL` here, clang
 uses `R_390_PC32DBL` unless `@PLT` is written). It has not been run on a Linux
 on Z machine or under emulation.
+
+---
+
+## 18. For AI agents: the MCP server `zosasm-mcp`
+
+`build/zosasm-mcp` is a **Model Context Protocol** server. An AI agent that
+speaks MCP (an IDE assistant, a command line agent, ...) can call zosasm
+without knowing its command line: the server lists its tools with a typed
+description of every argument and of the result, and it serves this guide so
+that the agent can learn the language first. It is built by `make` together
+with `zosasm` and `hlasm2za`, which it runs as separate processes.
+
+### 18.1 Registering the server
+
+The transport is **stdio**: the client starts the program and exchanges one
+JSON-RPC message per line on standard input and output. A typical client
+configuration (the file name and the exact keys depend on the client):
+
+```json
+{
+  "mcpServers": {
+    "zosasm": { "command": "/path/to/zosasm/build/zosasm-mcp" }
+  }
+}
+```
+
+The server finds `zosasm` and `hlasm2za` in its own directory and this guide
+at `../docs/GUIDE.md` relative to that directory. If you install the programs
+elsewhere, say where they are:
+
+| setting | meaning |
+|---|---|
+| `--bin-dir DIR` or `ZOSASM_BIN_DIR` | directory of `zosasm` and `hlasm2za` |
+| `--guide FILE` or `ZOSASM_GUIDE` | the user's guide (and `examples/` next to it) |
+| `--version`, `--help` | print and exit |
+
+When the client sends `initialize`, the reply carries *instructions* for the
+agent: what the server is for, the usual order of calls, and the **absolute
+path of this guide**. That is how the agent is pointed at the guide.
+
+### 18.2 The tools
+
+All tools return a text summary (`content`) and the same data as a JSON object
+(`structuredContent`). `isError` is true when the tool failed, for example
+when the assembly has errors; the text then says why. Give **exactly one** of
+`source` (the text, inline) or `path` (a file on the machine that runs the
+server) where a tool takes both.
+
+**`zosasm_assemble`** assembles a program.
+
+| argument | type | meaning |
+|---|---|---|
+| `source` / `path` | string | the program text, or a file name |
+| `name` | string | with `source`: the name shown in diagnostics (default `input.za`) |
+| `defines` | array of strings | `-D`: `"NAME"` or `"NAME=value"` |
+| `include_dirs` | array of strings | `-I` directories for `#include` |
+| `files` | object | extra include files `{"regs.inc":"text"}` |
+| `format` | `goff` or `elf` | object format (default `goff`; section 17 for `elf`) |
+| `charset` | `ebcdic` or `ascii` | character set of `C'..'` (`-charset`) |
+| `strict_registers` | boolean | `-strict-registers` |
+| `output` | string | file to write the object to; without it nothing is kept and the call only checks the program |
+| `object_base64` | boolean | also return the object, base64 encoded |
+| `listing`, `listing_all_bytes`, `listing_brief` | boolean | return the listing (`-l`, `-ldata`, `-lbrief`) |
+| `debug_info` | 0, 1, 2 | `-gz0/1/2` (GOFF only) |
+| `werror`, `reproducible` | boolean | `-Werror`, `-reproducible` |
+| `max_errors` | integer | `-max-errors` |
+
+Result: `success`, `exit_code`, `format`, `diagnostics` (the text zosasm prints
+on standard error: code `ZAnnnn`, position, source line, help), `object_size`,
+`output`, `object_base64` and `listing` when asked for. No object is written
+when there are errors, but the listing and the diagnostics are returned.
+
+**`zosasm_preprocess`** runs only the preprocessor (`-E`). Arguments: `source` /
+`path`, `name`, `defines`, `include_dirs`, `files`, `format`, `charset`,
+`strict_registers`. Result: `preprocessed`, `diagnostics`.
+
+**`zosasm_dump`** prints the records of a GOFF object (`-dump`). Arguments:
+`path` or `object_base64`. Result: `dump`. ELF objects are not read.
+
+**`zosasm_disasm`** turns a GOFF object back into source (`-disasm`).
+Arguments: `path` or `object_base64`, `generic` (`-generic`),
+`strict_registers`. Result: `source`, `diagnostics`.
+
+**`zosasm_convert_hlasm`** converts HLASM source with `hlasm2za` (section 16).
+Arguments: `source` / `path`, `name`, `relaxed`, `width` (`-w`), `ictl`
+(`-ictl`), `include_extension` (`-inc-ext`). Result: `source` and
+`diagnostics`, which list what has to be rewritten by hand (macros,
+conditional assembly, macro calls).
+
+**`zosasm_guide`** reads this guide. No arguments: how to use it and the table
+of contents. `section`: a chapter (`"13"`), a subsection (`"12.3"`), part of a
+heading (`"listing"`) or `"all"`. `search`: the lines containing a word, with
+line number and section (at most 40). Result: `guide_path`, `text`.
+
+An agent that does not know the language should call `zosasm_guide` first
+(chapters 1, 2, 6 and 13 are the shortest way in), write the source, call
+`zosasm_assemble`, read `diagnostics`, and repeat. Section 11.1 explains the
+messages.
+
+### 18.3 Resources
+
+The same material is available as MCP resources, for clients that show
+resources to the user or attach them to the conversation:
+
+| URI | content |
+|---|---|
+| `zosasm://guide` | this whole guide |
+| `zosasm://guide/section/{section}` | one chapter or subsection (a template) |
+| `zosasm://examples/NAME` | a file of `docs/examples/` |
+
+### 18.4 A session
+
+Client lines are shown without the `jsonrpc` member for brevity:
+
+```text
+-> {"id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18",...}}
+<- {"id":1,"result":{"serverInfo":{"name":"zosasm-mcp",...},"instructions":"...GUIDE.md..."}}
+-> {"method":"notifications/initialized"}
+-> {"id":2,"method":"tools/call","params":{"name":"zosasm_assemble",
+     "arguments":{"source":"T CSECT\n LR 1,2\n","listing":true}}}
+<- {"id":2,"result":{"content":[{"type":"text","text":"zosasm succeeded ..."}],
+     "structuredContent":{"success":true,"exit_code":0,"format":"goff",
+       "diagnostics":"","object_size":880,"listing":"..."},"isError":false}}
+```
+
+### 18.5 Limits and security
+
+* The server has no state: every call runs the programs in a fresh temporary
+  directory that is removed afterwards.
+* `path` and `output` use the file system of the machine that runs the server
+  with the rights of the server's user. Run it as an unprivileged user; a
+  client that must not write files simply does not give `output`.
+* Texts are limited to 1 MB per result; `search` returns at most 40 lines.
+* Messages are read one per line, UTF-8, JSON; batches are not supported.
+* Like the rest of zosasm, objects are not run or linked, and GOFF output is
+  **not verified against IBM** (section 14).

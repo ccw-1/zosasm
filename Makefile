@@ -6,12 +6,12 @@ WARN    ?= -Wall -Wextra -pedantic
 STD     ?= -std=c99
 CFLAGS_ALL = $(STD) $(WARN) $(CFLAGS)
 
-SRC  := $(filter-out src/main.c src/hlasm2za.c,$(wildcard src/*.c))
+SRC  := $(filter-out src/main.c src/hlasm2za.c src/mcp.c,$(wildcard src/*.c))
 OBJ  := $(SRC:src/%.c=build/%.o)
 TESTS := $(patsubst tests/%.c,build/%,$(wildcard tests/test_*.c))
 
 .PHONY: all test clean isa
-all: build/zosasm build/hlasm2za
+all: build/zosasm build/hlasm2za build/zosasm-mcp
 
 build:
 	mkdir -p build
@@ -28,13 +28,19 @@ build/main.o: src/main.c $(wildcard src/*.h) | build
 build/hlasm2za: $(OBJ) build/hlasm2za.o
 	$(CC) $(CFLAGS_ALL) -o $@ $^ -lm
 
+build/zosasm-mcp: build/mcp.o build/util.o
+	$(CC) $(CFLAGS_ALL) -o $@ $^ -lm
+
+build/mcp.o: src/mcp.c $(wildcard src/*.h) | build
+	$(CC) $(CFLAGS_ALL) -c $< -o $@
+
 build/hlasm2za.o: src/hlasm2za.c $(wildcard src/*.h) | build
 	$(CC) $(CFLAGS_ALL) -c $< -o $@
 
 build/test_%: tests/test_%.c $(OBJ) $(wildcard tests/*.h src/*.h) | build
 	$(CC) $(CFLAGS_ALL) -Isrc -o $@ $< $(OBJ) -lm
 
-test: build/zosasm build/hlasm2za $(TESTS)
+test: build/zosasm build/hlasm2za build/zosasm-mcp $(TESTS)
 	@fail=0; for t in $(TESTS); do ./$$t || fail=1; done; \
 	if [ -x tests/run_cli_tests.sh ]; then tests/run_cli_tests.sh || fail=1; fi; \
 	exit $$fail

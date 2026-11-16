@@ -6,7 +6,7 @@ files. Portable C99; it needs only a C compiler and `make`.
 ## Building
 
 ```sh
-make          # build/zosasm and build/hlasm2za
+make          # build/zosasm, build/hlasm2za and build/zosasm-mcp
 make test     # unit tests and command line tests
 make clean
 ```
@@ -69,6 +69,16 @@ section 16, DESIGN.md section 16).
 endian, `EM_S390`) instead of GOFF, with ASCII character constants; `-ascii`
 and `-charset ascii|ebcdic` choose the character set separately (guide
 section 17, DESIGN.md section 17).
+
+## For AI agents
+
+`build/zosasm-mcp` is an MCP (Model Context Protocol) server on stdio. An
+agent can assemble, preprocess, dump, disassemble and convert HLASM source
+through typed tools and read the user's guide (`docs/GUIDE.md`) through the
+`zosasm_guide` tool or the `zosasm://guide` resource. Register
+`/path/to/zosasm/build/zosasm-mcp` as a command in the MCP client; the
+`initialize` reply tells the agent where the guide is. Details: guide
+chapter 18, `DESIGN.md` section 18.
 
 ## Regenerating the instruction table (developers only)
 

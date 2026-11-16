@@ -216,6 +216,45 @@ printf 'T CSECT\n DC AD(A-B)\n EXTRN A,B\n END\n' > $T/sub.za
 $X -elf -o $T/sub.o $T/sub.za 2>$T/err; check "-elf rejects a subtracted relocation" $? 1
 grep -q 'no ELF form' $T/err; check "-elf says why" $? 0
 
+# MCP server (build/zosasm-mcp): JSON-RPC lines on stdin and stdout
+M=build/zosasm-mcp
+mcp() { printf '%s\n' "$1" | $M 2>/dev/null; }
+mcp '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' > $T/m.out; check "mcp initialize exit" $? 0
+grep -q '"serverInfo":{"name":"zosasm-mcp"' $T/m.out; check "mcp initialize server name" $? 0
+grep -q 'docs/GUIDE.md' $T/m.out; check "mcp instructions point to the guide" $? 0
+mcp '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > $T/m.out
+for tl in zosasm_assemble zosasm_preprocess zosasm_dump zosasm_disasm zosasm_convert_hlasm zosasm_guide; do
+    grep -q "\"name\":\"$tl\"" $T/m.out; check "mcp tools/list has $tl" $? 0
+done
+grep -q '"object_base64"' $T/m.out; check "mcp tools/list documents the output fields" $? 0
+mcp '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n LR 1,2\n","listing":true}}}' > $T/m.out
+grep -q '"success":true' $T/m.out; check "mcp assemble ok" $? 0
+grep -q '"object_size":' $T/m.out; check "mcp assemble object size" $? 0
+grep -q 'Loc     Object' $T/m.out; check "mcp assemble listing" $? 0
+mcp '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n LA 1,UNDEF\n"}}}' > $T/m.out
+grep -q '"success":false' $T/m.out; check "mcp assemble failure" $? 0
+grep -q '"isError":true' $T/m.out; check "mcp assemble isError" $? 0
+grep -q 'ZA1011' $T/m.out; check "mcp assemble diagnostics" $? 0
+mcp '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"#include \"i.h\"\n","files":{"i.h":"T CSECT\n LR 1,2\n"},"format":"elf","object_base64":true}}}' > $T/m.out
+grep -q '"format":"elf"' $T/m.out; check "mcp assemble elf with files" $? 0
+grep -q '"object_base64":"f0VMRg' $T/m.out; check "mcp assemble object_base64 is an ELF" $? 0
+mcp '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"zosasm_preprocess","arguments":{"source":"#define X 5\n LA 1,X\n"}}}' > $T/m.out
+grep -q 'LA 1,5' $T/m.out; check "mcp preprocess" $? 0
+mcp '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"zosasm_guide","arguments":{"section":"13"}}}' > $T/m.out
+grep -q 'Command reference' $T/m.out; check "mcp guide section" $? 0
+mcp '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"zosasm_guide","arguments":{"search":"strict-registers"}}}' > $T/m.out
+grep -q 'line [0-9]* ' $T/m.out; check "mcp guide search" $? 0
+mcp '{"jsonrpc":"2.0","id":9,"method":"resources/read","params":{"uri":"zosasm://examples/hello.za"}}' > $T/m.out
+grep -q 'HELLO    CSECT' $T/m.out; check "mcp resource example" $? 0
+mcp '{"jsonrpc":"2.0","id":10,"method":"nosuch"}' | grep -q '"code":-32601'; check "mcp unknown method" $? 0
+printf 'not json\n' | $M 2>/dev/null | grep -q '"code":-32700'; check "mcp parse error" $? 0
+# round trip: assemble to base64, then dump and disassemble through the server
+mcp '{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n LR 1,2\n","object_base64":true}}}' > $T/m.out
+b64=$(sed 's/.*"object_base64":"\([^"]*\)".*/\1/' $T/m.out | head -1)
+[ -n "$b64" ]; check "mcp base64 extracted" $? 0
+mcp '{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"zosasm_dump","arguments":{"object_base64":"'"$b64"'"}}}' | grep -q 'ESD'; check "mcp dump" $? 0
+mcp '{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"zosasm_disasm","arguments":{"object_base64":"'"$b64"'"}}}' | grep -q 'LR'; check "mcp disasm" $? 0
+
 rm -rf $T
 [ $fail = 0 ] && echo "tests/run_cli_tests.sh: ok"
 exit $fail

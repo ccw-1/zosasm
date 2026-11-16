@@ -1001,3 +1001,46 @@ years), debug information (`.debug_*`, `-gz` is ignored), a `-elf` listing
 note, `.note` sections for the entry point, `SHT_GROUP` for `COMDAT`-like
 merging, and a run on a real machine or under `qemu-s390x`.
 
+## 18. The MCP server (`src/mcp.c`)
+
+`build/zosasm-mcp` is a Model Context Protocol server for AI agents (guide
+chapter 18). It is one C file with its own JSON reader and writer (the rest
+of zosasm has no JSON) and uses POSIX (`popen`, `mkdtemp`, `realpath`,
+`setenv`); only `util.o` is linked.
+
+**Transport and protocol.** MCP "stdio": one JSON-RPC 2.0 message per line.
+Methods: `initialize` (answers with the client's protocol version if it is a
+known one, else `2025-06-18`; tools and resources capabilities, and
+`instructions`), `ping`, `tools/list`, `tools/call`, `resources/list`,
+`resources/templates/list`, `resources/read`, `prompts/list` (empty);
+notifications are ignored; unknown methods give -32601, unparsable lines
+-32700 and unknown tools -32602 (as the specification asks). Batches and
+server-initiated requests (sampling, roots) are not used.
+
+**No assembler state.** The tools run `zosasm` and `hlasm2za` as
+subprocesses (found next to the server, or `ZOSASM_BIN_DIR`) in a temporary
+directory (`mkdtemp` below `$TMPDIR`, removed after each call). Source passed
+inline is written to `input.za` (or `name`) and `files` next to it, which is
+also added with `-I`. The temporary directory name is removed from the
+diagnostics and the listing so that results are reproducible. Standard error
+is redirected to a file and read back, so a failing program cannot block the
+pipe. A tool failure is a result with `isError` true, not a JSON-RPC error,
+so that the agent sees the diagnostics.
+
+**Self describing.** Each tool has a description (input, output, where in the
+guide to read more) and a JSON schema of its arguments with a description of
+each. The strings contain the absolute path of `GUIDE.md`, found next to the
+program (`../docs/GUIDE.md`), through `ZOSASM_GUIDE`/`--guide`, or the
+build directory layout. `zosasm_guide` selects sections by the `##`/`###`
+headings (number, or a part of the title) and searches lines; the same text
+is `zosasm://guide`. Examples are listed from `docs/examples`.
+
+**Tests.** `tests/run_cli_tests.sh` feeds JSON lines to the server and checks
+the replies (initialize, tool list, assemble ok/error/ELF/`files`, preprocess,
+guide section and search, resources, unknown method, parse error, and the
+object round trip through `object_base64`, `zosasm_dump`, `zosasm_disasm`).
+
+**Not done.** Prompts, progress notifications, cancellation, the HTTP
+transport, JSON-RPC batches, restricting `path`/`output` to a directory, a
+`zosasm_link`-style tool (there is nothing to link with here).
+
