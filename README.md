@@ -59,6 +59,10 @@ Registers can be written as numbers, as names you defined (`R1 EQU 1`; a bare
 `-strict-registers` only the GNU style and names made with `NAME EQU %r12`
 are accepted in register positions (guide section 6.1).
 
+Macros: a C-like macro language (`#macro NAME(a, b = 1) {` ... `#}`, `#if`,
+`#for`, `#switch`, `&name` substitution, library lookup with `-M`) gives the
+power of HLASM conditional assembly (guide chapter 19, `MACRO.md`).
+
 `hlasm2za FILE.asm` converts HLASM source (card columns, upper case, `COPY`,
 registers as numbers or `EQU` names) to zosasm source, by default with
 `%r1` registers so that the result assembles with `-strict-registers`; macros

@@ -3,8 +3,8 @@
 `zosasm` is an assembler that runs on any machine with a C compiler and
 writes **z/OS GOFF object files**. The language is close to IBM's High Level
 Assembler (HLASM), with a few deliberate differences: no card columns, a C
-style preprocessor instead of macros, symbols without length limit, and a
-set of assembly-time helpers (`sizeof`, `ASSERT`, ...). This guide teaches
+style preprocessor and a C like macro language instead of HLASM macros,
+symbols without length limit, and a set of assembly-time helpers (`sizeof`, `ASSERT`, ...). This guide teaches
 the language and the tool; the *why* of each decision is in `DESIGN.md`.
 
 **What to expect.** The object files follow IBM's GOFF documentation, and the
@@ -40,6 +40,7 @@ printed here is that file, and the test suite assembles each of them.
 16. Converting HLASM source: `hlasm2za`
 17. Linux on Z: ELF output (`-elf`) and the ASCII character set
 18. For AI agents: the MCP server `zosasm-mcp`
+19. Macros: the C-like macro language
 
 ### Feature index
 
@@ -48,6 +49,7 @@ printed here is that file, and the test suite assembles each of them.
 | assemble a first program, see what comes out | 1 | `hello.za` |
 | write names, numbers, expressions, quoted symbols | 2 | `symbols.za` |
 | use `#include`, `#define`, `#if`, `-D`, stringify | 3, 15.3 | `prep.za`, `config.za` |
+| write macros with loops, `#if`, `#switch`, keyword arguments, libraries | 19 | `cmacros.za` |
 | control sections, classes, entry points, externals | 4 | `sections.za` |
 | define data: `DC`, `DS`, `EQU`, `ORG`, literals | 5 | `data.za` |
 | write instructions, name registers, require `%r1` notation | 6, 6.1 | `symbols.za`, `strict.za` |
@@ -267,8 +269,8 @@ of one element, 4.
 
 ## 3. The preprocessor
 
-HLASM's macro language is not part of zosasm. Instead a C style preprocessor
-runs first, on the whole file. A `#` in column 1 starts a directive only if it
+HLASM's macro language is not part of zosasm; chapter 19 describes its C like
+replacement. First, a C style preprocessor runs on the whole file. A `#` in column 1 starts a directive only if it
 is followed by one of the keywords below; otherwise it is an ordinary label
 (`#COUNT` is a fine symbol).
 
@@ -996,7 +998,7 @@ Code ranges:
 | `ZA1xxx` | symbols and expressions; `ZA104x` sizes; `ZA105x` ASSERT |
 | `ZA2xxx` | instructions, operands, DC/DS and constants; `ZA206x` XD and CCW |
 | `ZA3xxx` | sections, GOFF directives, USING (`ZA306x`) |
-| `ZA4xxx` | the preprocessor |
+| `ZA4xxx` | the preprocessor; `ZA405x` and `ZA41xx` the macro language (chapter 19) |
 | `ZA9xxx` | not supported yet / internal |
 
 Codes do not change from one version to the next, so you can search for them
@@ -1253,6 +1255,8 @@ hlasm2za [options] input.asm        (section 16)
 | `-o FILE` | output file (default: input with `.o`; for `-disasm` stdout; for `-unpack` the directory, default `.`) |
 | `-DNAME[=VAL]` | define a preprocessor macro (value 1 if omitted) |
 | `-Idir` | add an include directory |
+| `-Mdir` | add a directory of library macros (`name.zmac`, `name.mac`; chapter 19) |
+| `-macro-steps N` | stop a macro expansion after N statements (default 1000000) |
 | `-E` | print the preprocessed source and stop |
 | `-elf` | write a relocatable ELF64 object for Linux on Z instead of GOFF; implies `-ascii`, ignores `-gz` (section 17) |
 | `-ascii`, `-charset ascii\|ebcdic` | character set of `C'..'` constants and of the type attribute (default `ebcdic`; `ascii` with `-elf`) |
@@ -1287,7 +1291,7 @@ Environment: `SOURCE_DATE_EPOCH` (seconds since 1970) fixes `__DATE__` and
 |---|---|
 | card columns, continuation column | none; a trailing comma continues |
 | names fold to upper case | symbols are case sensitive |
-| macros, `AIF`, `SETC`, `COPY` | C style preprocessor; `COPY` is an error that says `#include` |
+| macros, `AIF`, `SETC`, `COPY` | C style preprocessor and the macro language of chapter 19; `COPY` is an error that says `#include` |
 | `ALIAS`, 63 character names | quoted symbols, no limit |
 | `MNOTE` | `ASSERT`, `#error`, `#warning` |
 | `*PROCESS`, `ACONTROL`, `PUSH`/`POP` | `#pragma`, options on the command line |
@@ -1886,3 +1890,115 @@ Client lines are shown without the `jsonrpc` member for brevity:
 * Messages are read one per line, UTF-8, JSON; batches are not supported.
 * Like the rest of zosasm, objects are not run or linked, and GOFF output is
   **not verified against IBM** (section 14).
+
+## 19. Macros: the C-like macro language
+
+The preprocessor of chapter 3 replaces text. For anything that needs a loop,
+a decision or a computed name, zosasm has **macros**. They do the work of
+HLASM's conditional assembly (`SETA`, `AIF`, `AGO`, `ACTR`, `MNOTE`...) with
+the same meaning but a C like syntax: blocks with braces, free indentation,
+`#let`, `#if`, `#for`. `MACRO.md` has the full design; this chapter is the
+working summary.
+
+### 19.1 A first macro
+
+<!-- example: cmacros.za -->
+```
+* The C-like macro language: macros, loops, a switch and open code variables.
+#macro STOREREGS(regs, base = 13, off = 20, size = 8) {
+    // one STG per register in the list
+    #let at = off
+    #for (let r : regs) {
+        STG   &r,&at(,&base)
+        #at += size
+    #}
+#}
+#macro FILLZ(area, len) {
+    #switch (attr(len, "T")) {
+    #case "N":
+        #let left = int(len)
+        #let at = 0
+        #while (left > 256) {
+            XC    &area+&at(256),&area+&at
+            #at += 256
+            #left -= 256
+        #}
+        XC    &area+&at(&left),&area+&at
+    #default:
+        #error "FILLZ: the length must be a number"
+    #}
+#}
+#let n = 3
+CMAC     CSECT
+         USING CMAC,12
+         STOREREGS (2,3,4)
+         STOREREGS (14,15),base=11,off=8
+         FILLZ BUF,600
+#for (let i = 0; i < n; i++) {
+         DC    A(&i)
+#}
+BUF      DS    CL600
+         END
+```
+
+* A line whose first non-blank character is `#` is **macro code**; any other
+  line in a body is a **model statement**, the text that is produced. A
+  model statement is `[label:] operation operands [remark]`; `&name`
+  inserts a variable, `&{expr}` any expression, `&&` a literal `&`. The
+  result is read again as source, so `&op &a,&b` can name an instruction or
+  another macro. A name that is not a variable (`&nope`) is the error ZA4110.
+* `#macro NAME(a, b = 7, rest...) {` ... `#}` defines a macro. It is a
+  statement: write the name in the operation field and the arguments after
+  it. Arguments are the text as written (`(2,3,4)` is a list, `C'A,B'` is one
+  argument); `name=value` gives a keyword argument when `name` is a
+  parameter; an empty argument (`A,,C`) takes the default; a call may
+  continue on the next line after a comma. The name field of the call is
+  `&sys.label`.
+* `//` starts a macro comment (not emitted); `*` as first character is an
+  assembler comment line that is emitted. Macro code and model statements
+  cannot start in column 1 (ZA4104); a `label:` is written with a colon.
+* `-E` prints the expansion; the listing marks generated lines with `+`.
+
+### 19.2 Statements and values
+
+```
+#let x = expr         #x = expr   #x += 1   #x++   #x[i] = v     #global g = 0
+#if (c) {  #} else if (d) {  #} else {  #}
+#while (c) {  #}      #for (let i = 0; i < n; i++) {  #}      #for (let r : list) {  #}
+#switch (e) {  #case 1, 2:  #case "A":  #default:  #}
+#break  #continue  #return  #goto name  #label name
+#emit text   #note text   #warning text   #error text
+```
+
+* **Values** are `int` (64 bit), `str` and `list`. An argument such as
+  `(a,b,(c,d))` is a list: `count(x)` is 3, `x[0]` is `a`, `x[2][1]` is `d`
+  (indexing starts at 0). Names are not case sensitive.
+* `+` adds when one side is an int and the other a number, otherwise it
+  joins strings (`"L" + n`). Strings compare as in HLASM: a shorter string is
+  smaller (`"9" < "15"`).
+* A `#let` lives in its block; declaring a name twice in a block is an error,
+  hiding an outer one a warning (ZA4107). `#global` is shared by all macros
+  and open code, the first declaration sets the value.
+* Functions: `len count substr index upper lower trim repeat double quote byte
+  chars split join list int str hex bin min max abs empty defined attr`.
+  `attr(x, "T")` is `N` for a self-defining term, `O` for an omitted
+  argument and `U` otherwise (the symbol table is not available).
+* Built-in names: `sys.label`, `sys.ndx` (`0001`, `0002`... one per call),
+  `sys.sect`, `sys.sectype`, `sys.macro`, `sys.level`, `sys.args`, `sys.argc`.
+* The same statements work in open code (the `#let n = 3` and `#for` of the
+  example). An old style `#if expr` ... `#endif` without a `{` is still the
+  preprocessor.
+
+### 19.3 Libraries and limits
+
+* An unknown operation is looked up as `name.zmac`, then `name.mac` in the
+  `-M` directories and then the `-I` directories. A file may define several
+  macros. This is how a directory of converted HLASM macros is used.
+* A macro calls others and itself; the depth is limited to 64 (ZA4120) and an
+  expansion to `-macro-steps N` statements, default 1,000,000 (ZA4121; the
+  HLASM `ACTR`).
+* `#error`, `#warning`, `#note` give ZA4050, ZA4051, ZA4052 and name the
+  macro and the call. Other macro diagnostics are ZA4100 to ZA4130
+  (`MACRO.md` section 11).
+* **Not verified against HLASM**: no HLASM was available to compare the
+  expansion of IBM's macros with this implementation.

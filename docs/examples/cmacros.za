@@ -1,0 +1,35 @@
+* The C-like macro language: macros, loops, a switch and open code variables.
+#macro STOREREGS(regs, base = 13, off = 20, size = 8) {
+    // one STG per register in the list
+    #let at = off
+    #for (let r : regs) {
+        STG   &r,&at(,&base)
+        #at += size
+    #}
+#}
+#macro FILLZ(area, len) {
+    #switch (attr(len, "T")) {
+    #case "N":
+        #let left = int(len)
+        #let at = 0
+        #while (left > 256) {
+            XC    &area+&at(256),&area+&at
+            #at += 256
+            #left -= 256
+        #}
+        XC    &area+&at(&left),&area+&at
+    #default:
+        #error "FILLZ: the length must be a number"
+    #}
+#}
+#let n = 3
+CMAC     CSECT
+         USING CMAC,12
+         STOREREGS (2,3,4)
+         STOREREGS (14,15),base=11,off=8
+         FILLZ BUF,600
+#for (let i = 0; i < n; i++) {
+         DC    A(&i)
+#}
+BUF      DS    CL600
+         END

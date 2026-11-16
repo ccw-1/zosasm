@@ -121,6 +121,22 @@ n0=$($X -dump $T/c0.o | grep TXT | head -1 | sed 's/.*len=\([0-9]*\).*/\1/'); n2
 mkdir $T/rt && cp docs/examples/config.za $T/rt/ && (cd $T/rt && $P/$X -gz2 -Werror -DLEVEL=2 -o config.o config.za && $P/$X -unpack config.o -o src >/dev/null && cd src && $P/$X -gz2 -Werror -DLEVEL=2 -o ../again.o config.za && cmp ../config.o ../again.o)
 check "guide 15.4 round trip gives the same object" $? 0
 
+# macros (guide 19): the example expands as printed, library lookup with -M, step limit, diagnostics
+$X -E docs/examples/cmacros.za > $T/mac.txt 2>&1; check "cmacros.za -E" $? 0
+grep -q 'STG   2,20(,13)' $T/mac.txt && grep -q 'XC    BUF+512(88),BUF+512' $T/mac.txt && grep -q 'DC    A(2)' $T/mac.txt; check "cmacros.za expands" $? 0
+mkdir -p $T/mlib && printf '#macro MYLIB(r) {\n    LR    &r,&r\n#}\n' > $T/mlib/mylib.zmac && printf '#macro OLDM() {\n    NOPR  0\n#}\n' > $T/mlib/oldm.mac
+printf 'T CSECT\n    MYLIB 1\n    OLDM\n' > $T/usemac.za
+$X -E -M $T/mlib $T/usemac.za 2>&1 | grep -q 'LR    1,1'; check "-M finds name.zmac" $? 0
+$X -E -M $T/mlib $T/usemac.za 2>&1 | grep -q 'NOPR  0'; check "-M finds name.mac" $? 0
+$X -E -I $T/mlib $T/usemac.za 2>&1 | grep -q 'LR    1,1'; check "-I is searched for macros too" $? 0
+printf '#macro LOOPM() {\n    #while (1) {\n    #}\n#}\n    LOOPM\n' > $T/loop.za
+$X -E -macro-steps 500 $T/loop.za 2>$T/err >/dev/null; check "-macro-steps stops a loop" $? 1
+grep -q ZA4121 $T/err; check "the error is ZA4121" $? 0
+printf '#macro BADM() {\n    #error "no good"\n#}\n    BADM\n' > $T/bad2.za
+$X -E $T/bad2.za 2>$T/err >/dev/null; check "#error in a macro fails" $? 1
+grep -q 'ZA4050' $T/err && grep -q 'in expansion of macro' $T/err; check "#error names the macro" $? 0
+$X -l - -o $T/mac.o docs/examples/cmacros.za 2>&1 | grep -q ' [0-9][0-9]* +  *STG'; check "listing marks generated lines" $? 0
+
 # strict registers (guide 6.1)
 $X -strict-registers -Werror -o $T/strict.o docs/examples/strict.za 2>/dev/null; check "strict.za assembles with -strict-registers" $? 0
 $X -Werror -o $T/strict2.o docs/examples/strict.za 2>/dev/null; check "strict.za assembles without it" $? 0

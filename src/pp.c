@@ -10,6 +10,7 @@
 
 #include "pp.h"
 #include "ebcdic.h"
+#include "macro.h"
 #include "version.h"
 
 #define PP_MAX_DEPTH 32
@@ -56,6 +57,14 @@ typedef struct {
     long counter;     /* __COUNTER__ */
     int have_now, now_bad;
     time_t now; /* __DATE__ and __TIME__ */
+    /* macros (macro.h) */
+    MacSys *mac;
+    StrMap lib_tried; /* operations that were looked up in the macro directories */
+    int mdepth;       /* nesting of macro calls */
+    int exp_done;     /* the expansion note of the outermost call is registered */
+    const char *exp_macro;
+    Span exp_def;
+    char *sect, *sectype; /* the last section statement (sys.sect, sys.sectype) */
 } Pp;
 
 /* ---- lexical helpers --------------------------------------------------- */
@@ -1009,8 +1018,144 @@ static void check_comma(Pp *pp, const char *part, int line) {
     if (scan_operand_end(part, p, &end) && end > p && part[end - 1] == ',') pp->comma = 1;
 }
 
+/* ---- macro calls ----------------------------------------------------------- */
+
+typedef struct {
+    char *name, *op, *operands;
+} StmtFields;
+
+/* name, operation and operand field of an output line; 0 for a comment, a blank line or a line
+ * without an operation */
+static int stmt_fields(const char *part, StmtFields *f) {
+    size_t p = 0, q, end;
+    if (is_comment_or_blank(part)) return 0;
+    if (!is_blank((unsigned char)part[0])) {
+        while (part[p] && !is_blank((unsigned char)part[p])) p++;
+        f->name = xstrndup(part, p);
+    } else {
+        f->name = xstrdup("");
+    }
+    while (is_blank((unsigned char)part[p])) p++;
+    q = p;
+    while (part[q] && !is_blank((unsigned char)part[q])) q++;
+    if (q == p) return 0;
+    f->op = xstrndup(part + p, q - p);
+    p = q;
+    while (is_blank((unsigned char)part[p])) p++;
+    if (!part[p]) {
+        f->operands = xstrdup("");
+        return 1;
+    }
+    if (!scan_operand_end(part, p, &end)) end = strlen(part);
+    f->operands = xstrndup(part + p, end - p);
+    return 1;
+}
+
+static int op_chars_ok(const char *op) {
+    size_t i;
+    if (!op[0]) return 0;
+    for (i = 0; op[i]; i++)
+        if (!(za_isalnum((unsigned char)op[i]) || op[i] == '_' || op[i] == '@' || op[i] == '#' || op[i] == '$'))
+            return 0;
+    return 1;
+}
+
+static int try_library_dir(Pp *pp, const char *dir, const char *lname) {
+    static const char *const exts[] = {".zmac", ".mac"};
+    size_t i;
+    for (i = 0; i < 2; i++) {
+        char *file = xasprintf("%s%s", lname, exts[i]);
+        char *path = join_path(dir, file);
+        size_t len;
+        char *src = read_file(path, &len);
+        if (src) {
+            rep_add_source(pp->rep, path, src, len);
+            mac_load_library(pp->mac, path, src, len);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* is op a macro call: defined in the source or found in the macro directories? */
+static int is_macro_op(Pp *pp, const char *op) {
+    char *l;
+    size_t i;
+    if (mac_defined(pp->mac, op)) return 1;
+    if (pp->opt->macro_dirs.n == 0 && pp->opt->include_dirs.n == 0) return 0;
+    if (!op_chars_ok(op) || mac_known_op(op)) return 0;
+    l = za_strlower(xstrdup(op));
+    if (strmap_get(&pp->lib_tried, l)) return 0;
+    strmap_put(&pp->lib_tried, l, (void *)1);
+    for (i = 0; i < pp->opt->macro_dirs.n; i++)
+        if (try_library_dir(pp, pp->opt->macro_dirs.v[i], l)) return mac_defined(pp->mac, op);
+    for (i = 0; i < pp->opt->include_dirs.n; i++)
+        if (try_library_dir(pp, pp->opt->include_dirs.v[i], l)) return mac_defined(pp->mac, op);
+    return 0;
+}
+
+static void do_macro_call(Pp *pp, const char *name, const char *op, const char *operands) {
+    OperandVec ov = {0};
+    char **args;
+    size_t i;
+    Span cs = span_make(pp->file, pp->line, 1, 1);
+    if (operands[0]) split_operands(&ov, operands);
+    args = xcalloc((ov.n + 1) * sizeof *args);
+    for (i = 0; i < ov.n; i++) args[i] = ov.v[i].text;
+    if (pp->mdepth == 0) {
+        pp->exp_done = 0;
+        pp->exp_macro = za_strupper(op);
+        pp->exp_def = mac_def_span(pp->mac, op);
+    }
+    pp->mdepth++;
+    mac_call(pp->mac, op, name, cs, args, ov.n);
+    pp->mdepth--;
+}
+
+static void emit_line(Pp *pp, const char *text);
+
+/* a statement made of several physical lines (continuation lines joined by '\n') */
+static void emit_multi(Pp *pp, const char *text) {
+    StrVec parts = {0};
+    const char *p = text, *nl;
+    size_t i;
+    StmtFields f;
+    for (;; p = nl + 1) {
+        nl = strchr(p, '\n');
+        vec_push(&parts, nl ? xstrndup(p, (size_t)(nl - p)) : xstrdup(p));
+        if (!nl) break;
+    }
+    if (!pp->comma && stmt_fields(parts.v[0], &f) && is_macro_op(pp, f.op)) {
+        Buf b = {0};
+        buf_puts(&b, f.operands);
+        for (i = 1; i < parts.n; i++) {
+            const char *c = parts.v[i];
+            size_t end;
+            while (is_blank((unsigned char)*c)) c++;
+            if (!scan_operand_end(c, 0, &end)) end = strlen(c);
+            buf_write(&b, c, end);
+        }
+        do_macro_call(pp, f.name, f.op, buf_cstr(&b));
+        return;
+    }
+    for (i = 0; i < parts.n; i++) emit_line(pp, parts.v[i]);
+}
+
 static void emit_part(Pp *pp, const char *part) {
     SrcLine l;
+    {
+        StmtFields f;
+        if (!pp->comma && stmt_fields(part, &f)) {
+            const char *types[] = {"CSECT", "RSECT", "DSECT", "START", "COM"};
+            size_t i;
+            char *up = za_strupper(f.op);
+            for (i = 0; i < 5; i++)
+                if (!strcmp(up, types[i])) {
+                    pp->sect = f.name;
+                    pp->sectype = xstrdup(types[i]);
+                }
+        }
+    }
     l.file = pp->file;
     l.line = pp->line;
     l.text = xstrdup(part);
@@ -1018,10 +1163,24 @@ static void emit_part(Pp *pp, const char *part) {
     check_comma(pp, part, pp->line);
 }
 
+static void emit_part_or_call(Pp *pp, const char *part) {
+    StmtFields f;
+    if (!pp->comma && stmt_fields(part, &f) && is_macro_op(pp, f.op)) {
+        do_macro_call(pp, f.name, f.op, f.operands);
+        return;
+    }
+    emit_part(pp, part);
+}
+
 static void emit_line(Pp *pp, const char *text) {
-    size_t rs = remark_start(text);
+    size_t rs;
     char *head, *exp, *full, *p, *nl;
     int changed;
+    if (strchr(text, '\n')) {
+        emit_multi(pp, text);
+        return;
+    }
+    rs = remark_start(text);
     if (rs == 0) { /* comment line */
         emit_part(pp, text);
         return;
@@ -1043,7 +1202,7 @@ static void emit_line(Pp *pp, const char *text) {
     for (p = full;; p = nl + 1) {
         nl = strchr(p, '\n');
         if (nl) *nl = 0;
-        emit_part(pp, p);
+        emit_part_or_call(pp, p);
         if (!nl) break;
     }
     free(head);
@@ -1082,7 +1241,79 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
             t = xstrdup(buf_cstr(&b));
         }
         pp->line = ln;
+        {
+            int mk = mac_top_kind(t);
+            if (mk) {
+                /* #macro and the macro statements: a block runs to the matching #} */
+                MacText mt;
+                size_t used = mac_collect(pp->mac, lines.v, lines.n, i, mk, &mt), j, ei = 0;
+                int on = active(pp), rec = pp->opt->events != NULL;
+                size_t first = pp->out->n;
+                if (rec) ei = pp->opt->events->n;
+                for (j = 0; j < used && rec; j++) {
+                    PpEvent ev;
+                    ev.file = file;
+                    ev.line = ev.line_end = lines.v[i + j].line;
+                    ev.depth = pp->depth;
+                    ev.kind = on ? PE_DIRECTIVE : PE_SKIPPED;
+                    ev.text = lines.v[i + j].text;
+                    ev.first = first;
+                    ev.n = 0;
+                    vec_push(pp->opt->events, ev);
+                }
+                if (on) {
+                    if (mk == 1) {
+                        mac_define(pp->mac, &mt);
+                    } else {
+                        mac_exec(pp->mac, &mt);
+                        if (rec && pp->out->n > first) {
+                            /* the lines made by a block belong to its first line */
+                            PpEvent *e0 = &pp->opt->events->v[ei];
+                            size_t jj;
+                            e0->kind = PE_LINE;
+                            e0->n = pp->out->n - first;
+                            for (jj = 1; jj < used; jj++) pp->opt->events->v[ei + jj].first = pp->out->n;
+                        }
+                    }
+                }
+                pp->line = ln;
+                i += used;
+                continue;
+            }
+        }
         dir = directive_of(t, &rest);
+        if (!dir && active(pp) && !pp->comma) {
+            /* a call of a macro continues on the next lines while its operands end in a comma */
+            StmtFields f;
+            if (stmt_fields(t, &f) && is_macro_op(pp, f.op)) {
+                Buf b = {0};
+                int cont = 0;
+                buf_puts(&b, t);
+                for (;;) {
+                    const char *last = cont ? lines.v[k].text : t;
+                    StmtFields lf;
+                    size_t end, p;
+                    const char *ops;
+                    if (cont) {
+                        p = 0;
+                        while (is_blank((unsigned char)last[p])) p++;
+                        ops = last + p;
+                        if (!*ops || !scan_operand_end(ops, 0, &end)) break;
+                        if (end == 0 || ops[end - 1] != ',') break;
+                    } else {
+                        if (!stmt_fields(last, &lf)) break;
+                        end = strlen(lf.operands);
+                        if (end == 0 || lf.operands[end - 1] != ',') break;
+                    }
+                    if (k + 1 >= lines.n) break;
+                    k++;
+                    buf_putc(&b, '\n');
+                    buf_puts(&b, lines.v[k].text);
+                    cont = 1;
+                }
+                if (cont) t = xstrdup(buf_cstr(&b));
+            }
+        }
         {
             PpEvent ev;
             size_t ei = 0;
@@ -1121,6 +1352,33 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
     pp->line = save_line;
 }
 
+/* ---- the macro host ---------------------------------------------------------- */
+
+static void host_emit_cb(void *user, const char *text, int srcline) {
+    Pp *pp = user;
+    int save = pp->line;
+    if (srcline > 0) pp->line = srcline;
+    if (pp->mdepth > 0 && !pp->exp_done) {
+        char *first = xstrdup(text), *nl = strchr(first, '\n');
+        if (nl) *nl = 0;
+        rep_add_expansion(pp->rep, pp->file, pp->line, first, pp->exp_macro, pp->exp_def);
+        pp->exp_done = 1;
+    }
+    emit_line(pp, text);
+    pp->line = save;
+}
+
+static const char *host_sect_cb(void *user, const char **type) {
+    Pp *pp = user;
+    *type = pp->sectype ? pp->sectype : "";
+    return pp->sect ? pp->sect : "";
+}
+
+static int host_defined_cb(void *user, const char *name) {
+    Pp *pp = user;
+    return strmap_get(&pp->macros, name) != NULL || is_builtin(name);
+}
+
 void pp_run(const char *file, const char *text, size_t len, const PpOptions *opt, Reporter *rep,
             SrcVec *out) {
     Pp *pp = xcalloc(sizeof *pp);
@@ -1130,6 +1388,14 @@ void pp_run(const char *file, const char *text, size_t len, const PpOptions *opt
     pp->out = out;
     pp->file = file;
     pp->base = file;
+    {
+        MacHost h;
+        h.user = pp;
+        h.emit = host_emit_cb;
+        h.sect = host_sect_cb;
+        h.is_defined = host_defined_cb;
+        pp->mac = mac_new(rep, &h, opt->macro_steps, opt->elf);
+    }
     {
         /* the target: __ELF__ or __GOFF__, __ASCII__ or __EBCDIC__ (before the -D options,
          * which may redefine them) */

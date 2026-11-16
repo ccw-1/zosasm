@@ -1,6 +1,23 @@
-# zosasm macro language - design (not implemented)
+# zosasm macro language - design and status
 
-Status: **design, not implemented**. Decided with the user: `&` substitutes
+Status: **M1 implemented** (2026-11-16: language, library lookup `-M`,
+`-macro-steps`, `-E`, listing, `tests/test_macro.c`, guide chapter 19);
+**C1 (`hlasm2za` conversion of MACRO..MEND) not started**. Nothing was
+compared with HLASM (none available). Refinements made while coding M1:
+
+* `+` adds when one side is an int and the other a numeric string (so
+  `#off += size` with `size = "8"` adds); otherwise it joins strings.
+* A keyword argument `name=value` is one only if `name` is a parameter of
+  the macro, else the argument is positional; any named parameter can be
+  given by keyword.
+* A mixed int/string `==`/`!=` compares numerically when the string is a
+  number, else the values differ.
+* An unknown `&name` in a model statement is ZA4110 (not ZA4111).
+* The remark of a model statement is copied as written (no substitution).
+* A macro is closed by `#}`; `.zmac` is the extension of converted macros
+  (`.mac` is found too) and `MNOTE *,` becomes `#note`.
+
+Original design: decided with the user: `&` substitutes
 into emitted text (D1), indexing is 0-based everywhere (D2), the macro
 language is C-like with braces and free indentation and only has to keep
 the *semantics* of HLASM conditional assembly, not its syntax; `hlasm2za`

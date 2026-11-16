@@ -56,6 +56,8 @@ void rep_add_expansion(Reporter *r, const char *file, int line, const char *expa
 
 Diag *rep_errorf(Reporter *r, const char *code, Span sp, const char *fmt, ...);
 Diag *rep_warnf(Reporter *r, const char *code, Span sp, const char *fmt, ...);
+/* an informative message: not counted as a warning */
+Diag *rep_notef(Reporter *r, const char *code, Span sp, const char *fmt, ...);
 Diag *diag_label(Diag *d, const char *fmt, ...);
 Diag *diag_note(Diag *d, Span sp, const char *fmt, ...);
 Diag *diag_help(Diag *d, const char *fmt, ...);

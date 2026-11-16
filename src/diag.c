@@ -144,6 +144,15 @@ Diag *rep_warnf(Reporter *r, const char *code, Span sp, const char *fmt, ...) {
     return d;
 }
 
+Diag *rep_notef(Reporter *r, const char *code, Span sp, const char *fmt, ...) {
+    va_list ap;
+    Diag *d;
+    va_start(ap, fmt);
+    d = add(r, SEV_NOTE, code, sp, fmt, ap);
+    va_end(ap);
+    return d;
+}
+
 Diag *diag_label(Diag *d, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -304,7 +313,7 @@ static void print_one(const Reporter *r, FILE *w, const Diag *d, int color) {
         fprintf(w, "  note: %s\n  --> ", d->notes[i].msg);
         print_pos(w, d->notes[i].span.pos);
         fputc('\n', w);
-        excerpt(r, w, d->notes[i].span, NULL, SEV_NOTE, color, 0);
+        excerpt(r, w, d->notes[i].span, NULL, SEV_NOTE, color, 1);
     }
     for (i = 0; i < d->nhelp; i++) fprintf(w, "  help: %s\n", d->help[i]);
 }

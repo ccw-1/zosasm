@@ -16,7 +16,7 @@
 #include "zsym.h"
 
 static void usage(FILE *f) {
-    fprintf(f, "usage: zosasm [-o out.o] [-elf] [-ascii|-charset ascii|ebcdic] [-gz0|-gz1|-gz2] [-DNAME[=val]] [-Idir] [-E] [-reproducible] [-strict-registers] [-l FILE [-ldata] [-lpage N] [-lbrief]] [-color] [-Werror] [-max-errors N] source.za\n"
+    fprintf(f, "usage: zosasm [-o out.o] [-elf] [-ascii|-charset ascii|ebcdic] [-gz0|-gz1|-gz2] [-DNAME[=val]] [-Idir] [-Mdir] [-macro-steps N] [-E] [-reproducible] [-strict-registers] [-l FILE [-ldata] [-lpage N] [-lbrief]] [-color] [-Werror] [-max-errors N] source.za\n"
                "       zosasm -dump file.o\n"
                "       zosasm [-o out.za] -disasm file.o\n"
                "       zosasm [-o dir] -unpack file.o\n"
@@ -29,6 +29,9 @@ static void usage(FILE *f) {
                "                  (the preprocessor defines __ELF__ or __GOFF__, __ASCII__ or __EBCDIC__)\n"
                "  -DNAME[=VAL]    define a preprocessor macro (default value 1)\n"
                "  -Idir           search dir for #include files\n"
+               "  -Mdir           search dir for library macros (NAME.zmac, NAME.mac); the -I\n"
+               "                  directories are searched after it\n"
+               "  -macro-steps N  stop a macro expansion after N statements (default 1000000)\n"
                "  -E              print the preprocessed source and stop\n"
                "  -reproducible   fail on anything that changes between runs (__DATE__ and __TIME__\n"
                "                  need SOURCE_DATE_EPOCH)\n"
@@ -257,6 +260,12 @@ int main(int argc, char **argv) {
             vec_push(&ppo.defines, a[2] ? a + 2 : argv[++i]);
         } else if (!strncmp(a, "-I", 2) && (a[2] || i + 1 < argc)) {
             vec_push(&ppo.include_dirs, a[2] ? a + 2 : argv[++i]);
+        } else if (!strncmp(a, "-M", 2) && a[2] && strcmp(a, "-macro-steps") != 0) {
+            vec_push(&ppo.macro_dirs, a + 2);
+        } else if (!strcmp(a, "-M") && i + 1 < argc) {
+            vec_push(&ppo.macro_dirs, argv[++i]);
+        } else if (!strcmp(a, "-macro-steps") && i + 1 < argc) {
+            ppo.macro_steps = atol(argv[++i]);
         } else if (!strcmp(a, "-E")) {
             only_pp = 1;
         } else if (!strcmp(a, "-reproducible")) {
