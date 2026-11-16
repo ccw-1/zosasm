@@ -230,6 +230,8 @@ Symbol *module_symbol(const Module *m, const char *name);
 /* Writes the module as a GOFF object (malloc'ed). On failure returns NULL
  * and describes the problem in err. */
 uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz);
+/* The same as a relocatable ELF64 object for Linux on Z (src/elf.c). */
+uint8_t *module_emit_elf(Module *m, size_t *len, char *err, size_t errsz);
 
 /* ---- source lines and statements ------------------------------------ */
 

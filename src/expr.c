@@ -467,7 +467,7 @@ static Expr *parse_quoted(EP *p, size_t start, const char *word) {
             if (n == 0 || n > 4)
                 return ep_fail(p, "ZA1007", start, p->pos - start,
                                "character term must have 1 to 4 characters");
-            eb = ebcdic_from_source(b, n, &el);
+            eb = charset_from_source(b, n, &el);
             for (i = 0; i < el; i++) v = (int64_t)(((uint64_t)v << 8) | eb[i]);
             free(eb);
         }

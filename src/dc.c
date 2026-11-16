@@ -406,7 +406,7 @@ static int dc_char(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
     char *str = unescape_quotes(sp->nom);
     size_t sl = strlen(str), n, i;
     uint8_t *b;
-    uint8_t pad = 0x40;
+    uint8_t pad = (sp->ext != 'E' && za_ascii) ? 0x20 : 0x40;
     if (sp->ext == 'U') { /* UTF-16, big endian, padded with U+0020 */
         Buf bb = {0};
         for (i = 0; i < sl;) {
@@ -461,7 +461,7 @@ static int dc_char(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
         b = xmalloc(n + 1);
         memcpy(b, bb.p ? bb.p : "", n);
     } else {
-        b = ebcdic_from_source(str, sl, &n);
+        b = sp->ext == 'E' ? ebcdic_from_source(str, sl, &n) : charset_from_source(str, sl, &n);
     }
     if (sp->has_len) {
         size_t want = (size_t)sp->length;

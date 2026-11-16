@@ -24,10 +24,11 @@ build/zosasm -disasm hello.o -o back.za     # GOFF object -> zosasm source
 build/zosasm -E prog.za                     # show the preprocessed source
 build/zosasm -l prog.lst -o prog.o prog.za  # assemble and write a listing
 build/hlasm2za old.asm                      # HLASM source -> zosasm source (old.za)
+build/zosasm -elf -o prog.o prog.za         # ELF64 s390x object for Linux on Z
 ```
 
 Options: `-o FILE`, `-DNAME[=VAL]`, `-Idir`, `-E`, `-dump FILE`,
-`-disasm FILE`, `-unpack FILE`, `-generic`, `-gz0`, `-gz1`, `-gz2`, `-reproducible`, `-strict-registers`,
+`-disasm FILE`, `-unpack FILE`, `-generic`, `-elf`, `-ascii`, `-charset NAME`, `-gz0`, `-gz1`, `-gz2`, `-reproducible`, `-strict-registers`,
 `-l FILE`, `-ldata`, `-lpage N`, `-lbrief`, `-version`, `-color`, `-max-errors N`, `-Werror`. Source files use the extension `.za`.
 
 Assembly time helpers (DESIGN.md sections 8 and 12): `sizeof(x)`,
@@ -63,6 +64,11 @@ registers as numbers or `EQU` names) to zosasm source, by default with
 `%r1` registers so that the result assembles with `-strict-registers`; macros
 and conditional assembly are commented out or left and reported (guide
 section 16, DESIGN.md section 16).
+
+`zosasm -elf FILE.za` writes a relocatable ELF64 object for Linux on Z (big
+endian, `EM_S390`) instead of GOFF, with ASCII character constants; `-ascii`
+and `-charset ascii|ebcdic` choose the character set separately (guide
+section 17, DESIGN.md section 17).
 
 ## Regenerating the instruction table (developers only)
 

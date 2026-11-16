@@ -2,6 +2,22 @@
 
 #include "util.h"
 
+int za_ascii;
+
+unsigned char *charset_from_source(const char *s, size_t n, size_t *outlen) {
+    unsigned char *out;
+    size_t i = 0, k = 0;
+    if (!za_ascii) return ebcdic_from_source(s, n, outlen);
+    out = xmalloc(n + 1);
+    while (i < n) {
+        uint32_t cp;
+        i += utf8_next(s + i, n - i, &cp);
+        out[k++] = (unsigned char)(cp > 255 ? '?' : cp);
+    }
+    *outlen = k;
+    return out;
+}
+
 unsigned char *ebcdic_from_source(const char *s, size_t n, size_t *outlen) {
     unsigned char *out = xmalloc(n + 1);
     size_t i = 0, k = 0;

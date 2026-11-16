@@ -948,3 +948,54 @@ have (`L.n`, `G`, `S`, `SY`, `QY`) are not checked, `-relaxed` keeps
 EQU names unchanged, tabs in the middle of a statement are expanded to 8 column
 stops (HLASM has no tabs), and the case of member names in `COPY` is always
 folded to lower case.
+
+## 17. ELF output and the ASCII character set (`src/elf.c`, `src/ebcdic.c`)
+
+**Why.** The assembler model (sections, classes, relocations with a symbol or
+class target and an inline addend) does not depend on GOFF, so a second
+writer can sit next to `emit.c`. `-elf` writes a relocatable ELF64 object for
+Linux on Z, big endian, `EM_S390`, `ET_REL`; the user's guide section 17 has the
+mapping table.
+
+**Decisions.**
+
+* One ELF section per class (not per CSECT), because a class is the unit with
+  its own alignment, read-only and no-load attributes. A GOFF CSECT therefore
+  becomes `.text.NAME` + `.data.NAME.CLASS`..., which a GNU linker script merges
+  into `.text` and `.data` (`.text.*`, `.data.*`, `.rodata.*`, `.bss.*`).
+* Relocations use RELA. The inline value (which the GOFF writer leaves in the
+  text) is read as the addend and the field is cleared. A class target uses
+  the `STT_SECTION` symbol of the target section; a label target (also of the
+  CSECT name) is that section symbol plus the label offset, so local symbols
+  are not needed to link; they are written for debugging.
+* Relative immediates (`REL_RI`): the PC of the instruction is two bytes
+  before the field in every format that has a relocatable 16 or 32 bit
+  immediate, so the addend is `2 * inline + field offset`, which for an
+  external symbol is the usual +2. Branch instructions (`A7x4/5`, `C0x4/5`) to
+  external symbols get the PLT variants, which GNU `ld` handles like the plain
+  ones for defined symbols and needs for shared objects; `LARL` stays PC.
+* Not representable: `Q`, `J`, `R`, `CXD`, `LEN` (GOFF specific), several terms
+  at one offset (ELF has one relocation per field), subtracted terms, 3 byte
+  address constants. They give an error instead of a wrong object.
+* The class `esd` field is reused as the ELF section number (1 based). It is
+  cleared first, so a module emitted as GOFF and then as ELF still works.
+
+**Character set.** `za_ascii` (`ebcdic.c`) selects ISO-8859-1 instead of
+IBM-1047 in `charset_from_source` (DC `C`, `CL`, literals through DC, the
+`C'..'` self-defining term) and in `ZA_E` (type attribute and the attribute of
+unknown names). Padding of character constants becomes `0x20`. `CE` always
+uses `ebcdic_from_source`; `CA` was always ASCII. Names in GOFF
+(`emit.c`, ZSYM) never use the flag. `-elf` sets it unless `-charset` is given.
+
+**Tests.** `tests/test_elf.c` parses the object with a small ELF reader
+(sections, flags, symbol binding and order, relocation types and addends,
+common symbols, rejected constructs, character set); command line tests
+check the magic, `-charset` and the error exit; during development the
+objects were linked with `s390x-linux-gnu-ld` and read with
+`s390x-linux-gnu-objdump` (the displacements were correct).
+
+**Not done.** 31-bit `ELFCLASS32` (Linux on Z has been 64-bit only for
+years), debug information (`.debug_*`, `-gz` is ignored), a `-elf` listing
+note, `.note` sections for the entry point, `SHT_GROUP` for `COMDAT`-like
+merging, and a run on a real machine or under `qemu-s390x`.
+

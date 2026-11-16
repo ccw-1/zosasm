@@ -66,6 +66,8 @@ Status key: [x] done, [-] in progress, [ ] open.
 - [ ] `-diag-format=json`, warning classes, `-Werror`
 - [x] listing file (`-l`), symbol cross reference (DESIGN.md 15)
 - [x] HLASM source -> zosasm source converter `hlasm2za` (DESIGN.md 16; macros, conditional assembly and `COPY` members are not converted)
+- [x] ELF64 output for Linux on Z (`-elf`, `-ascii`, `-charset`; DESIGN.md 17; checked with binutils, not run on a machine)
+- [ ] ELF: 31-bit class, debug information, run under qemu-s390x
 - [ ] `hlasm2za`: macro expansion of common IBM macros (`SAVE`, `RETURN`, `WTO`...), `EQUREGS`, DC forms zosasm lacks
 - [ ] golden tests, fuzzing of the reader/expression parser
 - [ ] documentation of every directive in `docs/`

@@ -16,11 +16,15 @@
 #include "zsym.h"
 
 static void usage(FILE *f) {
-    fprintf(f, "usage: zosasm [-o out.o] [-gz0|-gz1|-gz2] [-DNAME[=val]] [-Idir] [-E] [-reproducible] [-strict-registers] [-l FILE [-ldata] [-lpage N] [-lbrief]] [-color] [-Werror] [-max-errors N] source.za\n"
+    fprintf(f, "usage: zosasm [-o out.o] [-elf] [-ascii|-charset ascii|ebcdic] [-gz0|-gz1|-gz2] [-DNAME[=val]] [-Idir] [-E] [-reproducible] [-strict-registers] [-l FILE [-ldata] [-lpage N] [-lbrief]] [-color] [-Werror] [-max-errors N] source.za\n"
                "       zosasm -dump file.o\n"
                "       zosasm [-o out.za] -disasm file.o\n"
                "       zosasm [-o dir] -unpack file.o\n"
                "  -o FILE         output object file (default: input with .o)\n"
+               "  -elf            write a relocatable ELF64 object for Linux on Z (s390x) instead of GOFF;\n"
+               "                  implies -ascii, ignores -gz\n"
+               "  -ascii          C'..' constants and the type attribute use ISO-8859-1 instead of\n"
+               "  -charset NAME   IBM-1047 (NAME: ascii or ebcdic; the default is ebcdic, ascii with -elf)\n"
                "  -DNAME[=VAL]    define a preprocessor macro (default value 1)\n"
                "  -Idir           search dir for #include files\n"
                "  -E              print the preprocessed source and stop\n"
@@ -220,7 +224,8 @@ static char *default_output(const char *in) {
 
 int main(int argc, char **argv) {
     const char *out = NULL, *in = NULL, *disasm = NULL, *unpack = NULL;
-    int color = 0, werror = 0, max_err = 50, i, only_pp = 0, zlevel = 1, generic = 0;
+    int color = 0, werror = 0, max_err = 50, i, only_pp = 0, zlevel = 1, generic = 0, elf = 0;
+    const char *charset = NULL;
     PpOptions ppo;
     SrcVec lines = {0};
     size_t n, olen;
@@ -270,6 +275,12 @@ int main(int argc, char **argv) {
             if (lo.page < 0) lo.page = 0;
         } else if (!strcmp(a, "-generic")) {
             generic = 1;
+        } else if (!strcmp(a, "-elf")) {
+            elf = 1;
+        } else if (!strcmp(a, "-ascii")) {
+            charset = "ascii";
+        } else if (!strcmp(a, "-charset") && i + 1 < argc) {
+            charset = argv[++i];
         } else if (!strcmp(a, "-gz0")) {
             zlevel = 0;
         } else if (!strcmp(a, "-gz1")) {
@@ -296,6 +307,11 @@ int main(int argc, char **argv) {
             return 2;
         }
     }
+    if (charset && strcmp(charset, "ascii") != 0 && strcmp(charset, "ebcdic") != 0) {
+        fprintf(stderr, "zosasm: -charset takes ascii or ebcdic, not %s\n", charset);
+        return 2;
+    }
+    za_ascii = charset ? !strcmp(charset, "ascii") : elf;
     if (unpack) return do_unpack(unpack, out);
     if (disasm) return do_disasm(disasm, out, generic);
     if (!in) {
@@ -350,7 +366,7 @@ int main(int argc, char **argv) {
         }
         for (k = 0; k < ppo.defines.n; k++) vec_push(&mod->zdefs, xstrdup(ppo.defines.v[k]));
     }
-    obj = module_emit(mod, &olen, err, sizeof err);
+    obj = elf ? module_emit_elf(mod, &olen, err, sizeof err) : module_emit(mod, &olen, err, sizeof err);
     if (!obj) {
         fprintf(stderr, "zosasm: %s: cannot write object: %s\n", in, err);
         return 1;

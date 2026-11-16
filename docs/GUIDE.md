@@ -38,6 +38,7 @@ printed here is that file, and the test suite assembles each of them.
 14. Differences from HLASM and known limits
 15. Recipes: a subroutine, a table, build variants, source round trip
 16. Converting HLASM source: `hlasm2za`
+17. Linux on Z: ELF output (`-elf`) and the ASCII character set
 
 ### Feature index
 
@@ -1248,6 +1249,8 @@ hlasm2za [options] input.asm        (section 16)
 | `-DNAME[=VAL]` | define a preprocessor macro (value 1 if omitted) |
 | `-Idir` | add an include directory |
 | `-E` | print the preprocessed source and stop |
+| `-elf` | write a relocatable ELF64 object for Linux on Z instead of GOFF; implies `-ascii`, ignores `-gz` (section 17) |
+| `-ascii`, `-charset ascii\|ebcdic` | character set of `C'..'` constants and of the type attribute (default `ebcdic`; `ascii` with `-elf`) |
 | `-gz0`, `-gz1`, `-gz2` | symbolic information level (default `-gz1`) |
 | `-generic` | with `-disasm`: ignore ZSYM |
 | `-reproducible` | fail on anything that makes the object differ between runs |
@@ -1648,3 +1651,80 @@ line.
 The converter works on the text only, so after converting run the result
 through `zosasm -strict-registers -Werror`; a clean run means that nothing
 was left behind.
+
+---
+
+## 17. Linux on Z: ELF output (`-elf`) and the ASCII character set
+
+`zosasm -elf prog.za` writes a **relocatable ELF64 object for Linux on Z**
+(big endian, `EM_S390`, `ET_REL`) instead of a GOFF object. It is meant for the
+GNU linker (`s390x-linux-gnu-ld`) or `lld`. The source language is the same;
+what changes is how the result is written.
+
+<!-- example: linux-hello.za -->
+```za
+* Linux on Z: write(1, MSG, MSGLEN), then exit(0).
+* Assemble with   zosasm -elf linux-hello.za
+* and link with   s390x-linux-gnu-ld -e START -o hello linux-hello.o
+START    CSECT
+         ENTRY START
+         LGHI  %r2,1              arguments in r2, r3, r4; SVC n calls system call n
+         LARL  %r3,MSG
+         LGHI  %r4,MSGLEN
+         BRAS  %r14,WRITE
+         LGHI  %r2,0
+         SVC   1                  exit(0)
+WRITE    DS    0H
+         SVC   4                  write(2,3,4)
+         BR    %r14
+MSG      DC    C'Hello from s390x',X'0A'
+MSGLEN   EQU   *-MSG
+         END   START
+```
+
+**Character set.** `-elf` implies `-ascii`: `C'..'` constants, `DC C`,
+`CL`, literals, `C'x'` self-defining terms and the type attribute `T'` use
+ISO-8859-1 (code points above 255 become `?`), and a character constant is
+padded with blanks `0x20`. `-charset ebcdic` brings IBM-1047 back, and
+`-ascii` can also be given alone to write a GOFF object with ASCII data (for
+z/OS programs that run in ASCII mode). `DC CE'..'` is always EBCDIC and
+`DC CA'..'` always ASCII; hexadecimal, packed and zoned data, floating point
+and binary constants do not depend on the character set (zoned numbers keep the
+`F` zone that `PACK` and `UNPK` use). Names in a GOFF object are always EBCDIC;
+ELF names are the source names.
+
+**Mapping.**
+
+| zosasm | ELF |
+|---|---|
+| each class of a `CSECT`/`RSECT` with bytes (the first class always) | one section: `.text.NAME` (`B_TEXT`, executable classes), `.rodata.NAME` (`READONLY`), `.data.NAME`, or `.bss.NAME` (`NOLOAD`, no bytes); a class other than `B_TEXT` adds `.CLASS`; an unnamed `CSECT` gives `.text` |
+| class alignment (`ALIGN(n)`, default doubleword) | `sh_addralign`, at least the strictest alignment used in the section |
+| `CSECT` name, `ENTRY` label | global symbol (`STT_FUNC` in executable classes, `STT_OBJECT` otherwise) |
+| other labels | local `STT_NOTYPE` symbols |
+| `EXTRN`, `V(...)` and referenced externals | undefined global symbols; `WXTRN` makes them weak |
+| `COM` section | common symbol (`SHN_COMMON`, size and alignment) |
+| `DSECT`, `EQU`, absolute symbols | not in the object |
+| `A(sym)` in 4 bytes, `AD(sym)` in 8 | `R_390_32`, `R_390_64`; the addend is moved from the bytes into the RELA entry |
+| `BRAS`/`BRC`/`BRASL`/`BRCL` to an external symbol | `R_390_PLT16DBL`/`R_390_PLT32DBL` with addend +2 |
+| other relative branches and `LARL` to another class or an external symbol | `R_390_PC16DBL`/`R_390_PC32DBL` with addend +2 |
+| `END label` | ignored: an ELF relocatable object has no entry point (use `ld -e`) |
+
+The object also has an empty `.note.GNU-stack`, so the linker does not ask for an
+executable stack. Code that stores into its own `CSECT` needs a writable
+class: executable classes are read-only, so put the data in a class made with
+`CATTR` (without `READONLY`).
+
+**What cannot be written.** `Q`, `J`, `R`, `CXD`, address constants with
+more than one relocatable term (`AD(A+B)`) or with a subtracted one across
+sections (`AD(A-B)`), 3-byte address constants (`AL3`) and `-elf` without a
+control section stop with an error that names the section. Differences of
+labels in the same class need no relocation and are fine. `AMODE` and `RMODE`
+have no meaning in the ELF object and are ignored, and so is `-gz`.
+`A(sym)` is only 32 bits wide: on Linux on Z a 64-bit program uses `AD`.
+
+**Not verified.** The object was checked with `readelf`, `s390x-linux-gnu-objdump`
+and `s390x-linux-gnu-ld` (sections, symbols, relocations and the linked
+displacements), and its relocation types and addends agree with what clang
+produces for the same instructions (`brasl` gets `R_390_PLT32DBL` here, clang
+uses `R_390_PC32DBL` unless `@PLT` is written). It has not been run on a Linux
+on Z machine or under emulation.

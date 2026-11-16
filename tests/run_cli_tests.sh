@@ -199,6 +199,18 @@ $H -bogus x 2>/dev/null; check "hlasm2za bad option" $? 2
 $H -version | grep -q '^hlasm2za 0'; check "hlasm2za -version" $? 0
 printf '          lr 1,2\n' | $H -ictl 10,71,16 - 2>/dev/null | grep -q 'LR    %r1,%r2'; check "hlasm2za -ictl" $? 0
 
+# ELF output and the character set
+$X -elf -o $T/lh.o docs/examples/linux-hello.za 2>$T/err; check "-elf exit" $? 0
+[ "$(od -An -tx1 -N6 $T/lh.o | tr -d ' ')" = "7f454c460202" ]; check "-elf writes an ELF64 big endian object" $? 0
+grep -q 'Hello from s390x' $T/lh.o; check "-elf implies ASCII text" $? 0
+$X -elf -charset ebcdic -o $T/lh2.o docs/examples/linux-hello.za 2>/dev/null; grep -q 'Hello from s390x' $T/lh2.o; [ $? = 1 ]; check "-charset ebcdic overrides" $? 0
+$X -ascii -o $T/lh3.o docs/examples/linux-hello.za 2>/dev/null; check "-ascii exit" $? 0
+$X -dump $T/lh3.o | grep -q ESD; check "-ascii still writes GOFF" $? 0
+$X -charset latin -o $T/x.o docs/examples/linux-hello.za 2>/dev/null; check "-charset bad value" $? 2
+printf 'T CSECT\n DC AD(A-B)\n EXTRN A,B\n END\n' > $T/sub.za
+$X -elf -o $T/sub.o $T/sub.za 2>$T/err; check "-elf rejects a subtracted relocation" $? 1
+grep -q 'no ELF form' $T/err; check "-elf says why" $? 0
+
 rm -rf $T
 [ $fail = 0 ] && echo "tests/run_cli_tests.sh: ok"
 exit $fail

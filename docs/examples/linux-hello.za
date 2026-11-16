@@ -1,0 +1,17 @@
+* Linux on Z: write(1, MSG, MSGLEN), then exit(0).
+* Assemble with   zosasm -elf linux-hello.za
+* and link with   s390x-linux-gnu-ld -e START -o hello linux-hello.o
+START    CSECT
+         ENTRY START
+         LGHI  %r2,1              arguments in r2, r3, r4; SVC n calls system call n
+         LARL  %r3,MSG
+         LGHI  %r4,MSGLEN
+         BRAS  %r14,WRITE
+         LGHI  %r2,0
+         SVC   1                  exit(0)
+WRITE    DS    0H
+         SVC   4                  write(2,3,4)
+         BR    %r14
+MSG      DC    C'Hello from s390x',X'0A'
+MSGLEN   EQU   *-MSG
+         END   START
