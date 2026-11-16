@@ -1689,8 +1689,9 @@ MSGLEN   EQU   *-MSG
 ISO-8859-1 (code points above 255 become `?`), and a character constant is
 padded with blanks `0x20`. `-charset ebcdic` brings IBM-1047 back, and
 `-ascii` can also be given alone to write a GOFF object with ASCII data (for
-z/OS programs that run in ASCII mode). `DC CE'..'` is always EBCDIC and
-`DC CA'..'` always ASCII; hexadecimal, packed and zoned data, floating point
+z/OS programs that run in ASCII mode). `CE'..'` is always EBCDIC and
+`CA'..'` always ASCII, in `DC`, in literals (`=CA'..'`) and as self-defining
+terms (`LA 1,CA'a'`, `MVI X,CA' '`), whatever the default character set; hexadecimal, packed and zoned data, floating point
 and binary constants do not depend on the character set (zoned numbers keep the
 `F` zone that `PACK` and `UNPK` use). Names in a GOFF object are always EBCDIC;
 ELF names are the source names.

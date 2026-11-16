@@ -383,6 +383,7 @@ static Expr *parse_quoted(EP *p, size_t start, const char *word) {
     Buf body = {0};
     int closed = 0;
     int64_t v = 0;
+    char cset = 0;
     Expr *e;
     if (wl == 1 && strchr("LTSIDOKN", u) && p->pos + 1 < p->len &&
         (is_sym_start((unsigned char)p->s[p->pos + 1]) || p->s[p->pos + 1] == '*' ||
@@ -415,7 +416,9 @@ static Expr *parse_quoted(EP *p, size_t start, const char *word) {
             return e;
         }
     }
-    if (wl != 1 || (u != 'X' && u != 'B' && u != 'C'))
+    /* CA'..' (ISO-8859-1) and CE'..' (IBM-1047) whatever the default character set */
+    if (wl == 2 && u == 'C' && strchr("AEae", word[1])) cset = (char)za_toupper((unsigned char)word[1]);
+    if ((wl != 1 && !cset) || (u != 'X' && u != 'B' && u != 'C'))
         return ep_fail(p, "ZA1006", start, p->pos - start + 1,
                        "\"%s'\" is not a self-defining term or attribute", word);
     p->pos++;
@@ -467,7 +470,14 @@ static Expr *parse_quoted(EP *p, size_t start, const char *word) {
             if (n == 0 || n > 4)
                 return ep_fail(p, "ZA1007", start, p->pos - start,
                                "character term must have 1 to 4 characters");
-            eb = charset_from_source(b, n, &el);
+            if (cset) {
+                int saved = za_ascii;
+                za_ascii = cset == 'A';
+                eb = charset_from_source(b, n, &el);
+                za_ascii = saved;
+            } else {
+                eb = charset_from_source(b, n, &el);
+            }
             for (i = 0; i < el; i++) v = (int64_t)(((uint64_t)v << 8) | eb[i]);
             free(eb);
         }

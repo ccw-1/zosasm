@@ -249,7 +249,31 @@ static void test_charset(void) {
     }
 }
 
+/* CA'..' and CE'..' name the character set, whatever the default is */
+static void test_ca_ce(void) {
+    const char *src = "T CSECT\n DC CA'ab',CE'ab',CAL4'a',CEL4'a'\n LA %r1,CA'a'\n LA %r2,CE'a'\n"
+                      " MVI 0(%r1),CA' '\n MVI 0(%r1),CE' '\n END\n";
+    int mode;
+    for (mode = 0; mode < 2; mode++) {
+        Reporter *rep = rep_new(0);
+        Module *m;
+        za_ascii = mode;
+        m = asm_assemble_text("t.za", src, strlen(src), rep);
+        CHECK_MSG(m != NULL, "assembly failed (ascii=%d)", mode);
+        if (m) {
+            const uint8_t *d = m->sections.v[0]->classes.v[0]->data;
+            CHECK(d[0] == 0x61 && d[1] == 0x62 && d[2] == 0x81 && d[3] == 0x82);
+            CHECK(d[4] == 0x61 && d[5] == 0x20 && d[6] == 0x20 && d[7] == 0x20);
+            CHECK(d[8] == 0x81 && d[9] == 0x40 && d[10] == 0x40 && d[11] == 0x40);
+            CHECK(d[12] == 0x41 && d[15] == 0x61 && d[16] == 0x41 && d[19] == 0x81);
+            CHECK(d[21] == 0x20 && d[25] == 0x40);
+        }
+    }
+    za_ascii = 0;
+}
+
 int main(void) {
+    test_ca_ce();
     test_basic();
     test_classes();
     test_rejected();

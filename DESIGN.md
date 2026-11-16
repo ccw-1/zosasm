@@ -984,7 +984,7 @@ mapping table.
 IBM-1047 in `charset_from_source` (DC `C`, `CL`, literals through DC, the
 `C'..'` self-defining term) and in `ZA_E` (type attribute and the attribute of
 unknown names). Padding of character constants becomes `0x20`. `CE` always
-uses `ebcdic_from_source`; `CA` was always ASCII. Names in GOFF
+uses `ebcdic_from_source`; `CA` was always ASCII (also as self-defining terms `CA'a'`/`CE'a'` in expressions, `parse_quoted` in `expr.c`, which switches `za_ascii` for the one term). Names in GOFF
 (`emit.c`, ZSYM) never use the flag. `-elf` sets it unless `-charset` is given.
 
 **Predefined macros.** `pp_run` defines `__ELF__` (`PpOptions.elf`, set by `-elf`) or `__GOFF__`, and `__ASCII__` or `__EBCDIC__` from `za_ascii`, before the `-D` options. They are normal macros (a `-D` of the same name is a ZA4023 warning), not built-in names, and are not recorded as `-D` options in the `-gz2` object.
