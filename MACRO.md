@@ -8,8 +8,10 @@ recovers structure from the sequence-symbol branching.
 
 ## 0. What SYS1.MACLIB shows (survey of `maclib_utf8/`)
 
-`/home/knoppix/go-dev/maclib_utf8/` holds 2080 members of SYS1.MACLIB; 1656
-define a macro (the rest are data-area copy members). The table counts
+`/home/knoppix/go-dev/maclib_utf8/` holds 2080 members of SYS1.MACLIB; 1958
+define a macro (1984 definitions; the rest are data-area copy members). The
+per-feature counts were taken on the first 1656 of them (those whose `MACRO`
+statement is in the first 400 lines), so they are slightly low. The table counts
 statements (a regular-expression survey over continued, comment-free lines, so the numbers are approximate and a few include words in strings); "macros" is the number of macros that use
 the feature. IBM's text is copyrighted: it is used here only to measure, no
 macro text is copied into this repository, and the acceptance test of
