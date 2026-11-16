@@ -4,6 +4,57 @@ Status: **design for discussion**. Nothing here exists in the code yet. The
 numbers of the decisions (D1, D2, ...) are the points where the user's
 choice is needed; the rest follows from them.
 
+## 0. What SYS1.MACLIB shows (survey of `maclib_utf8/`)
+
+`/home/knoppix/go-dev/maclib_utf8/` holds 2080 members of SYS1.MACLIB; 1656
+define a macro (the rest are data-area copy members). The table counts
+statements (a regular-expression survey over continued, comment-free lines, so the numbers are approximate and a few include words in strings); "macros" is the number of macros that use
+the feature. IBM's text is copyrighted: it is used here only to measure, no
+macro text is copied into this repository, and the acceptance test of
+section 12 reads the directory in place.
+
+| feature | uses | macros | consequence |
+|---|---|---|---|
+| `AIF` / `AGO` / `ANOP` | 43079 / 12605 / 28678 | 1251 / 1111 / 1253 | **`#goto` is the main conversion path**, not a fallback: the code is flat branches, forward *and backward* (`AGO .POSITIO` re-enters a block above), with sequence symbols like `.ALVL1_A`. Structure recognition is a bonus (section 8). |
+| `SETA` / `SETB` / `SETC` | 9934 / 6645 / 20090 | 361 / 380 / 790 | string building dominates |
+| `LCLx` / `GBLx` | 5.8k / 2.4k | 1000 / 1145 | many `GBLA &SYSALVL`-style globals that one macro (`SYSSTATE`) sets and the others read: `#global` must keep the first initial value |
+| arrays `LCLB &B(5)`, `&B(1) SETB` | 1872 | 418 | lists with indexed `#set` |
+| `T'&x` (compared with `'N'` 19236x, `'O'` 3040x, `'U'` 9x) | 22322 | 494 | type of an **argument**; only N (self defining), O (omitted), U |
+| `K'&x`, `N'&x` | 76398, 29303 | 500, 605 | length and item count |
+| `L'&x` in `AIF` | 17 | 11 | |
+| `D'`, `I'`, `S'`, `O'` | **0** | 0 | symbol-table queries at macro time are **not used at all**: milestone M2 (section 9) is not needed for this library |
+| substring `'&x'(i,n)` | 56846 | 670 | hottest string operation; `INDEX` 3633 (455 macros) |
+| `AND`/`OR`/`NOT` | 39776 | 1050 | |
+| `ACTR` | 2162 | 358 | maps to the step limit, not converted |
+| `MNOTE` | 5018 | 419 | severities 0-12 plus `MNOTE *,` comments |
+| `MEXIT` | 2530 | 383 | |
+| `&SYSLIST`, `&SYSNDX`, `&SYSECT`, `&SYSSTYP` (-> `__SECTYPE__`), `&SYSMAC` | 6305, 2563, 46, 39, 6 | 479, 501, 29, 19, 1 | the only real assembler-supplied variables; all other `&SYS...` names seen (`&SYSASCE`, `&SYSSPLV`, `&SYSAM64`, `&SYSALVL`, `&SYSNAME`...) are **ordinary globals set by IBM macros** |
+| built-in functions | `BYTE` 78, `UPPER` 27, `DCVAL` 8, `SIGNED` 3 | few | small set needed |
+| `&X.` end marker | 54005 | 567 | the converter writes `&x` or `&{x}Y` |
+| `AREAD`, `OPSYN`, `PUNCH`, `COPY` | 10, 84, 67, 14 | 1, 2, 1, 5 | reported, not converted |
+| computed `AGO (&I)`, created names `&(...)`, `AINSERT` | 0 | 0 | not needed |
+| keyword parameters in the prototype | 1255 | 1254 | positionals and keywords are mixed in almost every macro |
+
+What the code looks like (not quoted; own summary):
+
+* a macro of 100-300 lines is typical (median 281 incl. comments, the largest
+  member has 21193 lines), almost all of it conditional assembly around a few
+  model lines;
+* **the operation field is often a variable** (`&STM  &REG(1),&REG(2),...`
+  where `&STM` was set to `'STM'` or `'STMG'`), so expanded text is rescanned;
+* arguments are indexed as sublists (`&REG(1)`, `N'&REG`), and substituted
+  inside strings and next to dots (`&A.(0,13)`, `CL&A'&E'`);
+* macros call other macros (`SYSSTATE`, `IHBERMAC` for messages,
+  `IHBINNRR`): **library lookup is required, not optional** (section 5);
+* a member may contain non macro text after `MEND` (the PL/S version of the
+  macro) and column 73-80 change flags (`@L2C`); the converter stops at
+  `MEND` and drops the columns.
+
+Consequences for the plan: M1 plus library lookup plus `hlasm2za` conversion
+cover this library; the symbol-table interleaving (M2) is deferred and may
+never be needed; `#goto` and a fast flat interpreter are central (a single
+`WTO` or `GETMAIN` expansion runs hundreds of statements).
+
 ## 1. Why, and what it is not
 
 zosasm has a C style preprocessor (`#define`, `#include`, `#if`; DESIGN.md
@@ -149,7 +200,7 @@ which gives the `LCLA`/`SETA` of conditional assembly in the main source
 |---|---|---|
 | `__LABEL__` | the name field of the call (`""` if none) | `&NAME` |
 | `__NDX__` | `"0001"`, `"0002"`...: unique per expansion | `&SYSNDX` |
-| `__SECT__` | name of the current control section | `&SYSECT` |
+| `__SECT__`, `__SECTYPE__` | name and type (`CSECT`, `DSECT`, `RSECT`...) of the current control section | `&SYSECT`, `&SYSSTYP` |
 | `__MACRO__`, `__LEVEL__` | macro being expanded, nesting depth (1 = called from open code) | `&SYSMAC`, `&SYSNEST` |
 | `__ARGS__` | list of the positional arguments as written | `&SYSLIST` |
 | `__ARGC__` | their number | `N'&SYSLIST` |
@@ -194,10 +245,15 @@ inside operands). A macro is a **statement**, found in the operation field;
 `#define` names are found anywhere and expanded first. They do not interfere:
 a macro body sees the call's arguments after `#define` expansion.
 
-**Library macros (later).** An unknown operation code `FOO` is looked up as
-`foo.zmac` in the `-I` directories (the HLASM library convention: one macro
-per member). The file contains one `#macro`. `hlasm2za` writes one file per
-converted macro with `-macro-dir DIR`.
+**Library macros (needed).** An unknown operation code `FOO` is looked up in
+the macro directories (`-M DIR`, repeatable; the `-I` directories are searched
+last) as `foo.zmac`, then `foo.mac`; the file may hold several `#macro`
+definitions (a library member of HLASM is one macro, but converted code
+need not keep that). The first `#macro` in the file whose name is `FOO`
+defines the call; others in the same file are defined too. A found file is
+read once per run. This is HLASM's library macro search and makes macros
+that call macros (`SAVE` calls `SYSSTATE`) work with no `#include`. `hlasm2za -macro-dir DIR` converts a whole directory of members
+(one `.zmac` per macro). Case: the file name is the macro name in lower case.
 
 ## 6. Model statements and `#emit`
 
@@ -211,6 +267,7 @@ L&{__NDX__} DS 0H                           label made from a built-in
 
 * A name must exist (parameter, variable, built-in); `&xyz` with no `xyz` is
   an error (ZA4110), not literal text.
+* HLASM's subscript form `&REG(1)` (element of a sublist) becomes `&{reg[0]}`; `&REG(1)` in zosasm model text would be the whole value of `reg` followed by `(1)`. `&A.(0,13)` becomes `&a(0,13)`.
 * A value inserts as decimal (int), as written (string) or `(a,b,c)` (list).
 * The resulting text is **rescanned as source**: a line made by `&op` may
   be another macro call. A line that expands to nothing but blanks is
@@ -280,7 +337,7 @@ section 9.
 
 ## 8. Control flow without structure: `#goto`
 
-Any HLASM macro can be converted if the language has an unconditional jump,
+In SYS1.MACLIB this is the **main path, not a fallback** (section 0): the macros are written as branches. Any HLASM macro can be converted if the language has an unconditional jump,
 because `AIF`/`AGO`/`ANOP` and sequence symbols are exactly that:
 
 ```
@@ -309,17 +366,16 @@ statements with resolved jump targets (`#if` = conditional jump to the next
 
 ## 9. When the macro needs the assembler's symbols
 
+**Status after the survey (section 0): not needed for SYS1.MACLIB.** No macro asks `D'`, `I'`, `S'` or `O'`, `L'&x` appears 17 times and `T'` is only compared with `N`, `O`, `U`, all answerable from the argument text. M1 is therefore the whole plan for now, and M2 stays as an extension if a user macro needs it.
+
 Most macros decide from their *arguments*. Some ask about symbols the
 assembler has already seen: `AIF (D'&X)`, `L'&X`, `T'&X`, or use `&SYSECT`.
 The preprocessor runs before the assembler (`pp_run` produces all lines,
 then pass 1, then pass 2), so these have to be provided in two steps:
 
 * **M1 (text time).** `attr(x, ...)` answers only from the argument text:
-  self-defining terms (`T` = `N` or `H`/`F`..., `L` the byte length of the
-  constant), register names, `D` false for every symbol, `T` = `U` (HLASM
-  "undefined"). `__SECT__` is the last `CSECT`/`DSECT`/... name found by a
-  light scan. A macro that depends on the answer gets a warning (ZA4130)
-  "attribute of a symbol is not known at macro time".
+  `T` gives `N` for a self-defining term (decimal, `X'..'`, `B'..'`, `C'..'`), `O` for an omitted (empty) argument and `U` for everything else, which is exactly what the library compares with; `L` the byte length of a self-defining constant, `D` false for every symbol. `__SECT__` is the last `CSECT`/`DSECT`/... name found by a
+  light scan. Asking `L`, `S`, `I` or `D` of a symbol gives the warning ZA4130 "attribute of a symbol is not known at macro time" and the "undefined" answer.
 * **M2 (pass 1 interleaved).** The expansion happens inside assembler pass
   1, line by line, like HLASM: a statement whose operation code is a macro
   is expanded when pass 1 reaches it, with the symbol table as it is at that
@@ -378,23 +434,32 @@ macro X at file:line", the call being the outer position.
 1. **M1: language core** (`src/macro.c`, `macro.h`; hooks in `pp.c`):
    expression parser and evaluator, `#macro` collection, call matching
    (reusing `split_operands`), model-statement substitution, the compiled
-   statement array, built-ins, `attr()` over text, diagnostics, open-code
-   `#let/#set/#while`. Tests: `tests/test_macro.c` golden expansions per
-   construct, error cases, step limit, recursion, keyword/default/variadic
-   calls, `#goto`, nested macros, a fuzz loop over the expression parser.
-2. **C1: `hlasm2za` conversion** of `MACRO`..`MEND` (patterns, then the
-   `#goto` fallback), `-macro-dir`, warnings for what cannot be converted.
-   Tests: converted macros expand to what HLASM would produce
-   (compared by hand-checked expected output; **no HLASM available to
-   check**, so the expectations are interpretations of the Language
-   Reference).
-3. **M2: interleaved expansion** with the symbol table (section 9); needed before the conversion can be exact for macros that test symbols.
-4. Guide chapter, `-E` shows expansions, listing `PRINT GEN`, library
-   lookup.
+   statement array with jumps, built-ins, `attr()` over text, `__SECT__`
+   from a light scan of `CSECT`/`DSECT`/`START`/`RSECT`, diagnostics, open-code
+   `#let/#set/#while`, `-M` library lookup. Tests: `tests/test_macro.c`
+   golden expansions per construct, error cases, step limit, recursion,
+   keyword/default/variadic calls, `#goto`, nested macros, an expression
+   parser fuzz loop.
+2. **C1: `hlasm2za` conversion** of `MACRO`..`MEND` (statement by
+   statement with `#goto`/`#label`; structure patterns later), `&X.`
+   rewriting, 1-based to 0-based indexes (`x + 1 - 1` folded), `''` to `"'"`,
+   `AND/OR/NOT` to `&& || !`, `-macro-dir`; stops at `MEND`, drops columns
+   73-80; reports `AREAD`, `OPSYN`, `PUNCH`, `AINSERT`. **Acceptance test
+   (local, not in the repository, the directory is read in place via
+   `ZASM_MACLIB=/path/maclib_utf8 make test-maclib`):** every one of the
+   1656 macros converts and the result *compiles* (definition parsed, bodies
+   checked) with no error; then a hand selected set (`SAVE`, `RETURN`,
+   `ABEND`, a keyword heavy one) is expanded for several argument sets and
+   the output checked by hand against the HLASM source (**no HLASM is
+   available**, so the expected text is our reading of the Language
+   Reference and the macro source).
+3. Guide chapter, `-E` shows expansions, listing `PRINT GEN`.
+4. **M2 (only if needed):** interleaved expansion with the symbol table
+   (section 9).
 
-Open points for the user: D1 (`&` marker), D2 (0-based indexing), case
-insensitive names (section 4), whether `#note` should exist or `MNOTE *`
-becomes a `#warning`, and above all **which real macros must convert** -
-a sample (SAVE/RETURN, WTO, a PL/I or LE prologue macro, a table
-generator) decides which of M2, C1, the library lookup and the `&SYS...`
-variables come first.
+Open points for the user: **D1** (`&` marker), **D2** (0-based indexing; the
+survey shows 143k subscript uses, so converted code will carry many
+`- 1`s that the converter folds when the index is a constant; a 1-based
+list type would avoid them but is unlike C), case insensitive names
+(section 4), whether `MNOTE *,` (237 uses, comment-like) becomes `#note`,
+and the file naming for converted macros (`.zmac`, section 5).
