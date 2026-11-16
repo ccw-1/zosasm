@@ -520,6 +520,13 @@ static MVal f_attr(Ctx *c, MVal *a, int n) {
     return empty_str();
 }
 
+static MVal f_aread(Ctx *c, MVal *a, int n) {
+    char *r = ma_aread(c);
+    (void)a;
+    (void)n;
+    return v_str(r ? r : "");
+}
+
 static const Fn fn_table[] = {
     {"len", 1, 1, f_len},       {"count", 1, 1, f_count},   {"substr", 2, 3, f_substr},
     {"index", 2, 2, f_index},   {"upper", 1, 1, f_upper},   {"lower", 1, 1, f_lower},
@@ -529,7 +536,7 @@ static const Fn fn_table[] = {
     {"int", 1, 1, f_int},       {"str", 1, 1, f_str},       {"hex", 1, 2, f_hex},
     {"bin", 1, 2, f_bin},       {"min", 1, -1, f_min},      {"max", 1, -1, f_max},
     {"abs", 1, 1, f_abs},       {"empty", 1, 1, f_empty},   {"defined", 1, 1, f_defined},
-    {"attr", 2, 2, f_attr},      {"fill", 2, 2, f_fill},
+    {"attr", 2, 2, f_attr},      {"fill", 2, 2, f_fill},      {"aread", 0, 0, f_aread},
 };
 
 const Fn *fn_find(const char *name) {

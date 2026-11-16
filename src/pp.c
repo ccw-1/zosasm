@@ -65,6 +65,12 @@ typedef struct {
     const char *exp_macro;
     Span exp_def;
     char *sect, *sectype; /* the last section statement (sys.sect, sys.sectype) */
+    char *loc;            /* the last LOCTR name (sys.loc), NULL after a section statement */
+    /* aread() reads the lines after the call, #insert queues records */
+    SrcVec *rd_lines;
+    size_t *rd_next;
+    StrVec ains;
+    StrMap msyn; /* OPSYN of macro names: upper case name -> macro name ("" = deleted) */
 } Pp;
 
 /* ---- lexical helpers --------------------------------------------------- */
@@ -1068,8 +1074,11 @@ static int op_chars_ok(const char *op) {
 static int try_library_dir(Pp *pp, const char *dir, const char *lname) {
     static const char *const exts[] = {".zmac", ".mac"};
     size_t i;
-    for (i = 0; i < 2; i++) {
-        char *file = xasprintf("%s%s", lname, exts[i]);
+    /* the member is found by its lower case or its upper case name (hlasm2za -macro-dir keeps the
+     * case of the HLASM member) */
+    for (i = 0; i < 4; i++) {
+        char *base = i < 2 ? xstrdup(lname) : za_strupper(xstrdup(lname));
+        char *file = xasprintf("%s%s", base, exts[i & 1]);
         char *path = join_path(dir, file);
         size_t len;
         char *src = read_file(path, &len);
@@ -1082,10 +1091,20 @@ static int try_library_dir(Pp *pp, const char *dir, const char *lname) {
     return 0;
 }
 
+/* the macro that the operation code op names after OPSYN ("" = deleted) */
+static const char *mac_alias(Pp *pp, const char *op) {
+    const char *r;
+    if (pp->msyn.n == 0) return op;
+    r = strmap_get(&pp->msyn, za_strupper(op));
+    return r ? r : op;
+}
+
 /* is op a macro call: defined in the source or found in the macro directories? */
 static int is_macro_op(Pp *pp, const char *op) {
     char *l;
     size_t i;
+    op = mac_alias(pp, op);
+    if (!*op) return 0;
     if (mac_defined(pp->mac, op)) return 1;
     if (pp->opt->macro_dirs.n == 0 && pp->opt->include_dirs.n == 0) return 0;
     if (!op_chars_ok(op) || mac_known_op(op)) return 0;
@@ -1099,11 +1118,14 @@ static int is_macro_op(Pp *pp, const char *op) {
     return 0;
 }
 
+static void flush_inserts(Pp *pp);
+
 static void do_macro_call(Pp *pp, const char *name, const char *op, const char *operands) {
     OperandVec ov = {0};
     char **args;
     size_t i;
     Span cs = span_make(pp->file, pp->line, 1, 1);
+    op = mac_alias(pp, op);
     if (operands[0]) split_operands(&ov, operands);
     args = xcalloc((ov.n + 1) * sizeof *args);
     for (i = 0; i < ov.n; i++) args[i] = ov.v[i].text;
@@ -1115,9 +1137,21 @@ static void do_macro_call(Pp *pp, const char *name, const char *op, const char *
     pp->mdepth++;
     mac_call(pp->mac, op, name, cs, args, ov.n);
     pp->mdepth--;
+    if (pp->mdepth == 0) flush_inserts(pp);
 }
 
 static void emit_line(Pp *pp, const char *text);
+
+/* the records queued by #insert are read after the outermost macro: they are rescanned like
+ * generated lines (so a macro call or a macro definition in them works only as a call) */
+static void flush_inserts(Pp *pp) {
+    while (pp->ains.n > 0) {
+        char *t = pp->ains.v[0];
+        memmove(pp->ains.v, pp->ains.v + 1, (pp->ains.n - 1) * sizeof *pp->ains.v);
+        pp->ains.n--;
+        emit_line(pp, t);
+    }
+}
 
 /* a statement made of several physical lines (continuation lines joined by '\n') */
 static void emit_multi(Pp *pp, const char *text) {
@@ -1158,7 +1192,9 @@ static void emit_part(Pp *pp, const char *part) {
                 if (!strcmp(up, types[i])) {
                     pp->sect = f.name;
                     pp->sectype = xstrdup(types[i]);
+                    pp->loc = NULL;
                 }
+            if (!strcmp(up, "LOCTR")) pp->loc = f.name;
         }
     }
     l.file = pp->file;
@@ -1168,8 +1204,28 @@ static void emit_part(Pp *pp, const char *part) {
     check_comma(pp, part, pp->line);
 }
 
+/* name OPSYN op where a macro is involved: the preprocessor keeps the alias and the
+ * statement is not passed on (1); otherwise the assembler handles it (0) */
+static int opsyn_macro(Pp *pp, const StmtFields *f) {
+    char *name = za_strupper(f->name), *tgt = za_strupper(str_trim(f->operands)), *sp;
+    if (!*name || !op_chars_ok(name)) return 0;
+    sp = strpbrk(tgt, " \t");
+    if (sp) *sp = 0;
+    if (!*tgt) {
+        if (is_macro_op(pp, name)) strmap_put(&pp->msyn, name, "");
+        return 0;
+    }
+    if (is_macro_op(pp, tgt)) {
+        strmap_put(&pp->msyn, name, xstrdup(mac_alias(pp, tgt)));
+        return 1;
+    }
+    if (is_macro_op(pp, name)) strmap_put(&pp->msyn, name, "");
+    return 0;
+}
+
 static void emit_part_or_call(Pp *pp, const char *part) {
     StmtFields f;
+    if (!pp->comma && stmt_fields(part, &f) && !za_strncmpi(f.op, "OPSYN", 6) && opsyn_macro(pp, &f)) return;
     if (!pp->comma && stmt_fields(part, &f) && is_macro_op(pp, f.op)) {
         do_macro_call(pp, f.name, f.op, f.operands);
         return;
@@ -1217,13 +1273,17 @@ static void emit_line(Pp *pp, const char *text) {
 
 static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
     SrcVec lines = {0};
-    size_t i = 0, base = pp->conds.n;
+    size_t i = 0, base = pp->conds.n, nxt = 0;
     const char *save_file = pp->file;
     int save_line = pp->line;
+    SrcVec *save_rd = pp->rd_lines;
+    size_t *save_rn = pp->rd_next;
     src_split(&lines, file, text, len);
     /* the empty segment after the final newline is not a line */
     if (lines.n > 1 && lines.v[lines.n - 1].text[0] == 0 && len > 0 && text[len - 1] == '\n') lines.n--;
     pp->file = file;
+    pp->rd_lines = &lines;
+    pp->rd_next = &nxt;
     while (i < lines.n) {
         const char *t = lines.v[i].text;
         int ln = lines.v[i].line;
@@ -1254,6 +1314,7 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
                 size_t used = mac_collect(pp->mac, lines.v, lines.n, i, mk, &mt), j, ei = 0;
                 int on = active(pp), rec = pp->opt->events != NULL;
                 size_t first = pp->out->n;
+                nxt = i + used;
                 if (rec) ei = pp->opt->events->n;
                 for (j = 0; j < used && rec; j++) {
                     PpEvent ev;
@@ -1271,6 +1332,7 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
                         mac_define(pp->mac, &mt);
                     } else {
                         mac_exec(pp->mac, &mt);
+                        flush_inserts(pp);
                         if (rec && pp->out->n > first) {
                             /* the lines made by a block belong to its first line */
                             PpEvent *e0 = &pp->opt->events->v[ei];
@@ -1282,7 +1344,7 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
                     }
                 }
                 pp->line = ln;
-                i += used;
+                i = nxt;
                 continue;
             }
         }
@@ -1341,13 +1403,14 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
                 ei = pp->opt->events->n;
                 vec_push(pp->opt->events, ev);
             }
+            nxt = k + 1;
             if (dir)
                 do_directive(pp, dir, rest, t);
             else if (active(pp))
                 emit_line(pp, t);
             if (rec && ev.kind == PE_LINE) pp->opt->events->v[ei].n = pp->out->n - ev.first;
         }
-        i = k + 1;
+        i = nxt;
     }
     while (pp->conds.n > base) {
         Cond *c = &pp->conds.v[--pp->conds.n];
@@ -1355,6 +1418,8 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
     }
     pp->file = save_file;
     pp->line = save_line;
+    pp->rd_lines = save_rd;
+    pp->rd_next = save_rn;
 }
 
 /* ---- the macro host ---------------------------------------------------------- */
@@ -1379,6 +1444,58 @@ static const char *host_sect_cb(void *user, const char **type) {
     return pp->sect ? pp->sect : "";
 }
 
+static const char *host_loc_cb(void *user) {
+    Pp *pp = user;
+    return pp->loc ? pp->loc : pp->sect;
+}
+
+static int host_now_cb(void *user, time_t *t) {
+    Pp *pp = user;
+    pp->use = span_make(pp->file, pp->line, 1, 1);
+    if (!pp_now(pp)) return 0;
+    *t = pp->now;
+    return 1;
+}
+
+static const char *host_parm_cb(void *user) {
+    Pp *pp = user;
+    return pp->opt->sysparm;
+}
+
+static char *host_aread_cb(void *user) {
+    Pp *pp = user;
+    const char *src;
+    char *r;
+    size_t n;
+    if (pp->ains.n > 0) {
+        src = pp->ains.v[0];
+        memmove(pp->ains.v, pp->ains.v + 1, (pp->ains.n - 1) * sizeof *pp->ains.v);
+        pp->ains.n--;
+    } else if (pp->rd_lines && pp->rd_next && *pp->rd_next < pp->rd_lines->n) {
+        src = pp->rd_lines->v[(*pp->rd_next)++].text;
+    } else {
+        return NULL;
+    }
+    n = strlen(src);
+    if (n > 80) n = 80;
+    r = xmalloc(81);
+    memcpy(r, src, n);
+    memset(r + n, ' ', 80 - n);
+    r[80] = 0;
+    return r;
+}
+
+static void host_insert_cb(void *user, const char *text, int front) {
+    Pp *pp = user;
+    char *t = xstrdup(text);
+    if (strlen(t) > 80) t[80] = 0;
+    vec_push(&pp->ains, t);
+    if (front) {
+        memmove(pp->ains.v + 1, pp->ains.v, (pp->ains.n - 1) * sizeof *pp->ains.v);
+        pp->ains.v[0] = t;
+    }
+}
+
 static int host_defined_cb(void *user, const char *name) {
     Pp *pp = user;
     return strmap_get(&pp->macros, name) != NULL || is_builtin(name);
@@ -1399,6 +1516,11 @@ void pp_run(const char *file, const char *text, size_t len, const PpOptions *opt
         h.emit = host_emit_cb;
         h.sect = host_sect_cb;
         h.is_defined = host_defined_cb;
+        h.loc = host_loc_cb;
+        h.parm = host_parm_cb;
+        h.now = host_now_cb;
+        h.aread = host_aread_cb;
+        h.insert = host_insert_cb;
         pp->mac = mac_new(rep, &h, opt->macro_steps, opt->elf);
     }
     {

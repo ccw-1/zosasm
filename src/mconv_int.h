@@ -22,6 +22,12 @@ typedef Vec(MNode) MNodeVec;
 /* Write the body: flat form (#label/#goto) or, when possible, structured. Appends to out.
  * Returns 1 for structured, 0 for flat as asked, -1 when the flow could not be structured
  * and the flat form was written. */
-int mflow_write(Buf *out, const MNodeVec *nodes, int flat);
+int mflow_write(Buf *out, const MNodeVec *nodes, int mode, const char *pcvar);
+
+/* readability passes over a structured body: else if chains, switch */
+char *mflow_post(const char *body);
+
+/* mflow_write modes */
+enum { MF_STRUCT, MF_FLAT, MF_KEEPGOTO };
 
 #endif

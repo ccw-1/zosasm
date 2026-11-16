@@ -23,7 +23,11 @@ static void usage(FILE *f) {
             "                  (default output extension .zmac)\n"
             "  -macro-dir DIR  convert every member DIR/*.mac like -m; -o names the output directory\n"
             "                  (default: next to the members); prints a summary\n"
+            "  -copy-dir DIR   macros: COPY inside a macro definition reads DIR/MEMBER.mac (default: the\n"
+            "                  -macro-dir directory)\n"
             "  -flat           macros: #goto/#label for every sequence symbol, no structure recovery\n"
+            "  -keep-goto      macros: where the flow cannot be structured, write #goto/#label instead of\n"
+            "                  a dispatch loop (a switch on the next block)\n"
             "  -comment-macros leave macro definitions as comments (no conversion)\n"
             "  -q              no warnings\n"
             "  -version        print the version\n"
@@ -158,6 +162,10 @@ int main(int argc, char **argv) {
             mdir = argv[++i];
             o.member = 1;
             OUT_EXT = ".zmac";
+        } else if (!strcmp(a, "-copy-dir") && i + 1 < argc) {
+            o.copy_dir = argv[++i];
+        } else if (!strcmp(a, "-keep-goto")) {
+            o.keep_goto = 1;
         } else if (!strcmp(a, "-flat")) {
             o.flat = 1;
         } else if (!strcmp(a, "-comment-macros")) {
@@ -175,7 +183,10 @@ int main(int argc, char **argv) {
             return 2;
         }
     }
-    if (mdir) return macro_dir(mdir, out, &o, quiet);
+    if (mdir) {
+        if (!o.copy_dir) o.copy_dir = mdir;
+        return macro_dir(mdir, out, &o, quiet);
+    }
     if (!in) {
         usage(stderr);
         return 2;

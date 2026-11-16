@@ -1,6 +1,7 @@
 #!/bin/bash
 # Acceptance run of hlasm2za over a real macro library (local only: the library is not
 # part of this repository).   ZASM_MACLIB=/path/to/maclib make test-maclib
+# ZASM_CONV_FLAGS=-keep-goto checks the form with #goto instead of the dispatch loop.
 # 1. convert every DIR/*.mac (structured and flat), 2. compile each result, 3. expand the
 # flat and the structured form with several argument sets: the output must be equal
 # (runs that end in a run time error of the macro language are skipped: after an error
@@ -9,7 +10,7 @@ LIB=${ZASM_MACLIB:?set ZASM_MACLIB to a directory of HLASM macro members (*.mac)
 B=$(cd "$(dirname "$0")/.." && pwd)/build
 T=${ZASM_TMP:-$(mktemp -d)}
 mkdir -p "$T/zm" "$T/zf" "$T/w"
-$B/hlasm2za -macro-dir "$LIB" -o "$T/zm" 2> "$T/conv.log"; tail -1 "$T/conv.log"
+$B/hlasm2za $ZASM_CONV_FLAGS -macro-dir "$LIB" -o "$T/zm" 2> "$T/conv.log"; tail -1 "$T/conv.log"
 $B/hlasm2za -flat -macro-dir "$LIB" -o "$T/zf" 2> /dev/null
 cfail=0; ndiff=0; nrun=0; nskip=0
 filt() { grep -v -E '^ *[0-9]* *[|]' | sed -E "s@$T/z[mf]/@@g; s/[A-Za-z0-9_]+\.zmac:[0-9]+(:[0-9]+)?/Z:N/g; s/:[0-9]+:[0-9]+/:N:N/g; s/line [0-9]+/line N/g" | sort; }

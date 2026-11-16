@@ -853,6 +853,8 @@ OFFSAVE  DC    Q(SAVE)
 | `PUSH`/`POP` `PRINT`, `USING`, `ACONTROL`, `,NOPRINT` | save and restore the listing print state, the active `USING`s and the `ACONTROL` state, each on its own stack; `POP` without `PUSH` is an error (`ZA2075`), a wrong operand `ZA2074` |
 | `CEJECT [n]` | listing only (section 11.2) |
 | `EXITCTL type,v1[,v2..]` | checked (`ZA2076` for an unknown exit type) and ignored: zosasm has no user exits |
+| `name OPSYN op` | `name` becomes another name of the instruction, directive or macro `op`; `name OPSYN` (no operand) deletes `name`; the last definition wins; `ZA2079` for an unknown `op` or a missing name. The macro language has no conditional assembly instructions to rename, so only operation codes of statements count; an alias of a macro is kept by the preprocessor, one of an instruction or directive by the assembler |
+| `PUNCH 'text'` | warning `ZA2078`, the text is ignored: a GOFF object has no card image records |
 | `REPRO` | warning `ZA2077`; the record that follows is skipped: a GOFF object has no card image records |
 
 **Not verified against IBM.** The records that the binder reads for these
@@ -1320,8 +1322,9 @@ hlasm2za [options] input.asm        (section 16)
 | `-o FILE` | output file (default: input with `.o`; for `-disasm` stdout; for `-unpack` the directory, default `.`) |
 | `-DNAME[=VAL]` | define a preprocessor macro (value 1 if omitted) |
 | `-Idir` | add an include directory |
-| `-Mdir` | add a directory of library macros (`name.zmac`, `name.mac`; chapter 19) |
+| `-Mdir` | add a directory of library macros (`name.zmac`, `name.mac`, also `NAME.zmac`; chapter 19) |
 | `-macro-steps N` | stop a macro expansion after N statements (default 1000000) |
+| `-sysparm STR` | the text of `sys.parm` in macros (HLASM `&SYSPARM`) |
 | `-E` | print the preprocessed source and stop |
 | `-elf` | write a relocatable ELF64 object for Linux on Z instead of GOFF; implies `-ascii`, ignores `-gz` (section 17) |
 | `-ascii`, `-charset ascii\|ebcdic` | character set of `C'..'` constants and of the type attribute (default `ebcdic`; `ascii` with `-elf`) |
@@ -1372,7 +1375,7 @@ converts `MACRO`..`MEND` definitions to zosasm macros (section 16.4), and
 reports what it cannot convert (conditional assembly in open code, macro calls
 of system macros, a few macro statements).
 
-**Not implemented.** `ADATA`, `AINSERT` in open code, `MNOTE`, `OPSYN`; `G`
+**Not implemented.** `ADATA`, `MNOTE`; `G`
 constants with real DBCS text (hexadecimal only); `CU` code page options
 (UTF-16LE/UTF-8); other code pages for `CA`/`CE`; register
 pair checks (an odd register where a pair is needed assembles and fails when
@@ -1593,6 +1596,8 @@ toolchain; it understands the *form* of HLASM statements, and since C1 it conver
 | `-m` | the input is a macro library member: write the macro definitions only (default output extension `.zmac`) |
 | `-macro-dir DIR` | convert every member `DIR/*.mac` like `-m`; `-o` names the output directory (default: next to the members); prints a summary |
 | `-flat` | macros: `#goto`/`#label` for every sequence symbol, no structure recovery |
+| `-keep-goto` | macros: where the flow cannot be structured write `#goto`/`#label` instead of a dispatch loop |
+| `-copy-dir DIR` | `COPY` inside a macro reads `DIR/MEMBER.mac` (with `-macro-dir` the library directory is the default) |
 | `-comment-macros` | leave macro definitions as comments (the behaviour before C1) |
 | `-q` | no warnings |
 | `-version`, `-h` | version, usage |
@@ -1716,9 +1721,9 @@ fix them by hand; zosasm then fails on them with a message that names the
 line.
 
 * **Macro definitions** are converted (section 16.4); a definition that uses
-  something not converted (`COPY`, `AREAD`, `PUNCH`, `AINSERT`, `OPSYN`,
-  `SETAF`/`SETCF`, a nested `MACRO`, a computed `AGO`, created `&(` names,
-  system variables such as `&SYSDATE` or `&SYSLOC`) is commented out and
+  something not converted (`COPY` without `-copy-dir`, `SETAF`/`SETCF`, a
+  computed `AGO`, created `&(` names, `AREAD` with operands, a system
+  variable other than the ones of section 16.4) is commented out and
   reported. Calls of **system macros** (`SAVE`, `RETURN`, `WTO`, `GETMAIN`,
   `STORAGE`, `SYSSTATE`...) are reported as "not an instruction or directive
   (a macro call?)"; the macro library is not available to zosasm, so write
@@ -1728,8 +1733,9 @@ line.
   `SETB`, `SETC`, `LCL*`, `GBL*`, `MNOTE`, `&variables`, `.sequence`
   symbols in open code): use `#if`, `#define`, `ASSERT` and `#error`
   (section 3), or put the code into a macro.
-* **`OPSYN`, `ADATA`, `REPRO`, `ALIAS`**: not supported by zosasm (`ALIAS` is replaced by quoted
-  symbols, section 2.2).
+* **`ADATA`, `ALIAS`**: not supported by zosasm (`ALIAS` is replaced by quoted
+  symbols, section 2.2). `OPSYN`, `PUNCH` and `REPRO` are kept as they are:
+  zosasm has `OPSYN`; `PUNCH` and `REPRO` give a warning (section 14.1).
 * **`*PROCESS`** lines: the options go on the zosasm command line.
 * DC and DS forms that zosasm does not have (section 14) are not checked by
   the converter; assemble the result to find them.
@@ -1765,14 +1771,39 @@ What the converter does with a definition:
   `&{name}`, `&name[0]`; the name field `&LBL` becomes `&sys.label:`; `&SYSNDX`
   and `&SYSECT` become `sys.ndx` and `sys.sect`. `MNOTE` becomes `#note`,
   `#warning` or `#error` by its severity.
+* **Input and output statements.** `&A SETC AREAD` becomes `aread()` and
+  `AINSERT 'record',FRONT|BACK` becomes `#insert "record", front|back`
+  (section 19.2). `OPSYN` and `PUNCH` stay model statements.
+* **System variables.** `&SYSDATE`, `&SYSDATC`, `&SYSTIME`, `&SYSPARM` and
+  `&SYSLOC` become `sys.date`, `sys.datc`, `sys.time`, `sys.parm` and
+  `sys.loc`.
+* **`COPY` inside a macro** reads the member `MEMBER.mac` (also `.MAC`, or the
+  bare name) from the directory of `-copy-dir DIR` (with `-macro-dir` the
+  library directory itself) and puts its statements in place, as the assembler
+  does when it reads the definition. Without a directory, or when the member
+  is not found, the macro is not converted.
+* **A `MACRO` inside a macro** becomes a macro of its own that is written
+  before the outer one in the same file (HLASM defines it when the outer macro
+  runs; here it exists from the start, and it has no access to the variables of
+  the outer macro, as in HLASM).
 * **Control flow.** `AIF`, `AGO`, `MEXIT`, sequence symbols and `ANOP` are
-  turned into `#if` / `#else`, `#while` / `#break` / `#continue` and
-  `#return`. An error exit shared by many branches (a message and `MEXIT`)
-  is copied to each branch as a guard clause. What cannot be shown as a
-  structure (several entries into one block) keeps `#goto name` and
-  `#label name` for those jumps only, and `-flat` writes every sequence
-  symbol that way. A jump that cannot be written (a `#goto` into a block)
-  makes the converter write the whole macro flat and report it.
+  turned into `#if` / `#else if` / `#else`, `#while` / `#break` / `#continue`
+  and `#return`. An error exit shared by many branches (a message and
+  `MEXIT`) is copied to each branch as a guard clause. A chain of `AIF` tests
+  that jump to blocks which all join again after them is written as one
+  `#if` / `#else if` / `#else` chain, and a chain of three or more tests of
+  one variable against constants becomes a `#switch` with `#case a, b:` and
+  `#default:`. Flow that still cannot be shown as a structure (several
+  entries into one block) is written as a **dispatch loop**: the body is cut
+  into blocks at the labels that a jump reaches, `#let pc = "(start)"` names
+  the block to run, and `#while (true) { #switch (pc) { #case "name": ... } }`
+  runs them; a block that ends by falling into the next sets `pc` and the
+  loop goes on, a jump sets `pc` and `#continue`. The macro then has no
+  `#goto` at all (the variable is `pc`, or `pc_`, `pc__` ... when the macro
+  already has a name `pc`). With `-keep-goto` the converter keeps the old
+  form instead: `#goto name` / `#label name` for those jumps only (or the
+  whole macro flat when a `#goto` would enter a block). `-flat` writes every
+  sequence symbol that way.
 
 Every conversion was checked by expanding the flat and the structured form
 with many argument sets: the output must be identical (`tests/test_mconv.c`,
@@ -1930,7 +1961,10 @@ server) where a tool takes both.
 | `name` | string | with `source`: the name shown in diagnostics (default `input.za`) |
 | `defines` | array of strings | `-D`: `"NAME"` or `"NAME=value"` |
 | `include_dirs` | array of strings | `-I` directories for `#include` |
-| `files` | object | extra include files `{"regs.inc":"text"}` |
+| `files` | object | extra include and macro files `{"regs.inc":"text"}`; `NAME.zmac` there is a library macro |
+| `macro_dirs` | array of strings | `-M` directories of library macros (chapter 19) |
+| `sysparm` | string | `-sysparm`: the value of `sys.parm` in macros |
+| `macro_steps` | integer | `-macro-steps`: limit for one macro expansion |
 | `format` | `goff` or `elf` | object format (default `goff`; section 17 for `elf`) |
 | `charset` | `ebcdic` or `ascii` | character set of `C'..'` (`-charset`) |
 | `strict_registers` | boolean | `-strict-registers` |
@@ -1948,7 +1982,8 @@ when there are errors, but the listing and the diagnostics are returned.
 
 **`zosasm_preprocess`** runs only the preprocessor (`-E`). Arguments: `source` /
 `path`, `name`, `defines`, `include_dirs`, `files`, `format`, `charset`,
-`strict_registers`. Result: `preprocessed`, `diagnostics`.
+`strict_registers`, `macro_dirs`, `sysparm`, `macro_steps`. Result:
+`preprocessed`, `diagnostics`.
 
 **`zosasm_dump`** prints the records of a GOFF object (`-dump`). Arguments:
 `path` or `object_base64`. Result: `dump`. ELF objects are not read.
@@ -1959,11 +1994,24 @@ Arguments: `path` or `object_base64`, `generic` (`-generic`),
 
 **`zosasm_convert_hlasm`** converts HLASM source with `hlasm2za` (section 16).
 Arguments: `source` / `path`, `name`, `relaxed`, `width` (`-w`), `ictl`
-(`-ictl`), `include_extension` (`-inc-ext`). Result: `source` and
-`diagnostics`, which list what has to be rewritten by hand (open code
-conditional assembly, calls of macros that are not in the source, macro
-definitions that could not be converted). Macro definitions in the source are
-converted to `#macro` text.
+(`-ictl`), `include_extension` (`-inc-ext`) and for macros (section 16.4):
+
+| argument | type | meaning |
+|---|---|---|
+| `macros` | boolean | `-m`: the input is a macro library member; only the definitions are returned |
+| `flat` | boolean | `-flat`: `#goto`/`#label` for every sequence symbol |
+| `keep_goto` | boolean | `-keep-goto`: `#goto` instead of a dispatch loop where the flow cannot be structured |
+| `comment_macros` | boolean | `-comment-macros`: leave macro definitions as comments |
+| `copy_dir` | string | `-copy-dir`: where `COPY` inside a macro reads its members |
+| `macro_dir`, `output_dir` | strings | `-macro-dir`: convert every `DIR/*.mac` and write `output_dir/NAME.zmac` (instead of `source` / `path`; `output_dir` is required; this writes files) |
+
+Result: `source` and `diagnostics` (with `macro_dir`: `output` and
+`diagnostics`, the counts and what was not converted). The diagnostics list
+what has to be rewritten by hand (open code conditional assembly, calls of
+macros that are not in the source, macro definitions that could not be
+converted). Macro definitions in the source are converted to `#macro` text.
+To use converted macros, give `macro_dirs` (or `files`) to
+`zosasm_assemble`.
 
 **`zosasm_guide`** reads this guide. No arguments: how to use it and the table
 of contents. `section`: a chapter (`"13"`), a subsection (`"12.3"`), part of a
@@ -2106,15 +2154,29 @@ BUF      DS    CL600
   `attr(x, "T")` is `N` for a self-defining term, `O` for an omitted
   argument and `U` otherwise (the symbol table is not available).
 * Built-in names: `sys.label`, `sys.ndx` (`0001`, `0002`... one per call),
-  `sys.sect`, `sys.sectype`, `sys.macro`, `sys.level`, `sys.args`, `sys.argc`.
+  `sys.sect`, `sys.sectype`, `sys.macro`, `sys.level`, `sys.args`, `sys.argc`,
+  `sys.loc` (the name of the current location counter: the last `LOCTR`, or the
+  section), `sys.date` (`mm/dd/yy`), `sys.datc` (`yyyymmdd`), `sys.time`
+  (`hh.mm`) and `sys.parm` (the text of `-sysparm`). The date and time are
+  those of `__DATE__`: `SOURCE_DATE_EPOCH`, and an error with `-reproducible`
+  when it is not set.
+* Input and output of the source stream (HLASM `AREAD` and `AINSERT`):
+  `aread()` returns the next record after the macro call (padded or cut to 80
+  columns, `""` at the end of the input) and takes it out of the source;
+  records queued by `#insert` are read first. `#insert "record"[, front|back]`
+  queues a record (cut to 80 columns, `back` is the default) that is read as
+  source after the outermost macro call has ended; `front` puts it before the
+  records already queued. The records are rescanned like generated lines, so
+  they can be a macro call, but not a `#macro` definition or a `#` directive.
 * The same statements work in open code (the `#let n = 3` and `#for` of the
   example). An old style `#if expr` ... `#endif` without a `{` is still the
   preprocessor.
 
 ### 19.3 Libraries and limits
 
-* An unknown operation is looked up as `name.zmac`, then `name.mac` in the
-  `-M` directories and then the `-I` directories. A file may define several
+* An unknown operation is looked up as `name.zmac`, then `name.mac` (then
+  the same with the name in upper case, as `hlasm2za -macro-dir` writes
+  it) in the `-M` directories and then the `-I` directories. A file may define several
   macros. This is how a directory of converted HLASM macros is used
   (`hlasm2za -macro-dir`, section 16.4).
 * A macro calls others and itself; the depth is limited to 64 (ZA4120) and an

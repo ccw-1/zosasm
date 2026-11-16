@@ -1,0 +1,22 @@
+* Several arms that join again: #switch
+         MACRO
+&L       SW    &T
+         LCLC  &X
+         AIF   ('&T' EQ 'A').LA
+         AIF   ('&T' EQ 'B').LB
+         AIF   ('&T' EQ 'C').LC
+         AGO   .LD
+.LA      ANOP
+&X       SETC  'one'
+         AGO   .DONE
+.LB      ANOP
+&X       SETC  'two'
+         AGO   .DONE
+.LC      ANOP
+&X       SETC  'three'
+         AGO   .DONE
+.LD      ANOP
+&X       SETC  'other'
+.DONE    ANOP
+&L       DC    C'&X'
+         MEND

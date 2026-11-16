@@ -97,7 +97,28 @@ static void test_others(void) {
     err(" ACONTROL COMPAT(FOO)\n", "ZA2072");
 }
 
+static void test_opsyn(void) {
+    Res r;
+    /* LR is 1812: LL OPSYN LR gives LL the same encoding; both passes see it */
+    hex("LL OPSYN LR\n LL 1,2\n", "1812");
+    hex("LL OPSYN LR\nLX OPSYN LL\n LX 1,2\n", "1812");
+    /* a later definition wins; a deleted operation code is unknown */
+    hex("ST1 OPSYN LR\nST1 OPSYN AR\n ST1 1,2\n", "1A12");
+    err("LR OPSYN\n LR 1,2\n", "ZA2001");
+    err("X OPSYN NOTANOP\n", "ZA2079");
+    err(" OPSYN LR\n", "ZA2079");
+    /* the alias is also a name for a directive */
+    r = run("LL OPSYN LR\nDD OPSYN DC\n DD F'1'\n");
+    CHECK_MSG(!r.codes[0] && !strcmp(r.hex, "00000001"), "alias of DC: %s %s", r.codes, r.hex);
+    /* a swap in one go keeps the original meaning for each name */
+    hex("AA OPSYN LR\nLR OPSYN AR\n AA 1,2\n LR 1,2\n", "18121A12");
+    /* PUNCH only warns */
+    r = run(" PUNCH '//JOB'\n LR 1,2\n");
+    CHECK_MSG(!r.codes[0] && !strcmp(r.warns, "ZA2078") && !strcmp(r.hex, "1812"), "punch: %s %s", r.codes, r.warns);
+}
+
 int main(void) {
+    test_opsyn();
     test_afpr();
     test_typecheck();
     test_pushpop();

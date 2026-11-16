@@ -124,6 +124,7 @@ static int closed(const S *s, int a, int b, int allow) {
     for (j = 0; j < s->n; j++) {
         if (s->tl[j] < 0 || (int)j == allow) continue;
         if ((int)j >= a && (int)j < b) continue;
+        if (s->cls[s->tp[j]] != 0) continue; /* the jump copies a short block or leaves, it never enters */
         if (s->tl[j] >= a && s->tl[j] < b) return 0;
     }
     return 1;
@@ -235,6 +236,142 @@ static int skip_dead(S *s, int i, int hi, int depth) {
     return i;
 }
 
+/* the number of jumps to the point p */
+static int jumps_to(const S *s, int p) {
+    size_t j;
+    int n = 0;
+    for (j = 0; j < s->n; j++)
+        if (s->tl[j] >= 0 && s->tp[j] == p) n++;
+    return n;
+}
+
+/* the last node of [a,b) that is not a label or a comment, or -1 */
+static int last_node(const S *s, int a, int b) {
+    int k = b - 1;
+    while (k >= a && is_pass(&s->v[k])) k--;
+    return k;
+}
+
+typedef struct {
+    int start; /* first node of the block */
+    int cond;  /* the jump that enters it, -1 for the default block */
+} ChSeg;
+
+/* AIF (c1).L1 / AIF (c2).L2 / ... / [AGO .Ld] / blocks that end in AGO .J / .J
+ * becomes #if (c1) { } else if (c2) { } ... else { }; returns the node after the blocks or -1 */
+static int try_chain(S *s, int i, int hi, int depth, const Ctx *c) {
+    int ci[64], nc = 0, k = i, e, join = -1, jpos, ns = 0, m, a, b, jj;
+    ChSeg sg[66], t;
+    int dflt_goto = 0;
+    while (k < hi && nc < 64) {
+        if (is_comment(&s->v[k])) {
+            k++;
+            continue;
+        }
+        if (s->v[k].k != N_COND) break;
+        if (is_exit(s, k, c) || s->tp[k] <= k || jumps_to(s, s->tp[k]) != 1) return -1;
+        for (m = 0; m < nc; m++)
+            if (s->tp[ci[m]] == s->tp[k]) return -1;
+        ci[nc++] = k++;
+    }
+    if (nc < 2 || k >= hi) return -1;
+    e = k;
+    for (m = 0; m < nc; m++) {
+        sg[ns].start = gstart(s, s->tp[ci[m]]);
+        sg[ns++].cond = ci[m];
+    }
+    if (s->v[e].k == N_GOTO && s->tp[e] > e && s->tp[e] != c->head && s->tp[e] != c->exit && s->cls[s->tp[e]] != 1) {
+        int ld = s->tp[e];
+        dflt_goto = 1;
+        if (jumps_to(s, ld) == 1) { /* the target is a block of its own */
+            for (m = 0; m < nc; m++)
+                if (s->tp[ci[m]] == ld) return -1;
+            sg[ns].start = gstart(s, ld);
+            sg[ns++].cond = -1;
+        } else {
+            join = ld; /* no default block: the goto leaves to the join */
+        }
+    } else {
+        sg[ns].start = e; /* the default block follows the jumps */
+        sg[ns++].cond = -1;
+    }
+    for (a = 0; a < ns; a++) /* sort by start */
+        for (b = a + 1; b < ns; b++)
+            if (sg[b].start < sg[a].start) {
+                t = sg[a];
+                sg[a] = sg[b];
+                sg[b] = t;
+            }
+    if (dflt_goto) {
+        if (sg[0].start <= e || dead_end(s, e + 1, hi) < sg[0].start) return -1;
+    } else if (sg[0].cond >= 0 || sg[0].start != e) {
+        return -1; /* the default block must follow the jumps */
+    }
+    /* the join: the target of the trailing GOTO of every block but the last */
+    for (a = 0; a < ns - 1; a++) {
+        int l = last_node(s, sg[a].start, sg[a + 1].start), t;
+        if (l < 0) return -1;
+        if (s->v[l].k == N_RETURN) continue;
+        if (s->v[l].k != N_GOTO) return -1;
+        t = s->tp[l];
+        if (t == c->head || t == c->exit || s->cls[t] == 1) continue;
+        if (join == t) continue;
+        if (join < 0 && gstart(s, t) > sg[ns - 1].start && gstart(s, t) <= hi && s->cls[t] != 1) {
+            join = t;
+        } else if (s->cls[t] == 0) {
+            return -1;
+        }
+    }
+    if (join < 0) {
+        /* every block leaves: the last one ends the range */
+        int l = sg[ns - 1].start < hi ? last_node(s, sg[ns - 1].start, hi) : -1;
+        if (l < 0 || !(s->v[l].k == N_RETURN || (s->v[l].k == N_GOTO && is_leave(s, l, c)))) return -1;
+        jpos = hi;
+    } else {
+        jpos = gstart(s, join);
+        if (jpos <= sg[ns - 1].start || jpos > hi) return -1;
+    }
+    /* nothing may enter or leave a block sideways */
+    for (jj = 0; (size_t)jj < s->n; jj++) {
+        int tl = s->tl[jj], sj = -1, st = -1;
+        if (tl < 0 || s->cls[s->tp[jj]] != 0) continue;
+        if (tl < sg[0].start || tl >= jpos) {
+            continue;
+        }
+        for (a = 0; a < ns; a++) {
+            int end = a + 1 < ns ? sg[a + 1].start : jpos;
+            if (jj >= sg[a].start && jj < end) sj = a;
+            if (tl >= sg[a].start && tl < end) st = a;
+        }
+        if (sj == st && sj >= 0) continue;
+        if (jj == e && dflt_goto) continue;
+        for (m = 0; m < nc; m++)
+            if (jj == ci[m]) break;
+        if (m < nc) continue;
+        return -1;
+    }
+    for (k = i; k < e; k++)
+        if (is_comment(&s->v[k])) put_lines(&s->out, depth, s->v[k].text, s->v[k].remark);
+    for (m = 0; m <= nc; m++) { /* in the order of the tests; the default block last */
+        int want = m < nc ? ci[m] : -1, end, stop, l;
+        for (a = 0; a < ns && sg[a].cond != want; a++) {}
+        if (a == ns) continue;
+        end = a + 1 < ns ? sg[a + 1].start : jpos;
+        l = last_node(s, sg[a].start, end);
+        stop = end;
+        if (l >= 0 && s->v[l].k == N_GOTO && s->tp[l] == join) stop = l;
+        if (m < nc)
+            put_line(&s->out, depth, NULL, m == 0 ? "#if (%s) {" : "#} else if (%s) {", s->v[want].cond);
+        else
+            put_line(&s->out, depth, NULL, "#} else {");
+        emit_range(s, sg[a].start, stop, depth + 1, *c);
+        if (m < nc) land(s, s->tp[want]);
+    }
+    put_line(&s->out, depth, NULL, "#}");
+    if (join >= 0) land(s, join);
+    return jpos;
+}
+
 static void emit_body(S *s, int lo, int hi, int depth, Ctx c) {
     int i = lo;
     while (i < hi) {
@@ -282,6 +419,13 @@ static void emit_body(S *s, int lo, int hi, int depth, Ctx c) {
                 put_line(&s->out, depth, NULL, "#}");
                 i++;
                 break;
+            }
+            {
+                int nx = try_chain(s, i, hi, depth, &c);
+                if (nx >= 0) {
+                    i = nx;
+                    break;
+                }
             }
             q = gstart(s, t);
             if (!is_exit(s, i, &c) && t > i && q <= hi && i + 1 < hi &&
@@ -381,7 +525,8 @@ static int gotos_valid(const S *s) {
     return 1;
 }
 
-static int structure(Buf *out, const MNodeVec *nodes) {
+static int structure(Buf *out, const MNodeVec *nodes, int *ngoto) {
+
     S s;
     size_t j, k, n = nodes->n;
     int pass, hi;
@@ -424,11 +569,97 @@ static int structure(Buf *out, const MNodeVec *nodes) {
     if (s.grown) return 0;
     if (!gotos_valid(&s)) return 0;
     buf_puts(out, buf_cstr(&s.out));
+    *ngoto = (int)s.gl.n / 2;
     return 1;
 }
 
-int mflow_write(Buf *out, const MNodeVec *nodes, int flat) {
-    if (!flat && structure(out, nodes)) return 1;
-    write_flat(out, nodes);
-    return flat ? 0 : -1;
+/* ---- dispatch loop: the fallback for flow that has several entries into a block --------------
+ * The body becomes a loop over a switch on a variable that names the block to run next. A block
+ * starts at a label that a jump reaches; it ends by naming its successor. */
+
+static void write_dispatch(Buf *out, const MNodeVec *nodes, const char *pcvar) {
+    size_t k, g, n = nodes->n;
+    StrMap used = {0}, grp = {0}; /* label -> a jump names it; label -> the case name of its group */
+    int terminal = 0, started = 0;
+    const char *init = "(start)";
+    if (n && nodes->v[n - 1].k == N_RETURN && !nodes->v[n - 1].remark) n--;
+    for (k = 0; k < n; k++)
+        if (nodes->v[k].k == N_COND || nodes->v[k].k == N_GOTO) strmap_put(&used, nodes->v[k].target, (void *)1);
+    /* the case name of a group of labels is the first one that a jump names */
+    for (k = 0; k < n; k++) {
+        const char *nm = NULL;
+        if (nodes->v[k].k != N_LABEL) continue;
+        for (g = k; g < n && nodes->v[g].k == N_LABEL; g++)
+            if (!nm && strmap_get(&used, nodes->v[g].target)) nm = nodes->v[g].target;
+        for (; k < g; k++) strmap_put(&grp, nodes->v[k].target, (void *)nm);
+        k--;
+    }
+    for (k = 0; k < n && is_comment(&nodes->v[k]); k++) {}
+    if (k < n && nodes->v[k].k == N_LABEL && strmap_get(&grp, nodes->v[k].target)) init = nodes->v[k].target;
+    put_line(out, 1, NULL, "#let %s = \"%s\"", pcvar, init);
+    put_line(out, 1, NULL, "#while (true) {");
+    put_line(out, 2, NULL, "#switch (%s) {", pcvar);
+    if (!strcmp(init, "(start)")) {
+        put_line(out, 2, NULL, "#case \"(start)\":");
+        started = 1;
+    }
+    for (k = 0; k < n; k++) {
+        const MNode *x = &nodes->v[k];
+        switch (x->k) {
+        case N_CODE:
+            put_lines(out, 3, x->text, x->remark);
+            if (!is_comment(x)) terminal = 0;
+            break;
+        case N_RETURN:
+            put_line(out, 3, x->remark, "#return");
+            terminal = 1;
+            break;
+        case N_LABEL: {
+            const char *nm = strmap_get(&grp, x->target);
+            for (g = k; g < n && nodes->v[g].k == N_LABEL; g++) {}
+            if (nm) {
+                if (started && !terminal) put_line(out, 3, NULL, "#%s = \"%s\"", pcvar, nm);
+                put_line(out, 2, NULL, "#case \"%s\":", nm);
+                started = 1;
+                terminal = 0;
+            }
+            k = g - 1;
+            break;
+        }
+        case N_COND:
+            put_line(out, 3, NULL, "#if (%s) {", x->cond);
+            put_line(out, 4, x->remark, "#%s = \"%s\"", pcvar, (const char *)strmap_get(&grp, x->target));
+            put_line(out, 4, NULL, "#continue");
+            put_line(out, 3, NULL, "#}");
+            terminal = 0;
+            break;
+        case N_GOTO:
+            put_line(out, 3, x->remark, "#%s = \"%s\"", pcvar, (const char *)strmap_get(&grp, x->target));
+            put_line(out, 3, NULL, "#continue");
+            terminal = 1;
+            break;
+        }
+    }
+    if (!terminal) put_line(out, 3, NULL, "#return");
+    put_line(out, 2, NULL, "#}");
+    put_line(out, 1, NULL, "#}");
+}
+
+int mflow_write(Buf *out, const MNodeVec *nodes, int mode, const char *pcvar) {
+    Buf body = {0};
+    int ngoto = 0;
+    if (mode == MF_FLAT) {
+        write_flat(out, nodes);
+        return 0;
+    }
+    if (structure(&body, nodes, &ngoto) && (ngoto == 0 || mode == MF_KEEPGOTO)) {
+        buf_puts(out, mflow_post(buf_cstr(&body)));
+        return 1;
+    }
+    if (mode == MF_KEEPGOTO) {
+        write_flat(out, nodes);
+        return -1;
+    }
+    write_dispatch(out, nodes, pcvar);
+    return 2;
 }

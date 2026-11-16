@@ -10,6 +10,8 @@
 #ifndef ZA_MACRO_H
 #define ZA_MACRO_H
 
+#include <time.h>
+
 #include "asm.h"
 
 typedef struct MacSys MacSys;
@@ -36,6 +38,17 @@ typedef struct {
     const char *(*sect)(void *user, const char **type);
     /* is there a #define of that name? */
     int (*is_defined)(void *user, const char *name);
+    /* name of the current location counter (sys.loc), or NULL */
+    const char *(*loc)(void *user);
+    /* the -sysparm text (sys.parm), or NULL */
+    const char *(*parm)(void *user);
+    /* the time of the assembly (same as __DATE__: SOURCE_DATE_EPOCH, -reproducible); 0 when it is
+     * not available (an error was reported) */
+    int (*now)(void *user, time_t *t);
+    /* the next input record for aread() (80 columns, padded), or NULL at the end of the input */
+    char *(*aread)(void *user);
+    /* #insert: queue a record to be read after the outermost macro call (front or back of the queue) */
+    void (*insert)(void *user, const char *text, int front);
 } MacHost;
 
 /* step_limit: statements per expansion (0 = default 1,000,000). elf selects __ELF__. */

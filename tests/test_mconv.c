@@ -2,6 +2,7 @@
  * The macros here are written for the test. Each one is converted twice, flat (#goto/#label)
  * and structured, and both are expanded for several argument sets: the output must be equal. */
 #define _POSIX_C_SOURCE 200809L
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -106,6 +107,25 @@ static const Case cases[] = {
      "         AGO   .LP\n.END     ANOP\n         MEND\n",
      {"0", "3", "9", NULL},
      0},
+    {"fork and join over four arms",
+     "         MACRO\n&L       SW1   &T\n         LCLC  &X\n         AIF   ('&T' EQ 'A').LA\n         AIF   ('&T' EQ 'B').LB\n"
+     "         AIF   ('&T' EQ 'C').LC\n         AGO   .LD\n.LA       ANOP\n&X       SETC  'one'\n         AGO   .DONE\n"
+     ".LB       ANOP\n&X       SETC  'two'\n         AGO   .DONE\n.LC       ANOP\n&X       SETC  'three'\n         AGO   .DONE\n"
+     ".LD       ANOP\n&X       SETC  'other'\n.DONE     ANOP\n&L       DC    C'&X'\n         MEND\n",
+     {"A", "B", "C", "Z", "", NULL},
+     0},
+    {"arms that all leave",
+     "         MACRO\n         EL1   &T\n         AIF   ('&T' EQ 'A').LA\n         AIF   ('&T' EQ 'B').LB\n"
+     "         DC    C'N'\n         MEXIT\n.LA       ANOP\n         DC    C'A'\n         MEXIT\n.LB       ANOP\n"
+     "         DC    C'B'\n         MEND\n",
+     {"A", "B", "Q", NULL},
+     0},
+    {"a jump into the middle of the code before it",
+     "         MACRO\n         DSP   &N\n         LCLA  &I\n&I       SETA  &N\n         AIF   (&I GT 5).BIG\n"
+     ".TOP     ANOP\n         DC    A(1)\n         AIF   (&I EQ 1).MID\n         DC    A(2)\n.BIG     ANOP\n"
+     "         DC    A(3)\n&I       SETA  1\n         AGO   .TOP\n.MID     ANOP\n         DC    A(4)\n         MEND\n",
+     {"1", "3", "9", NULL},
+     0},
 };
 
 static int count(const char *s, const char *what) {
@@ -159,8 +179,103 @@ static void test_shapes(void) {
     CHECK_MSG(strstr(s, "#while (true) {") != NULL && strstr(s, "#break") != NULL, "do-while shape:\n%s", s);
 }
 
+static char *convert_copy(const char *text, const char *dir) {
+    ConvOptions o;
+    int nw = 0;
+    conv_options_default(&o);
+    o.member = 1;
+    o.copy_dir = dir;
+    return hlasm_convert(text, strlen(text), "t.asm", &o, NULL, &nw);
+}
+
+/* AREAD, AINSERT, OPSYN, PUNCH, nested MACRO, COPY and the system variables inside macros */
+static void test_features(void) {
+    int nw = 0;
+    char *c, *x;
+    char dir[] = "/tmp/zmcXXXXXX";
+    FILE *f;
+    /* AREAD reads the next source record; AINSERT queues records after the outermost macro */
+    c = convert("         MACRO\n         RD\n         LCLC  &A\n&A       SETC  AREAD\n"
+                "         DC    C'&A'\n         AINSERT '         DC    C''ins'''\n"
+                "         AINSERT '         DC    C''first''',FRONT\n         MEND\n",
+                0, &nw);
+    CHECK_MSG(strstr(c, "aread()") && strstr(c, "#insert") && strstr(c, ", front"), "aread/ainsert:\n%s", c);
+    x = expand(xasprintf("%s    RD\ntaken\n         DC    C'next'\n", c));
+    CHECK_MSG(strstr(x, "C'taken ") != NULL, "aread expansion: %s", x);
+    CHECK_MSG(strstr(x, "C'first'") && strstr(x, "C'ins'") && strstr(x, "C'first'") < strstr(x, "C'ins'") &&
+                  strstr(x, "C'ins'") < strstr(x, "C'next'") && !strstr(x, "|taken"),
+              "ainsert order: %s", x);
+    /* OPSYN of a macro; PUNCH stays a statement */
+    c = convert("         MACRO\n         M1    &X\n         DC    C'&X'\n         PUNCH '//JOB'\n"
+                "_B_      OPSYN B\n         MEND\n",
+                0, &nw);
+    CHECK_MSG(strstr(c, "PUNCH") && strstr(c, "OPSYN") && strstr(c, "#macro M1("), "punch/opsyn:\n%s", c);
+    x = expand(xasprintf("%sMM       OPSYN M1\n         MM    ab\n", c));
+    CHECK_MSG(strstr(x, "C'ab'") != NULL && !strstr(x, "ZA4"), "macro opsyn: %s", x);
+    /* a macro inside a macro becomes a macro of its own */
+    c = convert("         MACRO\n         OUTER &A\n         MACRO\n         INNER &B\n         DC    C'in&B'\n"
+                "         MEND\n         INNER &A\n         MEND\n",
+                0, &nw);
+    CHECK_MSG(count(c, "#macro ") == 2 && strstr(c, "#macro INNER(") < strstr(c, "#macro OUTER("), "nested:\n%s", c);
+    x = expand(xasprintf("%s    OUTER zz\n", c));
+    CHECK_MSG(strstr(x, "C'inzz'") != NULL && !strstr(x, "ZA4"), "nested expansion: %s", x);
+    /* the system variables */
+    c = convert("         MACRO\n         SV\n         DC    C'&SYSDATE|&SYSPARM|&SYSLOC'\n         MEND\n", 0, &nw);
+    CHECK_MSG(strstr(c, "sys.date") && strstr(c, "sys.parm") && strstr(c, "sys.loc"), "sys vars:\n%s", c);
+    x = expand(xasprintf("T CSECT\n%s    SV\n", c));
+    CHECK_MSG(strstr(x, "C'") && !strstr(x, "ZA41"), "sys var expansion: %s", x);
+    /* COPY inside a macro reads the member when a directory is given */
+    CHECK(mkdtemp(dir) != NULL);
+    f = fopen(xasprintf("%s/CPYM.mac", dir), "wb");
+    CHECK(f != NULL);
+    if (f) {
+        fputs("         DC    C'from copy &Q'\n", f);
+        fclose(f);
+    }
+    c = convert_copy("         MACRO\n         CP    &Q\n         COPY  CPYM\n         MEND\n", dir);
+    CHECK_MSG(strstr(c, "#macro CP(") && strstr(c, "from copy &q"), "copy:\n%s", c);
+    c = convert("         MACRO\n         CP    &Q\n         COPY  CPYM\n         MEND\n", 0, &nw);
+    CHECK_MSG(!strstr(c, "#macro CP("), "COPY without a directory is not converted:\n%s", c);
+}
+
+/* else if, #switch, the dispatch loop and -keep-goto (MACRO.md section 10) */
+static void test_post(void) {
+    int nw = 0;
+    char *c;
+    ConvOptions o;
+    /* a chain of tests of one variable: #switch */
+    c = convert(cases[sizeof cases / sizeof cases[0] - 3].hlasm, 0, &nw);
+    CHECK_MSG(strstr(c, "#switch (t) {") != NULL && strstr(c, "#case \"A\":") != NULL &&
+                  strstr(c, "#default:") != NULL && count(c, "#goto") == 0,
+              "switch shape:\n%s", c);
+    /* two arms stay an if / else if */
+    c = convert("         MACRO\n         TWO   &T\n         AIF   ('&T' EQ 'A').A\n         AIF   ('&T' EQ 'B').B\n"
+                "         DC    C'N'\n         AGO   .Z\n.A        DC    C'A'\n         AGO   .Z\n.B        DC    C'B'\n"
+                ".Z        DC    C'Z'\n         MEND\n",
+                0, &nw);
+    CHECK_MSG(strstr(c, "#} else if (t == \"B\") {") != NULL && !strstr(c, "#switch"), "else if shape:\n%s", c);
+    /* a flow with two entries into a block: the dispatch loop, no #goto */
+    c = convert(cases[sizeof cases / sizeof cases[0] - 1].hlasm, 0, &nw);
+    CHECK_MSG(strstr(c, "#switch (pc) {") != NULL && count(c, "#goto") == 0 && count(c, "#label") == 0,
+              "dispatch shape:\n%s", c);
+    /* the variable name does not collide with a parameter */
+    c = convert("         MACRO\n         DSP   &PC\n         LCLA  &I\n&I       SETA  &PC\n         AIF   (&I GT 5).BIG\n"
+                ".TOP     ANOP\n         DC    A(1)\n         AIF   (&I EQ 1).MID\n         DC    A(2)\n.BIG     ANOP\n"
+                "         DC    A(3)\n&I       SETA  1\n         AGO   .TOP\n.MID     ANOP\n         DC    A(4)\n         MEND\n",
+                0, &nw);
+    CHECK_MSG(strstr(c, "#let pc_ = ") != NULL && strstr(c, "#switch (pc_) {") != NULL, "pc name:\n%s", c);
+    /* -keep-goto keeps #goto where the flow cannot be structured */
+    conv_options_default(&o);
+    o.member = 1;
+    o.keep_goto = 1;
+    c = hlasm_convert(cases[sizeof cases / sizeof cases[0] - 1].hlasm, strlen(cases[sizeof cases / sizeof cases[0] - 1].hlasm), "t.asm", &o, NULL, &nw);
+    CHECK_MSG(count(c, "#goto") >= 1 && !strstr(c, "#switch (pc)"), "keep-goto shape:\n%s", c);
+}
+
 int main(void) {
     test_equivalence();
     test_shapes();
+    test_features();
+    test_post();
     TEST_MAIN_END();
 }

@@ -923,6 +923,20 @@ static const char *common_options(ArgVec *a, const J *args, Tmp *t, int *is_elf)
     if (bad) return "'include_dirs' must be an array of directory names";
     for (i = 0; i < n; i++) vec_push(a, xasprintf("-I%s", list[i]));
     if (jget(args, "files")) vec_push(a, xasprintf("-I%s", t->dir));
+    n = str_array(args, "macro_dirs", &list, &bad);
+    if (bad) return "'macro_dirs' must be an array of directory names";
+    for (i = 0; i < n; i++) vec_push(a, xasprintf("-M%s", list[i]));
+    if (jget(args, "files")) vec_push(a, xasprintf("-M%s", t->dir));
+    if (jstr(args, "sysparm")) {
+        add_arg(a, "-sysparm");
+        add_arg(a, jstr(args, "sysparm"));
+    }
+    if (jget(args, "macro_steps")) {
+        long ms = jint(args, "macro_steps", -1);
+        if (ms < 1) return "'macro_steps' must be a positive integer";
+        add_arg(a, "-macro-steps");
+        vec_push(a, xasprintf("%ld", ms));
+    }
     return NULL;
 }
 
@@ -1201,19 +1215,46 @@ static void tool_disasm(const J *args, Buf *out) {
 static void tool_convert(const J *args, Buf *out) {
     Tmp t;
     const char *msg = NULL, *ictl = jstr(args, "ictl"), *incext = jstr(args, "include_extension");
-    char *in;
+    const char *mdir = jstr(args, "macro_dir"), *odir = jstr(args, "output_dir"), *cdir = jstr(args, "copy_dir");
+    char *in = NULL;
     ArgVec a = {0};
     Run r;
     long w;
     if (!tmp_open(&t)) { tool_fail(out, "cannot create a temporary directory"); return; }
-    in = input_file(&t, args, "input.asm", &msg);
-    if (!in) {
-        tmp_close(&t);
-        { tool_fail(out, msg); return; }
+    if (mdir) {
+        /* a whole library: every member of macro_dir (.mac) becomes a .zmac file in output_dir */
+        if (!*mdir || !odir || !*odir) {
+            tmp_close(&t);
+            tool_fail(out, "'macro_dir' needs 'output_dir', the directory that receives the converted .zmac files");
+            return;
+        }
+        if (jstr(args, "source") || jstr(args, "path")) {
+            tmp_close(&t);
+            tool_fail(out, "give 'macro_dir' or one of 'source' / 'path', not both");
+            return;
+        }
+        add_arg(&a, "-macro-dir");
+        add_arg(&a, mdir);
+        add_arg(&a, "-o");
+        add_arg(&a, odir);
+    } else {
+        in = input_file(&t, args, jbool(args, "macros", 0) ? "input.mac" : "input.asm", &msg);
+        if (!in) {
+            tmp_close(&t);
+            { tool_fail(out, msg); return; }
+        }
+        add_arg(&a, "-o");
+        add_arg(&a, "-");
+        if (jbool(args, "macros", 0)) add_arg(&a, "-m");
     }
-    add_arg(&a, "-o");
-    add_arg(&a, "-");
     if (jbool(args, "relaxed", 0)) add_arg(&a, "-relaxed");
+    if (jbool(args, "flat", 0)) add_arg(&a, "-flat");
+    if (jbool(args, "keep_goto", 0)) add_arg(&a, "-keep-goto");
+    if (jbool(args, "comment_macros", 0)) add_arg(&a, "-comment-macros");
+    if (cdir) {
+        add_arg(&a, "-copy-dir");
+        add_arg(&a, cdir);
+    }
     w = jint(args, "width", -1);
     if (w >= 0) {
         add_arg(&a, "-w");
@@ -1227,12 +1268,12 @@ static void tool_convert(const J *args, Buf *out) {
         add_arg(&a, "-inc-ext");
         add_arg(&a, incext);
     }
-    add_arg(&a, in);
+    if (in) add_arg(&a, in);
     {
         char *prog = tool_path("hlasm2za");
         run_prog(&t, prog, a.v, a.n, &r);
     }
-    simple_result(out, "hlasm2za", &r, "source", &t);
+    simple_result(out, "hlasm2za", &r, mdir ? "output" : "source", &t);
     tmp_close(&t);
 }
 
@@ -1326,8 +1367,8 @@ static void tool_guide(const J *args, Buf *out) {
     "\"include_dirs\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Directories " \
     "searched by #include (-I).\"},"                                                               \
     "\"files\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"string\"},\"description\":" \
-    "\"Extra files for #include, as {\\\"regs.inc\\\":\\\"text...\\\"}. Written to a temporary " \
-    "directory that is searched by #include; use plain file names.\"},"                            \
+    "\"Extra files for #include and macro calls, as {\\\"regs.inc\\\":\\\"text...\\\"}. Written to a temporary " \
+    "directory that is searched by #include and by macro calls (NAME.zmac); use plain file names.\"},"                            \
     "\"format\":{\"type\":\"string\",\"enum\":[\"goff\",\"elf\"],\"description\":\"Object format: " \
     "goff = z/OS GOFF object (default); elf = relocatable ELF64 s390x object for Linux on Z (implies " \
     "charset ascii; the preprocessor defines __ELF__ instead of __GOFF__).\"},"                   \
@@ -1335,7 +1376,14 @@ static void tool_guide(const J *args, Buf *out) {
     "set of C'..' constants (default ebcdic IBM-1047; ascii ISO-8859-1 with format elf). CA'..' and " \
     "CE'..' always mean ASCII and EBCDIC.\"},"                                                     \
     "\"strict_registers\":{\"type\":\"boolean\",\"description\":\"Accept only %r1 style registers " \
-    "(or names made with NAME EQU %r1) in register positions; numbers are errors. Default false.\"}"
+    "(or names made with NAME EQU %r1) in register positions; numbers are errors. Default false.\"}," \
+    "\"macro_dirs\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Macro " \
+    "libraries (-M): directories searched for NAME.zmac or NAME.mac when a macro is called but not " \
+    "defined. Macros given in 'files' are found too. Guide chapter 19.\"}," \
+    "\"sysparm\":{\"type\":\"string\",\"description\":\"The text that sys.parm (HLASM &SYSPARM) has in " \
+    "macros (-sysparm).\"}," \
+    "\"macro_steps\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"Stop a macro expansion " \
+    "after this many statements (-macro-steps, default 1000000).\"}"
 
 static const char *tools_json(void) {
     static char *s;
@@ -1358,7 +1406,8 @@ static const char *tools_json(void) {
         "The language and every option are described in the user's guide, @GUIDE@: read it with the tool "
         "zosasm_guide (chapters 1, 2, 6, 13) or the resource zosasm://guide. No z/OS system is needed or "
         "used; objects are not run or linked here.\","
-        "\"inputSchema\":{\"type\":\"object\",\"properties\":{" P_SRC "," P_PP ","
+        "\"inputSchema\":{\"type\":\"object\",\"properties\":{" P_SRC "," P_PP ",");
+    buf_puts(&b,
         "\"output\":{\"type\":\"string\",\"description\":\"File name to write the object to (default: the "
         "object is not kept; the call only checks the program).\"},"
         "\"object_base64\":{\"type\":\"boolean\",\"description\":\"Also return the object, base64 encoded, "
@@ -1424,10 +1473,14 @@ static const char *tools_json(void) {
         "\"description\":\"Convert High Level Assembler source (fixed card columns 1-71, continuation in "
         "column 72, upper case, COPY) to zosasm source (hlasm2za). INPUT: exactly one of 'source' (HLASM "
         "text) or 'path'. OUTPUT: 'source' (the converted .za text) and 'diagnostics', which list what "
-        "could not be converted and was left or commented out: macros (MACRO..MEND are commented out), "
-        "conditional assembly (AIF, &variables), OPSYN, ALIAS and macro calls such as SAVE or WTO; they must "
+        "could not be converted and was left or commented out: conditional assembly outside macros (AIF, "
+        "&variables), OPSYN, ALIAS and macro calls such as SAVE or WTO; they must "
         "be rewritten by hand (use the C-style preprocessor, guide section 3). Registers become %r1 style "
-        "so that the result assembles with strict_registers. After converting, run zosasm_assemble on the "
+        "so that the result assembles with strict_registers. MACRO..MEND definitions are converted to "
+        "zosasm macros (#macro, guide chapter 19) with their control flow rewritten as if/while/switch; "
+        "with 'macros' true the input is a macro library member and only the definitions are returned, "
+        "with 'macro_dir' a whole library is converted to a directory. Assemble with the converted macros "
+        "through zosasm_assemble 'macro_dirs' or 'files'. After converting, run zosasm_assemble on the "
         "result. Guide section 16 (@GUIDE@).\","
         "\"inputSchema\":{\"type\":\"object\",\"properties\":{" P_SRC ","
         "\"relaxed\":{\"type\":\"boolean\",\"description\":\"Keep register numbers as they are instead of "
@@ -1437,8 +1490,24 @@ static const char *tools_json(void) {
         "\"ictl\":{\"type\":\"string\",\"description\":\"Source columns \\\"begin,end,continue\\\" when the "
         "file has no ICTL (default \\\"1,71,16\\\").\"},"
         "\"include_extension\":{\"type\":\"string\",\"description\":\"Extension of the files that COPY "
-        "becomes #include of (default .inc).\"}}},"
-        "\"annotations\":{\"readOnlyHint\":true,\"openWorldHint\":false}},");
+        "becomes #include of (default .inc).\"},"
+        "\"macros\":{\"type\":\"boolean\",\"description\":\"The input is a macro library member (MACRO..MEND "
+        "definitions): they are converted to #macro and only the definitions are returned (-m). Guide 16.4.\"},"
+        "\"flat\":{\"type\":\"boolean\",\"description\":\"Macros: write #goto/#label for every sequence "
+        "symbol, no structure recovery (-flat).\"},"
+        "\"keep_goto\":{\"type\":\"boolean\",\"description\":\"Macros: where the flow cannot be "
+        "structured write #goto/#label instead of a dispatch loop (-keep-goto).\"},"
+        "\"comment_macros\":{\"type\":\"boolean\",\"description\":\"Leave macro definitions as comments "
+        "instead of converting them (-comment-macros).\"},"
+        "\"copy_dir\":{\"type\":\"string\",\"description\":\"Macros: COPY inside a macro definition reads "
+        "DIR/MEMBER.mac (-copy-dir; with macro_dir the library directory is the default).\"},"
+        "\"macro_dir\":{\"type\":\"string\",\"description\":\"Convert every member DIR/*.mac of a macro "
+        "library (-macro-dir) and write the .zmac files to 'output_dir'. Use instead of 'source'/'path'. "
+        "The result lists the counts and what was not converted in 'diagnostics'.\"},"
+        "\"output_dir\":{\"type\":\"string\",\"description\":\"With macro_dir: the directory that "
+        "receives the converted files.\"}}},"
+        "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":true,"
+        "\"openWorldHint\":false}},");
     /* zosasm_guide */
     buf_puts(&b,
         "{\"name\":\"zosasm_guide\",\"title\":\"Read the zosasm user's guide\","

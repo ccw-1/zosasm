@@ -268,3 +268,47 @@ void dir_repro(Asm *a, Stmt *st) {
                         "REPRO has no effect: a GOFF object has no card image records"),
               "the record that follows is skipped");
 }
+
+/* PUNCH 'text': a GOFF object has no card image records */
+void dir_punch(Asm *a, Stmt *st) {
+    OperandVec ops = {0};
+    if (!asm_ops(a, st, 1, 1, &ops)) return;
+    if (a->pass != 1) return;
+    diag_help(rep_warnf(a->rep, "ZA2078", st->op_span,
+                        "PUNCH has no effect: a GOFF object has no card image records"),
+              "the text is ignored");
+}
+
+/* name OPSYN op: name becomes another name of an operation code; name OPSYN (no operand)
+ * deletes it. Both passes run it (each() clears the table). A macro as the operand is handled
+ * by the preprocessor, which does not pass such a statement on. */
+void dir_opsyn(Asm *a, Stmt *st) {
+    OperandVec ops = {0};
+    char *name, *tgt;
+    const char *al;
+    if (!asm_ops(a, st, 0, 1, &ops)) return;
+    if (!st->name[0]) {
+        if (a->pass == 1) {
+            rep_errorf(a->rep, "ZA2079", st->op_span, "OPSYN needs the new operation code in the name field");
+            st->bad = 1;
+        }
+        return;
+    }
+    name = za_strupper(st->name);
+    if (ops.n == 0 || !str_trim(ops.v[0].text)[0]) {
+        strmap_put(&a->opsyn, name, "");
+        return;
+    }
+    tgt = za_strupper(str_trim(ops.v[0].text));
+    al = strmap_get(&a->opsyn, tgt);
+    if (al) {
+        tgt = xstrdup(al);
+    } else if (!asm_is_op(tgt)) {
+        if (a->pass == 1) {
+            rep_errorf(a->rep, "ZA2079", st->op_span, "\"%s\" is not an operation code", tgt);
+            st->bad = 1;
+        }
+        return;
+    }
+    strmap_put(&a->opsyn, name, !strcmp(name, tgt) ? NULL : tgt);
+}

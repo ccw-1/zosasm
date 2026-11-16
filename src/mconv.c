@@ -91,7 +91,7 @@ static int is_hlc(int c) { return za_isalnum(c) || c == '_' || c == '$' || c == 
 
 static const char *const RESERVED[] = {"let", "global", "if", "else", "while", "for", "switch", "case",
                                        "default", "break", "continue", "return", "goto", "label",
-                                       "emit", "note", "warning", "error", "macro", "define",
+                                       "emit", "insert", "note", "warning", "error", "macro", "define",
                                        "undef", "include", "pragma", "ifdef", "ifndef", "elif",
                                        "endif", "sys", "true", "false", "in", NULL};
 
@@ -384,6 +384,11 @@ static E sys_ref(XP *p, const char *hl) {
     if (!strcmp(hl, "SYSECT")) return e_make(xstrdup("sys.sect"), P_ATOM, T_STR);
     if (!strcmp(hl, "SYSSTYP")) return e_make(xstrdup("sys.sectype"), P_ATOM, T_STR);
     if (!strcmp(hl, "SYSMAC")) return e_make(xstrdup("sys.macro"), P_ATOM, T_STR);
+    if (!strcmp(hl, "SYSPARM")) return e_make(xstrdup("sys.parm"), P_ATOM, T_STR);
+    if (!strcmp(hl, "SYSLOC")) return e_make(xstrdup("sys.loc"), P_ATOM, T_STR);
+    if (!strcmp(hl, "SYSDATE")) return e_make(xstrdup("sys.date"), P_ATOM, T_STR);
+    if (!strcmp(hl, "SYSDATC")) return e_make(xstrdup("sys.datc"), P_ATOM, T_STR);
+    if (!strcmp(hl, "SYSTIME")) return e_make(xstrdup("sys.time"), P_ATOM, T_STR);
     if (!strcmp(hl, "SYSLIST")) {
         E r = e_make(xstrdup("sys.args"), P_ATOM, T_STR);
         if (p->s[p->i] == '(') {
@@ -1061,7 +1066,16 @@ static void conv_set(MC *m, const MHStmt *s, char kind) {
     }
     for (k = 0; k < ov.n; k++) {
         Buf lhs = {0};
-        E rhs = parse_text(m, ov.n == 1 ? s->operands : ov.v[k].text);
+        E rhs;
+        if (kind == 'C' && ov.n == 1 && za_streqi(str_trim(ov.v[0].text), "AREAD"))
+            rhs = e_make(xstrdup("aread()"), P_ATOM, T_STR);
+        else if (kind == 'C' && ov.n == 1 && !za_strncmpi(str_trim(ov.v[0].text), "AREAD", 5) &&
+                 !is_hlc((unsigned char)str_trim(ov.v[0].text)[5]))
+        {
+            fail(m, "AREAD with operands is not converted");
+            rhs = dummy_str();
+        } else
+            rhs = parse_text(m, ov.n == 1 ? s->operands : ov.v[k].text);
         int j;
         char *t;
         buf_puts(&lhs, v->z);
@@ -1178,8 +1192,31 @@ static void conv_model(MC *m, const MHStmt *s) {
     node(m, N_CODE, buf_cstr(&b), NULL, NULL, NULL, NULL);
 }
 
-static const char *const UNSUPPORTED[] = {"COPY",   "AREAD",  "PUNCH",  "AINSERT", "OPSYN",
-                                          "SETAF",  "SETCF",  "MACRO",  "MEND",    NULL};
+static const char *const UNSUPPORTED[] = {"COPY", "SETAF", "SETCF", "MACRO", "MEND", NULL};
+
+/* AINSERT 'record'[,FRONT|BACK] */
+static void conv_ainsert(MC *m, const MHStmt *s) {
+    OperandVec ov = {0};
+    E e;
+    char *t;
+    int front = 0;
+    split_operands(&ov, s->operands);
+    if (ov.n < 1 || ov.n > 2) {
+        fail(m, "AINSERT needs 'record'[,FRONT|BACK]");
+        return;
+    }
+    if (ov.n == 2) {
+        if (za_streqi(ov.v[1].text, "FRONT"))
+            front = 1;
+        else if (!za_streqi(ov.v[1].text, "BACK")) {
+            fail(m, "AINSERT: \"%s\" is not FRONT or BACK", ov.v[1].text);
+            return;
+        }
+    }
+    e = as_str(parse_text(m, ov.v[0].text));
+    t = xasprintf("#insert %s%s", e.txt, front ? ", front" : "");
+    node(m, N_CODE, t, NULL, NULL, NULL, s->remark);
+}
 
 static void conv_stmt(MC *m, const MHStmt *s) {
     m->line = s->line;
@@ -1234,6 +1271,10 @@ static void conv_stmt(MC *m, const MHStmt *s) {
             return;
         }
         if (is_op(op, "ANOP")) return;
+        if (is_op(op, "AINSERT")) {
+            conv_ainsert(m, s);
+            return;
+        }
         if (is_op(op, "MEXIT")) {
             node(m, N_RETURN, NULL, NULL, NULL, NULL, s->remark);
             return;
@@ -1319,8 +1360,8 @@ static void hoisted(MC *m, Buf *out) {
 
 char *mconv_macro(const MHStmtVec *st, const MConvOptions *o, char **why) {
     MC m;
-    size_t k, first = 0, pre;
-    Buf out = {0}, body = {0};
+    size_t k, j, first = 0, pre;
+    Buf out = {0}, body = {0}, inner = {0};
     int rest;
     memset(&m, 0, sizeof m);
     m.o = o;
@@ -1334,6 +1375,34 @@ char *mconv_macro(const MHStmtVec *st, const MConvOptions *o, char **why) {
     prepass(&m, st, first);
     for (k = first + 1; k < st->n && !m.why; k++) {
         const MHStmt *s = &st->v[k];
+        if (s->kind == MH_STMT && is_op(s->op, "MACRO") && !s->name[0] && !s->operands[0]) {
+            /* a macro defined inside a macro: HLASM defines it when the outer macro runs; here it
+             * becomes a macro of its own, written before the outer one */
+            MHStmtVec sub = {0};
+            size_t e = k + 1;
+            int depth = 0;
+            char *iwhy = NULL, *itext;
+            for (; e < st->n; e++) {
+                const MHStmt *u = &st->v[e];
+                if (u->kind != MH_STMT) continue;
+                if (is_op(u->op, "MACRO") && !u->name[0] && !u->operands[0]) depth++;
+                if (is_op(u->op, "MEND") && depth-- == 0) break;
+            }
+            if (e >= st->n) {
+                fail(&m, "a nested MACRO has no MEND");
+                break;
+            }
+            m.line = s->line;
+            for (j = k + 1; j <= e; j++) vec_push(&sub, st->v[j]);
+            itext = mconv_macro(&sub, o, &iwhy);
+            if (!itext) {
+                fail(&m, "the nested macro is not converted (%s)", iwhy ? iwhy : "?");
+                break;
+            }
+            buf_puts(&inner, itext);
+            k = e;
+            continue;
+        }
         if (s->kind == MH_STMT && k + 1 == st->n && is_op(s->op, "MEND")) {
             if (s->name[0] == '.') {
                 char *z = zname(s->name + 1);
@@ -1368,10 +1437,24 @@ char *mconv_macro(const MHStmtVec *st, const MConvOptions *o, char **why) {
         if (s->kind == MH_ASMCOMMENT || s->kind == MH_MACCOMMENT) buf_printf(&out, "*%s\n", s->text);
     }
     rest = mentions_syslist(st);
+    buf_puts(&out, buf_cstr(&inner));
     buf_printf(&out, "%s\n", header(&m, rest));
     hoisted(&m, &out);
-    if (mflow_write(&body, &m.nodes, o->flat) < 0 && o->warn)
-        o->warn(o->user, m.line, "flow could not be structured, written with #goto");
+    {
+        char *pc = xstrdup("pc");
+        size_t q;
+        int again = 1;
+        while (again) {
+            again = 0;
+            for (q = 0; q < m.params.n && !again; q++)
+                if (!strcmp(m.params.v[q]->z, pc)) again = 1;
+            for (q = 0; q < m.decls.n && !again; q++)
+                if (!strcmp(m.decls.v[q]->z, pc)) again = 1;
+            if (again) pc = xasprintf("%s_", pc);
+        }
+        if (mflow_write(&body, &m.nodes, o->flat ? MF_FLAT : o->keep_goto ? MF_KEEPGOTO : MF_STRUCT, pc) < 0 && o->warn)
+            o->warn(o->user, m.line, "flow could not be structured, written with #goto");
+    }
     buf_puts(&out, buf_cstr(&body));
     buf_puts(&out, "#}\n");
     if (why) *why = NULL;

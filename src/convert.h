@@ -13,7 +13,9 @@ typedef struct {
     int width;          /* break operand lists after a comma beyond this width; 0 = never */
     const char *inc_ext; /* extension for COPY members, default ".inc" */
     int flat;           /* macros: #goto/#label for every sequence symbol, no structure recovery */
+    int keep_goto;      /* macros: where the flow cannot be structured, write #goto instead of a dispatch loop */
     int member;         /* a macro library member: write the macro definitions only, as .zmac text */
+    const char *copy_dir; /* macros: COPY inside a macro reads DIR/MEMBER.mac (else it is not converted) */
     int comment_macros; /* macros: comment the definitions out (the old behaviour) */
 } ConvOptions;
 

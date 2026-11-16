@@ -40,7 +40,8 @@ static const DirEntry directive_tab[] = {
     {"DSECT", dir_section}, {"DXD", dir_dxd},     {"EJECT", dir_ignore}, {"END", dir_end},
     {"ENTRY", dir_entry},  {"EQU", dir_equ},      {"EXITCTL", dir_exitctl}, {"EXTRN", dir_extrn},
     {"ICTL", dir_ignore},  {"ISEQ", dir_ignore},  {"LOCTR", dir_loctr},  {"LTORG", dir_ltorg},
-    {"ORG", dir_org},      {"POP", dir_pushpop},  {"PRINT", dir_ignore}, {"PUNCH", dir_ignore},
+    {"OPSYN", dir_opsyn},  {"ORG", dir_org},      {"POP", dir_pushpop},  {"PRINT", dir_ignore},
+    {"PUNCH", dir_punch},
     {"PUSH", dir_pushpop}, {"REPRO", dir_repro},  {"RMODE", dir_mode},   {"RSECT", dir_section},
     {"SPACE", dir_ignore}, {"START", dir_section}, {"TITLE", dir_ignore}, {"USING", dir_using},
     {"WXTRN", dir_extrn},  {"XATTR", dir_xattr},
@@ -85,6 +86,13 @@ void dir_copy(Asm *a, Stmt *st) {
 
 /* ---- statements -------------------------------------------------------- */
 
+int asm_is_op(const char *upper_op) {
+    size_t n;
+    if (find_directive(upper_op)) return 1;
+    isa_lookup(upper_op, &n);
+    return n > 0;
+}
+
 static void unknown_op(Asm *a, Stmt *st) {
     const char *const *dn, *const *mn;
     const char **cands;
@@ -119,18 +127,31 @@ static void unknown_op(Asm *a, Stmt *st) {
 void asm_stmt(Asm *a, Stmt *st) {
     size_t n;
     char *up = za_strupper(st->op);
-    Handler h = find_directive(up);
-    free(up);
+    char *orig = NULL;
+    Handler h;
+    if (a->opsyn.n > 0) { /* an operation code made by OPSYN */
+        const char *al = strmap_get(&a->opsyn, up);
+        if (al) {
+            if (!*al) {
+                unknown_op(a, st);
+                return;
+            }
+            orig = st->op;
+            st->op = xstrdup(al);
+            up = za_strupper(st->op);
+        }
+    }
+    h = find_directive(up);
     if (h) {
         h(a, st);
-        return;
+    } else {
+        isa_lookup(st->op, &n);
+        if (n > 0)
+            asm_instr(a, st);
+        else
+            unknown_op(a, st);
     }
-    isa_lookup(st->op, &n);
-    if (n > 0) {
-        asm_instr(a, st);
-        return;
-    }
-    unknown_op(a, st);
+    if (orig) st->op = orig;
 }
 
 /* ---- symbols ----------------------------------------------------------- */
@@ -947,6 +968,7 @@ static void each(Asm *a) {
     a->print_depth = 0;
     a->using_stack.n = 0;
     a->ac_stack.n = 0;
+    memset(&a->opsyn, 0, sizeof a->opsyn);
     for (i = 0; i < a->stmts.n; i++) {
         Stmt *st = a->stmts.v[i];
         Piece *before = a->cur;

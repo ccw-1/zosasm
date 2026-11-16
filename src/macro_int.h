@@ -63,6 +63,9 @@ typedef struct {
 Diag *ma_err(Ctx *c, const char *code, const char *fmt, ...);
 Diag *ma_warn(Ctx *c, const char *code, const char *fmt, ...);
 
+/* the next input record (aread), or NULL */
+char *ma_aread(Ctx *c);
+
 /* the MVal operators (arithmetic, comparison); op is a token of macro_expr.c */
 MVal ex_binop(Ctx *c, int op, MVal a, MVal b);
 

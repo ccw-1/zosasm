@@ -5,8 +5,10 @@
  * statement records the depth of its block; variables carry the depth they were declared at and
  * are dropped when a statement of a lower depth runs, which gives block scope without a scope
  * stack. */
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "macro_int.h"
 #include "ebcdic.h"
@@ -42,7 +44,7 @@ typedef struct {
 } Model;
 
 typedef enum {
-    S_NOP, S_LET, S_GLOBAL, S_ASSIGN, S_JUMP, S_JFALSE, S_CASE, S_ITER, S_EMIT, S_NOTE, S_WARN,
+    S_NOP, S_LET, S_GLOBAL, S_ASSIGN, S_JUMP, S_JFALSE, S_CASE, S_ITER, S_EMIT, S_INSERT, S_NOTE, S_WARN,
     S_ERROR, S_MODEL, S_RETURN
 } SKind;
 
@@ -117,7 +119,7 @@ static size_t ident_len(const char *s) {
 static int is_reserved(const char *n) {
     static const char *const kw[] = {"macro", "let",    "global", "if",       "else",   "while",
                                      "for",   "switch", "case",   "default",  "break",  "continue",
-                                     "return", "goto",  "label",  "emit",     "note",   "warning",
+                                     "return", "goto",  "label",  "emit",     "insert", "note",   "warning",
                                      "error", "true",   "false",  "in"};
     size_t i;
     for (i = 0; i < sizeof kw / sizeof kw[0]; i++)
@@ -290,7 +292,7 @@ int mac_top_kind(const char *t) {
     const char *p;
     size_t n, i;
     static const char *const stmts[] = {"let",  "global", "while", "for",   "switch", "emit",
-                                        "note", "goto",   "label", "break", "continue", "return"};
+                                        "insert", "note", "goto",   "label", "break", "continue", "return"};
     static const char *const dirs[] = {"define", "elif",    "else",    "endif", "error", "ifdef",
                                        "ifndef", "include", "pragma",  "undef", "warning"};
     if (t[0] != '#') return 0;
@@ -1236,6 +1238,25 @@ static void cp_code(Cmp *cp, const MacLine *ml, const char *t, const char *hash)
         emit_st(cp, &s);
         return;
     }
+    if (KW("insert")) {
+        INIT_PS();
+        st_init(cp, &s, ml, t, p, S_INSERT);
+        s.e = ps_expr(&ps);
+        s.target = 0;
+        if (!ps.err && ps.tk == ',') {
+            ps_next(&ps);
+            if (ps.tk == TK_ID && !strcmp(ps.ts, "front")) {
+                s.target = 1;
+            } else if (!(ps.tk == TK_ID && !strcmp(ps.ts, "back"))) {
+                ps_error(&ps, "ZA4103", "#insert: \"front\" or \"back\" is expected");
+                cp->ok = 0;
+                return;
+            }
+            ps_next(&ps);
+        }
+        if (expect_eol(cp, &ps, ml)) emit_st(cp, &s);
+        return;
+    }
     if (KW("emit") || KW("note") || KW("warning") || KW("error")) {
         SKind k = KW("emit") ? S_EMIT : KW("note") ? S_NOTE : KW("warning") ? S_WARN : S_ERROR;
         INIT_PS();
@@ -1754,6 +1775,11 @@ static void run_code(MacSys *ms, const Code *code, Frame *f) {
             }
             break;
         }
+        case S_INSERT: {
+            const char *s = v_text(ex_eval(&c, st->e));
+            if (ms->host.insert) ms->host.insert(ms->host.user, s, st->target);
+            break;
+        }
         case S_NOTE:
         case S_WARN:
         case S_ERROR: {
@@ -1782,6 +1808,8 @@ static void run_code(MacSys *ms, const Code *code, Frame *f) {
     while (f->vars.n > 0 && f->vars.v[f->vars.n - 1].depth > 0) f->vars.n--;
 }
 
+char *ma_aread(Ctx *c) { return c->ms->host.aread ? c->ms->host.aread(c->ms->host.user) : NULL; }
+
 /* ---- built-in values ---------------------------------------------------------------------------- */
 
 MVal sys_value(Ctx *c, const char *name, int *ok) {
@@ -1800,6 +1828,29 @@ MVal sys_value(Ctx *c, const char *name, int *ok) {
             if (!type) type = "";
         }
         return v_str(name[4] ? type : sect);
+    }
+    if (!strcmp(name, "parm")) {
+        const char *l = c->ms->host.parm ? c->ms->host.parm(c->ms->host.user) : NULL;
+        return v_str(l ? l : "");
+    }
+    if (!strcmp(name, "loc")) {
+        const char *l = c->ms->host.loc ? c->ms->host.loc(c->ms->host.user) : NULL;
+        return v_str(l ? l : "");
+    }
+    if (!strcmp(name, "date") || !strcmp(name, "datc") || !strcmp(name, "time")) {
+        char buf[64];
+        time_t t = time(NULL);
+        struct tm *tm;
+        if (c->ms->host.now && !c->ms->host.now(c->ms->host.user, &t)) return v_str("");
+        tm = gmtime(&t);
+        if (!tm) return v_str("");
+        if (!strcmp(name, "date"))
+            snprintf(buf, sizeof buf, "%02d/%02d/%02d", tm->tm_mon + 1, tm->tm_mday, tm->tm_year % 100);
+        else if (!strcmp(name, "datc"))
+            snprintf(buf, sizeof buf, "%04d%02d%02d", tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday);
+        else
+            snprintf(buf, sizeof buf, "%02d.%02d", tm->tm_hour, tm->tm_min);
+        return v_str(xstrdup(buf));
     }
     if (!strcmp(name, "__file__")) return v_str(c->f->open ? (c->st ? c->st->file : "") : c->f->call.pos.file);
     if (!strcmp(name, "__line__")) return v_int(c->f->open ? (c->st ? c->st->line : 0) : c->f->call.pos.line);

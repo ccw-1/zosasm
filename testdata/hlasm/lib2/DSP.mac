@@ -1,0 +1,17 @@
+* A jump back into earlier code: a dispatch loop
+         MACRO
+         DSP   &N
+         LCLA  &I
+&I       SETA  &N
+         AIF   (&I GT 5).BIG
+.TOP     ANOP
+         DC    A(1)
+         AIF   (&I EQ 1).MID
+         DC    A(2)
+.BIG     ANOP
+         DC    A(3)
+&I       SETA  1
+         AGO   .TOP
+.MID     ANOP
+         DC    A(4)
+         MEND

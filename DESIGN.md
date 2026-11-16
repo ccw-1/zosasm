@@ -1045,26 +1045,60 @@ nodes**, not by a flow graph:
   one, so `gotos_valid()` checks every goto against the block tree (`bpar`);
   when one enters a block the macro is written flat (`mflow_write` returns
   -1 and `mconv_macro` warns);
+* `try_chain()` handles a run of `COND`s that jump forward to blocks which each
+  end in a `GOTO` to one join (or leave): `AIF a .A / AIF b .B / AGO .D / .A.. AGO .J /
+  .B.. AGO .J / .D.. / .J`. Every block must be entered only by its test (a
+  `closed()`-like check over all jumps), the join comes after the last block,
+  and the default block is either the one the trailing `GOTO` names or the code
+  that follows the tests. It writes `#if / #else if / #else`; a join that is a
+  short exit block (class 2 or 3) is not copied into the arms but stays after
+  the chain;
+* `closed()` ignores jumps whose target is a class 1-3 block (they are copied,
+  never entered), which structures many more error-exit macros;
 * code after an unconditional jump is dead and skipped up to the next live
   label (`//` comments are kept). `landed[]` makes a class 3 block live only
   when a structure ends there. The emission runs until `need` (labels a goto
   targets) and `landed` stop changing.
 
-**Tests.** `tests/test_mconv.c` converts ten idiom macros flat and
+*Default fallback.* When `structure()` fails or leaves a `#goto`, `write_dispatch()`
+writes a **dispatch loop**: `#let pc = "(start)"`, `#while (true) { #switch (pc) { ... } }`.
+A block starts at a label some jump names (case name = the first such label of a
+group), ends by setting `pc` and `#continue`, and a block that falls into the next
+one sets `pc` and leaves the switch (zosasm's `#switch` has no fall through, so the
+`#while` runs it again). The variable is `pc`, then `pc_`, `pc__` ... if the macro
+has a parameter or declared name of that name (`mconv.c`). `-keep-goto` skips the
+fallback and keeps the old result (partial `#goto`, or the whole macro flat when a
+`#goto` would enter a block); `-flat` writes `#goto`/`#label` for everything.
+
+*mpost.c* runs over the text of a structured body (not the nodes): `#} else {`
+followed by only an `#if` becomes `#} else if (...) {` (the inner lines are
+de-indented), and a chain of three or more arms whose conditions are all
+`LHS == literal` (or `||` of those) with one `LHS`, no repeated value and no
+`#break`/`#continue` inside becomes `#switch (LHS)` with `#case a, b:` /
+`#default:`. The dispatch loop is never rewritten.
+
+**Tests.** `tests/test_mconv.c` converts thirteen idiom macros flat and
 structured and expands both for several argument sets: texts and sorted
 diagnostic codes must be equal, and the shapes of the common idioms are
-checked. `tests/maclib_check.sh` (`ZASM_MACLIB=DIR make test-maclib`, local:
-the IBM library is not in the repository) does that for a whole library and
-compiles every result. On `SYS1.MACLIB` (2080 members) 2072 macros convert
-and all of them compile; about 43% need no `#goto`. 17 members are not
-converted (nested `MACRO`/`COPY`, `PUNCH`, `&SYSDATE`, `&SYSLOC`, members
-without `MEND`, odd `MEND ,` lines). Not compared with HLASM.
+checked (`else if`, `#switch`, the dispatch loop, `-keep-goto`).
+`tests/maclib_check.sh` (`ZASM_MACLIB=DIR make test-maclib`, local: the IBM
+library is not in the repository; `ZASM_CONV_FLAGS=-keep-goto` checks the
+other form) does that for a whole library and compiles every result. On
+`SYS1.MACLIB` (2080 members, 2076 with a definition) 2210 macros convert
+(nested macros and `COPY` members are counted) and every output compiles;
+with the default dispatch fallback **no macro has a `#goto`**, and 1128 of
+the 2076 outputs use a dispatch loop. With `-keep-goto` 948 outputs need no
+`#goto` (891 before `else if`, fork/join chains and the class 1-3 rule of
+`closed()`) and 72,413 `#goto` remain (73,884 before). 8 members are not
+converted (4 PL/S members without `MEND`, `IXGCON` with stray text, `IGWRMRCD`
+with a `!` operand, `IHBRDWRA` with `LCLB @IDS3270` without `&`, `CPF` with `?`
+in an expression). Not compared with HLASM.
 
-**Not done.** `COPY` inside a macro, `AREAD`, `PUNCH`, `AINSERT`, `OPSYN`,
-`SETAF`/`SETCF`, nested `MACRO`, computed `AGO`, created `&(` symbols, real
-system variables (`&SYSDATE`, `&SYSLOC`...), `C'x'` terms in conditional
-assembly expressions, `#switch`/`#for` recognition, `else if` chains,
-multiple entries into a block (kept as `#goto`).
+**Not done.** `SETAF`/`SETCF`, computed `AGO`, created `&(` symbols, `C'x'`
+terms in conditional assembly expressions, `AREAD` with operands, macro
+members that are not valid HLASM. A
+`#goto` that leaves a nested loop towards a label after it is written by the
+dispatch loop, not as a labelled `#break`.
 
 ## 17. ELF output and the ASCII character set (`src/elf.c`, `src/ebcdic.c`)
 
@@ -1138,7 +1172,10 @@ server-initiated requests (sampling, roots) are not used.
 subprocesses (found next to the server, or `ZOSASM_BIN_DIR`) in a temporary
 directory (`mkdtemp` below `$TMPDIR`, removed after each call). Source passed
 inline is written to `input.za` (or `name`) and `files` next to it, which is
-also added with `-I`. The temporary directory name is removed from the
+also added with `-I` and `-M` (so a `NAME.zmac` in `files` is a library macro; `macro_dirs`, `sysparm` and
+`macro_steps` map to `-M`, `-sysparm` and `-macro-steps`). `zosasm_convert_hlasm` passes `macros`, `flat`,
+`keep_goto`, `comment_macros`, `copy_dir` and, for a whole library, `macro_dir` + `output_dir` (the one tool
+that writes files outside the temporary directory; it is therefore not marked read only). The temporary directory name is removed from the
 diagnostics and the listing so that results are reproducible. Standard error
 is redirected to a file and read back, so a failing program cannot block the
 pipe. A tool failure is a result with `isError` true, not a JSON-RPC error,

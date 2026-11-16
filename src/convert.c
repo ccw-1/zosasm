@@ -23,8 +23,10 @@ void conv_options_default(ConvOptions *o) {
     o->width = 100;
     o->inc_ext = ".inc";
     o->flat = 0;
+    o->keep_goto = 0;
     o->comment_macros = 0;
     o->member = 0;
+    o->copy_dir = NULL;
 }
 
 /* ---- data ----------------------------------------------------------------- */
@@ -439,23 +441,49 @@ static void yregs(Conv *c, int line) {
 
 static void macro_warn(void *user, int line, const char *msg) { warnf(user, line, "%s", msg); }
 
-/* A macro definition: the statements from the line after MACRO through MEND, converted to
- * a zosasm macro; when that is not possible, the lines become comments. *pi is left on MEND. */
-static void macro_def(Conv *c, size_t macro_first, size_t *pi) {
-    MHStmtVec st = {0};
-    MConvOptions mo;
-    size_t i, j, start = *pi;
+static void collect_stmts(Conv *c, size_t *pi, MHStmtVec *st, int is_main, int depth, int copy_line, int *ended);
+
+/* COPY member inside a macro: the statements of DIR/member.mac are read at this point (the
+ * assembler does the same when it reads the macro definition). 1 when the member was found. */
+static int copy_member(Conv *c, const char *name, MHStmtVec *st, int depth, int line) {
+    static const char *const ext[] = {".mac", ".MAC", ""};
+    char *base = str_trim(name), *text = NULL, *up, *lo;
+    size_t len = 0, k;
+    Conv sub;
     int ended = 0;
-    char *res, *why = NULL;
-    memset(&mo, 0, sizeof mo);
-    mo.flat = c->o.flat;
-    mo.warn = macro_warn;
-    mo.user = c;
-    for (i = start + 1; i < c->lines.n && !ended; i++) {
+    if (!c->o.copy_dir || !*base || depth > 8) return 0;
+    for (k = 0; base[k]; k++)
+        if (base[k] == '/' || base[k] == '\\' || base[k] == '\'' || base[k] == ' ') return 0;
+    up = za_strupper(base);
+    lo = za_strlower(xstrdup(base));
+    for (k = 0; k < 3 * 3 && !text; k++) {
+        const char *nm = k / 3 == 0 ? up : k / 3 == 1 ? lo : base;
+        text = read_file(xasprintf("%s/%s%s", c->o.copy_dir, nm, ext[k % 3]), &len);
+    }
+    if (!text) return 0;
+    sub = *c;
+    memset(&sub.lines, 0, sizeof sub.lines);
+    memset(&sub.warns, 0, sizeof sub.warns);
+    split_lines(&sub, text, len);
+    k = 0;
+    collect_stmts(&sub, &k, st, 0, depth, line, &ended);
+    for (k = 0; k < sub.warns.n; k++) {
+        Warn w = sub.warns.v[k];
+        w.line = line;
+        vec_push(&c->warns, w);
+    }
+    return 1;
+}
+
+/* the logical statements from line *pi on; the main text stops after MEND */
+static void collect_stmts(Conv *c, size_t *pi, MHStmtVec *st, int is_main, int depth, int copy_line, int *ended) {
+    size_t i;
+    int nest = 0; /* MACRO statements inside the macro (their MEND does not end it) */
+    for (i = *pi; i < c->lines.n && !(is_main && *ended); i++) {
         char *t = columns(c, c->lines.v[i], c->o.begin - 1);
         MHStmt s;
         memset(&s, 0, sizeof s);
-        s.line = (int)i + 1;
+        s.line = copy_line ? copy_line : (int)i + 1;
         if (blank_str(t)) continue;
         if (t[0] == '*') {
             s.kind = MH_ASMCOMMENT;
@@ -472,10 +500,43 @@ static void macro_def(Conv *c, size_t macro_first, size_t *pi) {
             s.op = f.op;
             s.operands = f.operands;
             s.remark = f.remark;
-            if (za_streqi(f.op, "MEND")) ended = 1;
+            if (is_main && za_streqi(f.op, "MACRO") && !f.name[0] && !f.operands[0]) nest++;
+            if (is_main && za_streqi(f.op, "MEND") && nest-- == 0) *ended = 1;
+            if (za_streqi(f.op, "COPY") && c->o.copy_dir && copy_member(c, f.operands, st, depth + 1, s.line)) {
+                if (f.name[0]) { /* keep the sequence symbol of the COPY statement */
+                    MHStmt an;
+                    memset(&an, 0, sizeof an);
+                    an.line = s.line;
+                    an.kind = MH_STMT;
+                    an.name = f.name;
+                    an.op = xstrdup("ANOP");
+                    an.operands = xstrdup("");
+                    an.remark = xstrdup("");
+                    vec_push(st, an);
+                }
+                continue;
+            }
         }
-        vec_push(&st, s);
+        vec_push(st, s);
     }
+    *pi = i;
+}
+
+/* A macro definition: the statements from the line after MACRO through MEND, converted to
+ * a zosasm macro; when that is not possible, the lines become comments. *pi is left on MEND. */
+static void macro_def(Conv *c, size_t macro_first, size_t *pi) {
+    MHStmtVec st = {0};
+    MConvOptions mo;
+    size_t i, j, start = *pi;
+    int ended = 0;
+    char *res, *why = NULL;
+    memset(&mo, 0, sizeof mo);
+    mo.flat = c->o.flat;
+    mo.keep_goto = c->o.keep_goto;
+    mo.warn = macro_warn;
+    mo.user = c;
+    i = start + 1;
+    collect_stmts(c, &i, &st, 1, 0, 0, &ended);
     i--; /* the last line consumed */
     if (!ended) {
         why = xstrdup("MEND is missing");

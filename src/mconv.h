@@ -20,6 +20,7 @@ typedef Vec(MHStmt) MHStmtVec;
 
 typedef struct {
     int flat; /* no structure recovery: #label / #goto for every sequence symbol */
+    int keep_goto; /* leave #goto where the structure cannot show a jump (default: a dispatch loop) */
     void (*warn)(void *user, int line, const char *msg);
     void *user;
 } MConvOptions;

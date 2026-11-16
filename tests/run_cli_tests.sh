@@ -237,6 +237,25 @@ mkdir -p $T/zm; $H -macro-dir testdata/hlasm/lib -o $T/zm > $T/sum 2>&1; check "
 grep -q '2 members' $T/sum; check "hlasm2za -macro-dir summary" $? 0
 printf 'T CSECT\n#include "FIND.zmac"\n FIND 2\n END\n' > $T/fnd.za
 $X -E -I$T/zm -o /dev/null $T/fnd.za 2>&1 | grep -q "DC *F'2'"; check "the converted search loop expands" $? 0
+printf 'T CSECT\n FIND 2\n END\n' > $T/fnd2.za
+$X -E -M$T/zm -o /dev/null $T/fnd2.za 2>&1 | grep -q "DC *F'2'"; check "-M finds FIND.zmac by the macro name (upper case file)" $? 0
+# control flow of converted macros: #switch, dispatch loop, -keep-goto
+$H -m -o $T/SW.zmac testdata/hlasm/lib2/SW.mac 2>/dev/null; check "hlasm2za SW exit" $? 0
+grep -q '#switch (t) {' $T/SW.zmac; check "hlasm2za: arms that join become #switch" $? 0
+$H -m -o $T/DSP.zmac testdata/hlasm/lib2/DSP.mac 2>/dev/null; check "hlasm2za DSP exit" $? 0
+grep -q '#switch (pc) {' $T/DSP.zmac; check "hlasm2za: dispatch loop" $? 0
+grep -q '#goto' $T/DSP.zmac; [ $? = 1 ]; check "hlasm2za: dispatch loop has no #goto" $? 0
+$H -m -keep-goto -o $T/DSPK.zmac testdata/hlasm/lib2/DSP.mac 2>/dev/null; check "hlasm2za -keep-goto exit" $? 0
+grep -q '#goto' $T/DSPK.zmac; check "hlasm2za -keep-goto: #goto" $? 0
+grep -q '#switch (pc)' $T/DSPK.zmac; [ $? = 1 ]; check "hlasm2za -keep-goto: no dispatch loop" $? 0
+$H -m -flat -o $T/DSPF.zmac testdata/hlasm/lib2/DSP.mac 2>/dev/null
+for n in 1 3 9; do
+    for v in DSP DSPK DSPF; do
+        printf 'T CSECT\n#include "%s.zmac"\n DSP %s\n END\n' $v $n > $T/d.za
+        $X -E -I$T -o /dev/null $T/d.za 2>&1 | grep 'DC *A(' | tr -d ' ' > $T/d_$v.txt
+    done
+    cmp -s $T/d_DSP.txt $T/d_DSPF.txt && cmp -s $T/d_DSPK.txt $T/d_DSPF.txt; check "dispatch, keep-goto and flat expand alike (DSP $n)" $? 0
+done
 $H -o $T/none.za $T/missing.asm 2>/dev/null; check "hlasm2za missing file" $? 1
 $H 2>/dev/null; check "hlasm2za without input" $? 2
 $H -bogus x 2>/dev/null; check "hlasm2za bad option" $? 2
@@ -298,6 +317,23 @@ b64=$(sed 's/.*"object_base64":"\([^"]*\)".*/\1/' $T/m.out | head -1)
 [ -n "$b64" ]; check "mcp base64 extracted" $? 0
 mcp '{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"zosasm_dump","arguments":{"object_base64":"'"$b64"'"}}}' | grep -q 'ESD'; check "mcp dump" $? 0
 mcp '{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"zosasm_disasm","arguments":{"object_base64":"'"$b64"'"}}}' | grep -q 'LR'; check "mcp disasm" $? 0
+
+mcp '{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"zosasm_convert_hlasm","arguments":{"macros":true,"source":"         MACRO\n         M1    &A\n         AIF   (\u0027&A\u0027 EQ \u0027\u0027).E\n         DC    C\u0027&A\u0027\n         MEXIT\n.E       DC    C\u0027-\u0027\n         MEND\n"}}}' > $T/m.out
+grep -q '"success":true' $T/m.out; check "mcp convert macros: success" $? 0
+grep -q '#macro M1(a)' $T/m.out; check "mcp convert macros: #macro" $? 0
+mcp '{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"zosasm_convert_hlasm","arguments":{"macros":true,"flat":true,"source":"         MACRO\n         M1    &A\n         AIF   (\u0027&A\u0027 EQ \u0027\u0027).E\n         DC    C\u0027&A\u0027\n         MEXIT\n.E       DC    C\u0027-\u0027\n         MEND\n"}}}' > $T/m.out
+grep -q '#goto e' $T/m.out; check "mcp convert macros: flat" $? 0
+mcp '{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"zosasm_convert_hlasm","arguments":{"macro_dir":"testdata/hlasm/lib2","output_dir":"'$T'/mz","keep_goto":true}}}' > $T/m.out
+grep -q '"success":true' $T/m.out; check "mcp convert macro_dir: success" $? 0
+[ -s $T/mz/SW.zmac ] && [ -s $T/mz/DSP.zmac ]; check "mcp convert macro_dir: files written" $? 0
+mcp '{"jsonrpc":"2.0","id":17,"method":"tools/call","params":{"name":"zosasm_convert_hlasm","arguments":{"macro_dir":"testdata/hlasm/lib2"}}}' > $T/m.out
+grep -q '"isError":true' $T/m.out; check "mcp convert macro_dir needs output_dir" $? 0
+mcp '{"jsonrpc":"2.0","id":18,"method":"tools/call","params":{"name":"zosasm_preprocess","arguments":{"source":"T CSECT\n DSP 1\n","macro_dirs":["'$T'/mz"],"sysparm":"X","macro_steps":5000}}}' > $T/m.out
+grep -q 'A(4)' $T/m.out; check "mcp preprocess with macro_dirs" $? 0
+mcp '{"jsonrpc":"2.0","id":19,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n GREET\n","files":{"GREET.zmac":"#macro GREET() {\n #emit \"         DC    C\u0027\" + sys.parm + \"\u0027\"\n#}\n"},"sysparm":"HI"}}}' > $T/m.out
+grep -q '"success":true' $T/m.out; check "mcp assemble: macro from files and sysparm" $? 0
+mcp '{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n","macro_steps":0}}}' > $T/m.out
+grep -q 'macro_steps' $T/m.out; check "mcp assemble: bad macro_steps" $? 0
 
 rm -rf $T
 [ $fail = 0 ] && echo "tests/run_cli_tests.sh: ok"

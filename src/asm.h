@@ -451,6 +451,7 @@ struct Asm {
     size_t lit_owner; /* LitRec.owner of the literals being assembled */
     int using_logged; /* highest Using.id copied to Module.usings */
     int strict;       /* registers only as %r<n> or a name made with EQU %r<n> */
+    StrMap opsyn;     /* OPSYN: upper case operation code -> its meaning ("" = deleted) */
     int afpr;         /* ACONTROL AFPR: FP registers 1, 3, 5, 7 to 15 are allowed */
     int print_depth;  /* PUSH PRINT entries (the listing keeps the saved states) */
     Vec(UsingVec) using_stack; /* PUSH USING */
@@ -527,6 +528,9 @@ void dir_ceject(Asm *a, Stmt *st);
 void dir_exitctl(Asm *a, Stmt *st);
 void dir_pushpop(Asm *a, Stmt *st);
 void dir_repro(Asm *a, Stmt *st);
+void dir_opsyn(Asm *a, Stmt *st);
+int asm_is_op(const char *upper_op); /* a directive or instruction */
+void dir_punch(Asm *a, Stmt *st);
 size_t asm_directive_names(const char *const **names);
 
 /* dc.c */

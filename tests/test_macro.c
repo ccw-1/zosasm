@@ -178,6 +178,31 @@ static void test_sys(void) {
     g_keep_hide = 0;
 }
 
+static void test_input(void) {
+    expect("aread reads the next record",
+           "#macro R() {\n    #let a = aread()\n    DC C'&{trim(a)}'\n#}\n    R\nrecord one\n    NOP\n",
+           "DC C'record one'|NOP", "");
+    expect("aread at the end of the input",
+           "#macro R() {\n    #let a = aread()\n    DC F'&{len(a)}'\n#}\n    R\n", "DC F'0'", "");
+    expect("aread pads to 80 columns",
+           "#macro R() {\n    #let a = aread()\n    DC F'&{len(a)}'\n#}\n    R\nxy\n", "DC F'80'", "");
+    expect("insert goes after the macro, front before back",
+           "#macro I() {\n    #insert \"    B2\"\n    #insert \"    B1\", front\n    A\n#}\n    I\n    C\n",
+           "A|B1|B2|C", "");
+    expect("aread takes inserted records first",
+           "#macro I() {\n    #insert \"  ins\"\n    #let a = aread()\n    DC C'&{trim(a)}'\n#}\n    I\n",
+           "DC C'ins'", "");
+    expect("insert in open code",
+           "#insert \"    X\"\n    Y\n", "X|Y", "");
+    expect("insert needs front or back",
+           "#macro I() {\n    #insert \"x\", middle\n#}\n", "", "ZA4103");
+    expect("sys.loc follows LOCTR",
+           "T CSECT\n#macro L() {\n    DC C'&sys.loc'\n#}\n    L\nX LOCTR\n    L\n",
+           "T CSECT|DC C'T'|X LOCTR|DC C'X'", "");
+    expect("sys.date has the form mm/dd/yy",
+           "#macro D() {\n    DC F'&{len(sys.date)}'\n#}\n    D\n", "DC F'8'", "");
+}
+
 static void test_messages(void) {
     expect("#error", "#macro E() {\n    #error \"bad\"\n#}\n    E\n", "", "ZA4050");
     expect("#warning", "#macro E() {\n    #warning \"hmm\"\n#}\n    E\n", "", "ZA4051");
@@ -227,6 +252,7 @@ int main(void) {
     test_flow();
     test_values();
     test_sys();
+    test_input();
     test_messages();
     test_open_code();
     test_limits();

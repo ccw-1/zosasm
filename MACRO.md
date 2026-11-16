@@ -2,7 +2,7 @@
 
 Status: **M1 implemented** (2026-11-16: language, library lookup `-M`,
 `-macro-steps`, `-E`, listing, `tests/test_macro.c`, guide chapter 19);
-**C1 (`hlasm2za` conversion of MACRO..MEND) implemented** (2026-11-16: `src/mconv.c`, `src/mflow.c`, `-m`, `-macro-dir`, `-flat`, `tests/test_mconv.c`, `make test-maclib`; structure recovery by ranges, not the full flow graph of section 10; DESIGN.md 16.1). Nothing was
+**C1 (`hlasm2za` conversion of MACRO..MEND) implemented** (2026-11-16: `src/mconv.c`, `src/mflow.c`, `src/mpost.c`, `-m`, `-macro-dir`, `-flat`, `-keep-goto`, `tests/test_mconv.c`, `make test-maclib`; structure recovery by ranges, not the full flow graph of section 10, `else if`, `#switch`, and a dispatch loop for the rest; COPY, AREAD, AINSERT, OPSYN, PUNCH and nested macros convert; DESIGN.md 16.1). Nothing was
 compared with HLASM (none available). Refinements made while coding M1:
 
 * `+` adds when one side is an int and the other a numeric string (so
@@ -52,8 +52,8 @@ section 12 reads the directory in place.
 | `&SYSLIST`, `&SYSNDX`, `&SYSECT`, `&SYSSTYP` (-> `__SECTYPE__`), `&SYSMAC` | 6305, 2563, 46, 39, 6 | 479, 501, 29, 19, 1 | the only real assembler-supplied variables; all other `&SYS...` names seen (`&SYSASCE`, `&SYSSPLV`, `&SYSAM64`, `&SYSALVL`, `&SYSNAME`...) are **ordinary globals set by IBM macros** |
 | built-in functions | `BYTE` 78, `UPPER` 27, `DCVAL` 8, `SIGNED` 3 | few | small set needed |
 | `&X.` end marker | 54005 | 567 | the converter writes `&x` or `&{x}Y` |
-| `AREAD`, `OPSYN`, `PUNCH`, `COPY` | 10, 84, 67, 14 | 1, 2, 1, 5 | reported, not converted |
-| computed `AGO (&I)`, created names `&(...)`, `AINSERT` | 0 | 0 | not needed |
+| `AREAD`, `OPSYN`, `PUNCH`, `COPY` | 10, 84, 67, 14 | 1, 2, 1, 5 | converted (`aread()`, kept as model statements, `COPY` inlined from `-copy-dir`) |
+| computed `AGO (&I)`, created names `&(...)`, `AINSERT` | 0 | 0 | `AINSERT` -> `#insert`; the others are not needed |
 | keyword parameters in the prototype | 1255 | 1254 | positionals and keywords are mixed in almost every macro |
 
 What the code looks like (not quoted; own summary):
@@ -435,7 +435,9 @@ Only the **semantics** are carried over. Statement by statement:
 | `MNOTE sev,'text'` | `#note`, `#warning`, `#error` |
 | `&SYSNDX`, `&SYSECT`, `&SYSLIST(n)` | `sys.ndx`, `sys.sect`, `sys.args[n-1]` |
 | `ACTR` | dropped (the step limit replaces it) |
-| `AREAD`, `OPSYN`, `PUNCH`, `AINSERT`, macro definitions inside macros, created names | reported, left as comments |
+| `AREAD`, `AINSERT`, `COPY`, `MACRO` inside a macro, `&SYSDATE`...`&SYSPARM` | `aread()`, `#insert`, inlined member, a macro of its own, `sys.*` |
+| `OPSYN`, `PUNCH` | kept as model statements (the assembler honours them) |
+| created names `&(...)`, `SETAF`, `SETCF`, computed `AGO` | not converted (the macro is commented out and reported) |
 
 **Control flow.** The converter does not translate branch by branch. A
 quick feasibility check on the library (a crude reading of `AIF`/`AGO`/`MEXIT`
@@ -459,10 +461,16 @@ backward branch** (a loop), and **21 (1%) have an irreducible flow graph**
 5. finds `if` / `else` by branch and join (the immediate post dominator is the
    end of the construct; a branch that only leaves the construct
    becomes a `#break`/`#continue`/`#return` without `else`);
-6. turns a chain of `AIF ('&X' EQ 'A')` tests of one variable against
-   constants into `#switch`;
-7. for what is still unstructured (several entries into a loop): `#let pc = 0`
-   plus a `#while`/`#switch` over `pc`; only if that is refused, `#goto`;
+6. writes a chain of `AIF` tests that jump to blocks which join again after
+   them as `#if` / `#else if` / `#else`, and a chain of three or more arms that
+   all compare one variable with constants (`==` or `||` of them) as `#switch`
+   (`src/mpost.c`, only when no arm has a `#break`/`#continue` and no value
+   repeats);
+7. for what is still unstructured (several entries into a block): a
+   **dispatch loop**, `#let pc = "(start)"` plus `#while (true) { #switch (pc)
+   { #case "label": ... } }` (the variable is `pc`, `pc_` ... when the macro
+   has such a name); `-keep-goto` keeps `#goto`/`#label` for those jumps
+   instead (and writes the macro flat when a `#goto` would enter a block);
 8. negates conditions the readable way (`!(a == b)` -> `a != b`, De Morgan),
    lower-cases names, keeps `.*` comments as `//`, indents by block.
 
@@ -471,7 +479,7 @@ branch version (`#goto`/`#label` for every sequence symbol) and the
 tests expand the flat and the structured version of a macro for many argument
 sets and require **identical output**. The quality measure is the number of
 `#goto` and `pc` fallbacks over the library (goal: none for reducible
-macros; the real number is unknown until it is built).
+macros). The numbers of the library run are in DESIGN.md 16.1.
 
 ## 11. Diagnostics (ZA41xx, new block)
 

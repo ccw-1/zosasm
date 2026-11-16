@@ -29,6 +29,7 @@ typedef struct {
     Vec(const char *) include_dirs; /* -I */
     Vec(const char *) defines;      /* -D: "NAME", "NAME=value", "NAME(a,b)=text" */
     Vec(const char *) macro_dirs;   /* -M: directories of library macros (foo.zmac, foo.mac); -I follows */
+    const char *sysparm;            /* -sysparm: the value of sys.parm */
     long macro_steps;               /* -macro-steps: statements per macro expansion (0 = 1,000,000) */
     int elf;                        /* -elf: __ELF__ is defined, else __GOFF__ */
     int reproducible;               /* -reproducible: no unstable built-ins (__DATE__ needs a fixed time) */

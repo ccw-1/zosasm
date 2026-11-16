@@ -191,7 +191,7 @@ static void test_unconverted(void) {
         CHECK_MSG(nw == 2, "macro warnings %d", nw);
     }
     /* a macro that cannot be converted is commented out with the reason */
-    r = conv("         MACRO\n         PUN\n         PUNCH 'X'\n         MEND\n");
+    r = conv("         MACRO\n         PUN\n         LCLA &A\n&A       SETAF 'X'\n         MEND\n");
     CHECK(strstr(r, "*          MACRO\n") != NULL);
     /* conditional assembly stays and is reported */
     CHECK(warns("         AIF (&X).A\n") == 1);
