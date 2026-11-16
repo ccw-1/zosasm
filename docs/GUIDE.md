@@ -1301,7 +1301,9 @@ Environment: `SOURCE_DATE_EPOCH` (seconds since 1970) fixes `__DATE__` and
 
 `hlasm2za` (section 16) converts HLASM source to the zosasm form: it cuts the
 card columns, folds names to upper case, writes registers as `%r1`, and
-reports what it cannot convert (macros, conditional assembly).
+converts `MACRO`..`MEND` definitions to zosasm macros (section 16.4), and
+reports what it cannot convert (conditional assembly in open code, macro calls
+of system macros, a few macro statements).
 
 **Not implemented.** `ACONTROL`, `ADATA`, `AINSERT`, `CEJECT`, `EXITCTL`,
 `MNOTE`, `OPSYN`, `PUSH`, `POP`, `REPRO`; DC types `G`, `S`, `SY`, `QY`; bit
@@ -1892,8 +1894,10 @@ Arguments: `path` or `object_base64`, `generic` (`-generic`),
 **`zosasm_convert_hlasm`** converts HLASM source with `hlasm2za` (section 16).
 Arguments: `source` / `path`, `name`, `relaxed`, `width` (`-w`), `ictl`
 (`-ictl`), `include_extension` (`-inc-ext`). Result: `source` and
-`diagnostics`, which list what has to be rewritten by hand (macros,
-conditional assembly, macro calls).
+`diagnostics`, which list what has to be rewritten by hand (open code
+conditional assembly, calls of macros that are not in the source, macro
+definitions that could not be converted). Macro definitions in the source are
+converted to `#macro` text.
 
 **`zosasm_guide`** reads this guide. No arguments: how to use it and the table
 of contents. `section`: a chapter (`"13"`), a subsection (`"12.3"`), part of a
