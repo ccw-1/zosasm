@@ -9,6 +9,7 @@
 #include <time.h>
 
 #include "pp.h"
+#include "ebcdic.h"
 #include "version.h"
 
 #define PP_MAX_DEPTH 32
@@ -1129,6 +1130,14 @@ void pp_run(const char *file, const char *text, size_t len, const PpOptions *opt
     pp->out = out;
     pp->file = file;
     pp->base = file;
+    {
+        /* the target: __ELF__ or __GOFF__, __ASCII__ or __EBCDIC__ (before the -D options,
+         * which may redefine them) */
+        const char *names[2];
+        names[0] = opt->elf ? "__ELF__ 1" : "__GOFF__ 1";
+        names[1] = za_ascii ? "__ASCII__ 1" : "__EBCDIC__ 1";
+        for (i = 0; i < 2; i++) do_define(pp, xstrdup(names[i]), span_make("<command line>", 0, 0, 0));
+    }
     for (i = 0; i < opt->defines.n; i++) {
         char *d = xstrdup(opt->defines.v[i]);
         char *eq = strchr(d, '=');

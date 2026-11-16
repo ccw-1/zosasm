@@ -207,6 +207,11 @@ $X -elf -charset ebcdic -o $T/lh2.o docs/examples/linux-hello.za 2>/dev/null; gr
 $X -ascii -o $T/lh3.o docs/examples/linux-hello.za 2>/dev/null; check "-ascii exit" $? 0
 $X -dump $T/lh3.o | grep -q ESD; check "-ascii still writes GOFF" $? 0
 $X -charset latin -o $T/x.o docs/examples/linux-hello.za 2>/dev/null; check "-charset bad value" $? 2
+printf '#ifdef __ELF__\nE\n#endif\n#ifdef __GOFF__\nG\n#endif\n#ifdef __ASCII__\nA\n#endif\n#ifdef __EBCDIC__\nB\n#endif\n' > $T/pd.za
+[ "$($X -E $T/pd.za | tr -d '\n')" = "GB" ]; check "predefined macros: GOFF, EBCDIC" $? 0
+[ "$($X -E -elf $T/pd.za | tr -d '\n')" = "EA" ]; check "predefined macros: ELF, ASCII" $? 0
+[ "$($X -E -elf -charset ebcdic $T/pd.za | tr -d '\n')" = "EB" ]; check "predefined macros: ELF, EBCDIC" $? 0
+[ "$($X -E -ascii $T/pd.za | tr -d '\n')" = "GA" ]; check "predefined macros: GOFF, ASCII" $? 0
 printf 'T CSECT\n DC AD(A-B)\n EXTRN A,B\n END\n' > $T/sub.za
 $X -elf -o $T/sub.o $T/sub.za 2>$T/err; check "-elf rejects a subtracted relocation" $? 1
 grep -q 'no ELF form' $T/err; check "-elf says why" $? 0

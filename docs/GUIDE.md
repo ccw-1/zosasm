@@ -296,6 +296,8 @@ Rules that differ from C:
 | `__BASE_FILE__`, `__INCLUDE_LEVEL__` | the file named on the command line; 0 in it, 1 in its includes... |
 | `__COUNTER__` | 0, 1, 2 ... one step per use |
 | `__ZASM_VERSION__` | `major*10000 + minor*100 + patch` (0.1.0 is `100`) |
+| `__GOFF__` or `__ELF__` | defined (as 1) by the object format: `__ELF__` with `-elf`, else `__GOFF__` |
+| `__EBCDIC__` or `__ASCII__` | defined (as 1) by the character set (section 17): `__ASCII__` with `-ascii`, `-charset ascii` or `-elf` |
 | `__DATE__`, `__TIME__` | `2026-11-15` and `20:21:05` in UTC; see `SOURCE_DATE_EPOCH` below |
 
 `__DATE__` and `__TIME__` use the environment variable `SOURCE_DATE_EPOCH` when
@@ -1692,6 +1694,22 @@ z/OS programs that run in ASCII mode). `DC CE'..'` is always EBCDIC and
 and binary constants do not depend on the character set (zoned numbers keep the
 `F` zone that `PACK` and `UNPK` use). Names in a GOFF object are always EBCDIC;
 ELF names are the source names.
+
+**One source for both targets.** The preprocessor defines `__ELF__` with `-elf`
+and `__GOFF__` otherwise, and `__ASCII__` or `__EBCDIC__` for the character
+set, so a program can carry the parts that differ (system calls against
+`SVC`/`BPX` services) in one file:
+
+```za
+#ifdef __ELF__
+         SVC   1                  Linux exit
+#else
+         LA    %r15,0             z/OS: return code 0
+#endif
+```
+
+They are ordinary macros: `#ifdef`, `#if defined(...)` and `#undef` work, and
+a `-D` of the same name only gives the redefinition warning.
 
 **Mapping.**
 

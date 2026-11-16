@@ -987,6 +987,8 @@ unknown names). Padding of character constants becomes `0x20`. `CE` always
 uses `ebcdic_from_source`; `CA` was always ASCII. Names in GOFF
 (`emit.c`, ZSYM) never use the flag. `-elf` sets it unless `-charset` is given.
 
+**Predefined macros.** `pp_run` defines `__ELF__` (`PpOptions.elf`, set by `-elf`) or `__GOFF__`, and `__ASCII__` or `__EBCDIC__` from `za_ascii`, before the `-D` options. They are normal macros (a `-D` of the same name is a ZA4023 warning), not built-in names, and are not recorded as `-D` options in the `-gz2` object.
+
 **Tests.** `tests/test_elf.c` parses the object with a small ELF reader
 (sections, flags, symbol binding and order, relocation types and addends,
 common symbols, rejected constructs, character set); command line tests

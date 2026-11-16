@@ -23,8 +23,10 @@ static void usage(FILE *f) {
                "  -o FILE         output object file (default: input with .o)\n"
                "  -elf            write a relocatable ELF64 object for Linux on Z (s390x) instead of GOFF;\n"
                "                  implies -ascii, ignores -gz\n"
-               "  -ascii          C'..' constants and the type attribute use ISO-8859-1 instead of\n"
-               "  -charset NAME   IBM-1047 (NAME: ascii or ebcdic; the default is ebcdic, ascii with -elf)\n"
+               "  -ascii          same as -charset ascii\n"
+               "  -charset NAME   character set of C'..' constants and the type attribute: ascii\n"
+               "                  (ISO-8859-1) or ebcdic (IBM-1047); default ebcdic, ascii with -elf\n"
+               "                  (the preprocessor defines __ELF__ or __GOFF__, __ASCII__ or __EBCDIC__)\n"
                "  -DNAME[=VAL]    define a preprocessor macro (default value 1)\n"
                "  -Idir           search dir for #include files\n"
                "  -E              print the preprocessed source and stop\n"
@@ -312,6 +314,7 @@ int main(int argc, char **argv) {
         return 2;
     }
     za_ascii = charset ? !strcmp(charset, "ascii") : elf;
+    ppo.elf = elf;
     if (unpack) return do_unpack(unpack, out);
     if (disasm) return do_disasm(disasm, out, generic);
     if (!in) {
