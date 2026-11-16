@@ -109,7 +109,7 @@ checked by `tests/test_oracle.c`.
 | 11 | Name > 8 chars in ESD continuation records exactly as written | yes | no |
 | 12 | Text longer than 56 bytes: continuation record layout | yes | no |
 | 13 | Pad bytes of fixed records are zero | yes | no |
-| 14 | Binder (`ld`) accepts our minimal module (SD/ED/LD/TXT/END) | untested | **yes** (`xlc -o prog main.o a.o b.o`, run) |
+| 14 | Binder (`ld`) accepts our minimal module (SD/ED/LD/TXT/END) | untested | **yes**: `ld` and `xlc` accept our objects like those of `as`; `tools/oracle_ld.sh` links all four mixes of HLASM/zosasm `liba`+`chk` (entries, V/A/weak constants, CATTR class, LOCTR, second CSECT, DSECT) with a C main and runs them: identical results (503 of 511, check 4 fails the same way with IBM's objects) |
 | 15 | EBCDIC vs ASCII `DC C'..'` default matches HLASM (`CODEPAGE`) | EBCDIC 1047 | **yes** (also `^ [ ]`); HLASM option CODEPAGE(1148) on igor |
 
 Also checked (not in the table): the operand rules of the instructions

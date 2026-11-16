@@ -1225,3 +1225,5 @@ AMODE/RMODE) and the ELF addend. Remaining differences are listed in
 PLAN.md ("Oracle checks"). The listings of HLASM and the generated probe
 output are IBM material and are not stored in the repository; only our own
 sources are.
+
+**Binder check** (`tools/oracle_ld.sh`, `testdata/oracle/ld/`): objects made by zosasm and by HLASM are interchangeable for `ld`/`xlc`; the four mixes give the same result at run time. The same holds for plain `ld -o x obj` of `g1`, `g2`, `g3`, `dc2b`: the same IEW messages (only the expected unresolved externals). Observation: an `A(SDNAME)` stored in a second class (`CATTR`) of the same CSECT is 504 bytes off after binding with HLASM's own object as well (no class: correct); not investigated.
