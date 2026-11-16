@@ -11,6 +11,7 @@
 
 #include "asm.h"
 #include "convert.h"
+#include "mconv.h"
 #include "isa.h"
 #include "regops.h"
 
@@ -21,6 +22,9 @@ void conv_options_default(ConvOptions *o) {
     o->strict = 1;
     o->width = 100;
     o->inc_ext = ".inc";
+    o->flat = 0;
+    o->comment_macros = 0;
+    o->member = 0;
 }
 
 /* ---- data ----------------------------------------------------------------- */
@@ -62,7 +66,7 @@ typedef struct {
     StrMap syms; /* name -> Sym * */
     Vec(Sym *) symlist;
     StrMap dirs;   /* known directives */
-    StrMap macros; /* macros defined (and commented out) in this file */
+    StrMap macros; /* macros defined in this file: 1 commented out, 2 converted */
     StrMap noted;  /* keys already warned about */
     Buf out;
 } Conv;
@@ -124,7 +128,7 @@ static void split_lines(Conv *c, const char *text, size_t len) {
                 col++;
             } else {
                 buf_putc(&b, ch);
-                col++;
+                if ((ch & 0xC0) != 0x80) col++;
             }
         }
         if (i < len) i++; /* the newline */
@@ -136,7 +140,7 @@ static void split_lines(Conv *c, const char *text, size_t len) {
 
 /* upper case outside quoted strings; the digits of an X string are upper
  * cased too; attribute references (L'SYM) do not start a string */
-static char *fold(const char *s) {
+char *conv_fold(const char *s) {
     Buf b = {0};
     int inq = 0, hex = 0;
     size_t i;
@@ -176,6 +180,7 @@ static char *fold(const char *s) {
 typedef struct {
     char *name, *op, *operands, *remark;
     int open_quote; /* the text ends inside a quoted string */
+    int open_paren; /* the operand field ends inside parentheses */
 } Fields;
 
 static void split_fields(const char *s, Fields *f) {
@@ -216,23 +221,46 @@ static void split_fields(const char *s, Fields *f) {
         }
     }
     f->open_quote = inq;
+    f->open_paren = depth > 0;
     f->operands = xstrndup(s + p, q - p);
     while (is_blank((unsigned char)s[q])) q++;
     f->remark = xstrdup(s + q);
 }
 
+/* Columns count characters: the byte offset of column col (0-based) of a UTF-8 line */
+static size_t u8off(const char *ln, size_t col) {
+    size_t i = 0;
+    while (ln[i]) {
+        if (((unsigned char)ln[i] & 0xC0) != 0x80) {
+            if (col == 0) return i;
+            col--;
+        }
+        i++;
+    }
+    return i;
+}
+
+static size_t u8len(const char *s) {
+    size_t n = 0, i;
+    for (i = 0; s[i]; i++)
+        if (((unsigned char)s[i] & 0xC0) != 0x80) n++;
+    return n;
+}
+
 /* the source columns of a line from index from up to the end column */
 static char *columns(const Conv *c, const char *ln, int from) {
-    size_t n = strlen(ln);
-    size_t e = (size_t)c->o.end;
-    if (e > n) e = n;
+    size_t e = u8off(ln, (size_t)c->o.end), b;
     if (from < 0) from = 0;
-    if ((size_t)from >= e) return xstrdup("");
-    return xstrndup(ln + from, e - (size_t)from);
+    b = u8off(ln, (size_t)from);
+    if (b >= e) return xstrdup("");
+    return xstrndup(ln + b, e - b);
 }
 
 static int has_cont_mark(const Conv *c, const char *ln) {
-    return c->o.cont > 0 && c->o.end < 80 && strlen(ln) > (size_t)c->o.end && ln[c->o.end] != ' ';
+    size_t b;
+    if (c->o.cont <= 0 || c->o.end >= 80 || u8len(ln) <= (size_t)c->o.end) return 0;
+    b = u8off(ln, (size_t)c->o.end);
+    return ln[b] != ' ';
 }
 
 /* ---- classification of operations ------------------------------------------- */
@@ -291,6 +319,8 @@ static void classify(Conv *c, const LS *l) {
     } else if (in_list(UNSUPPORTED, op)) {
         warnf(c, l->line, "%s is not supported by zosasm%s", op,
               strcmp(op, "ALIAS") ? "" : " (name the symbol with a quoted symbol \"name\" instead)");
+    } else if (strmap_get(&c->macros, op) == (void *)2) {
+        bad = 0; /* a call of a macro that was converted */
     } else if (strmap_get(&c->macros, op)) {
         warnf(c, l->line, "call of %s, a macro defined in this file (the definition is commented out)", op);
     } else if (!strcmp(op, "COPY") || !strcmp(op, "ISEQ") || !strcmp(op, "ICTL")) {
@@ -326,10 +356,8 @@ static void push_stmt(Conv *c, int line, const char *name, const char *op, const
 
 /* a physical line as a comment: the source columns plus the continuation mark */
 static char *raw_comment(const Conv *c, const char *ln) {
-    size_t n = strlen(ln), e = (size_t)c->o.end + 1;
-    char *r;
-    if (e < n) n = e;
-    r = rtrim_dup(ln, n);
+    size_t n = u8off(ln, (size_t)c->o.end + 1);
+    char *r = rtrim_dup(ln, n);
     return xasprintf("* %s", r);
 }
 
@@ -341,7 +369,7 @@ static char *join_statement(Conv *c, size_t *i) {
     size_t pw = (size_t)(c->o.end - (c->o.begin - 1)), last;
     char *piece = columns(c, ln, c->o.begin - 1);
     buf_puts(&acc, piece);
-    last = strlen(piece);
+    last = u8len(piece);
     while (has_cont_mark(c, ln)) {
         Fields f;
         char *t;
@@ -359,8 +387,11 @@ static char *join_statement(Conv *c, size_t *i) {
             t = rtrim_dup(acc.p, acc.len);
             tl = strlen(t);
             split_fields(t, &f);
-            if (tl > 0 && t[tl - 1] == ',' && !*f.remark) {
+            if (f.open_paren) {
+                mode = 0; /* inside parentheses the text goes on as written */
+            } else if (tl > 0 && f.operands[0] && f.operands[strlen(f.operands) - 1] == ',') {
                 mode = 1;
+                if (*f.remark) t = xasprintf("%s %s %s", f.name, f.op, f.operands); /* the remark is dropped */
             } else if (acc.p[acc.len - 1] != ' ' && !*f.remark) {
                 mode = 0;
             } else {
@@ -375,7 +406,7 @@ static char *join_statement(Conv *c, size_t *i) {
         ln = c->lines.v[*i];
         piece = columns(c, ln, c->o.cont - 1);
         pw = (size_t)(c->o.end - (c->o.cont - 1));
-        last = strlen(piece);
+        last = u8len(piece);
         if (mode == 1) {
             char *p = piece;
             while (*p == ' ') p++;
@@ -406,28 +437,91 @@ static void yregs(Conv *c, int line) {
     }
 }
 
+static void macro_warn(void *user, int line, const char *msg) { warnf(user, line, "%s", msg); }
+
+/* A macro definition: the statements from the line after MACRO through MEND, converted to
+ * a zosasm macro; when that is not possible, the lines become comments. *pi is left on MEND. */
+static void macro_def(Conv *c, size_t macro_first, size_t *pi) {
+    MHStmtVec st = {0};
+    MConvOptions mo;
+    size_t i, j, start = *pi;
+    int ended = 0;
+    char *res, *why = NULL;
+    memset(&mo, 0, sizeof mo);
+    mo.flat = c->o.flat;
+    mo.warn = macro_warn;
+    mo.user = c;
+    for (i = start + 1; i < c->lines.n && !ended; i++) {
+        char *t = columns(c, c->lines.v[i], c->o.begin - 1);
+        MHStmt s;
+        memset(&s, 0, sizeof s);
+        s.line = (int)i + 1;
+        if (blank_str(t)) continue;
+        if (t[0] == '*') {
+            s.kind = MH_ASMCOMMENT;
+            s.text = rtrim_dup(t + 1, strlen(t + 1));
+        } else if (t[0] == '.' && t[1] == '*') {
+            s.kind = MH_MACCOMMENT;
+            s.text = rtrim_dup(t + 2, strlen(t + 2));
+        } else {
+            Fields f;
+            char *joined = join_statement(c, &i);
+            split_fields(joined, &f);
+            s.kind = MH_STMT;
+            s.name = f.name;
+            s.op = f.op;
+            s.operands = f.operands;
+            s.remark = f.remark;
+            if (za_streqi(f.op, "MEND")) ended = 1;
+        }
+        vec_push(&st, s);
+    }
+    i--; /* the last line consumed */
+    if (!ended) {
+        why = xstrdup("MEND is missing");
+        res = NULL;
+        i = c->lines.n - 1;
+    } else {
+        res = c->o.comment_macros ? NULL : mconv_macro(&st, &mo, &why);
+        if (c->o.comment_macros) why = xstrdup("-comment-macros");
+    }
+    if (res) {
+        char *p = res;
+        while (*p) {
+            char *e = strchr(p, '\n');
+            push_comment(c, (int)macro_first + 1, xstrndup(p, (size_t)(e - p)));
+            p = e + 1;
+        }
+        for (j = 0; j < st.n; j++)
+            if (st.v[j].kind == MH_STMT) {
+                char *nm = za_strupper(st.v[j].op);
+                strmap_put(&c->macros, nm, (void *)2);
+                break;
+            }
+    } else {
+        push_comment(c, (int)macro_first + 1,
+                     xstrdup("* ---- macro definition, not converted (see the warning) ----"));
+        for (j = macro_first; j <= i && j < c->lines.n; j++) push_comment(c, (int)j + 1, raw_comment(c, c->lines.v[j]));
+        for (j = 0; j < st.n; j++)
+            if (st.v[j].kind == MH_STMT) {
+                strmap_put(&c->macros, za_strupper(st.v[j].op), (void *)1);
+                break;
+            }
+        warnf(c, (int)macro_first + 1, "macro definition commented out: %s", why ? why : "not converted");
+    }
+    *pi = i;
+}
+
 static void parse(Conv *c) {
     size_t i;
-    int in_macro = 0, proto = 0, seen = 0;
+    int seen = 0;
     for (i = 0; i < c->lines.n; i++) {
         const char *ln = c->lines.v[i];
         char *t = columns(c, ln, c->o.begin - 1);
         int line = (int)i + 1;
-        size_t first, k;
+        size_t first;
         char *joined, *fo, *fn, *fp, *remark;
         Fields f;
-        if (in_macro) {
-            push_comment(c, line, raw_comment(c, ln));
-            if (*t != '*' && !(t[0] == '.' && t[1] == '*') && !blank_str(t)) {
-                split_fields(fold(t), &f);
-                if (proto) {
-                    proto = 0;
-                    strmap_put(&c->macros, f.op, c);
-                }
-                if (!strcmp(f.op, "MEND")) in_macro = 0;
-            }
-            continue;
-        }
         if (blank_str(t)) {
             LS l = {0};
             l.kind = K_BLANK;
@@ -439,15 +533,18 @@ static void parse(Conv *c) {
             const char *body = t[0] == '*' ? t : t + 1;
             if (za_strncmpi(t, "*PROCESS", 8) == 0)
                 warnf(c, line, "*PROCESS options are not converted: give the equivalent options to zosasm");
-            push_comment(c, line, rtrim_dup(body, strlen(body)));
+            if (c->o.member)
+                push_comment(c, line, xasprintf("*%s", rtrim_dup(t[0] == '*' ? t + 1 : t + 2, strlen(t) - (t[0] == '*' ? 1 : 2))));
+            else
+                push_comment(c, line, rtrim_dup(body, strlen(body)));
             continue;
         }
         first = i;
         joined = join_statement(c, &i);
         split_fields(joined, &f);
-        fo = fold(f.operands);
-        fn = fold(f.name);
-        fp = fold(f.op);
+        fo = conv_fold(f.operands);
+        fn = conv_fold(f.name);
+        fp = conv_fold(f.op);
         remark = f.remark;
         if (!seen && !strcmp(fp, "ICTL")) {
             int b = 1, e = 71, kk = 16, nn = sscanf(fo, "%d,%d,%d", &b, &e, &kk);
@@ -463,13 +560,10 @@ static void parse(Conv *c) {
         }
         seen = 1;
         if (!strcmp(fp, "MACRO") && !*fn) {
-            push_comment(c, line, xstrdup("* ---- macro definition, not converted (zosasm has no macros: use #define or #include) ----"));
-            for (k = first; k <= i; k++) push_comment(c, (int)k + 1, raw_comment(c, c->lines.v[k]));
-            in_macro = 1;
-            proto = 1;
-            warnf(c, line, "macro definition commented out");
+            macro_def(c, first, &i);
             continue;
         }
+        if (c->o.member) continue; /* a macro library member: only the definitions */
         if (!strcmp(fp, "YREGS") && !*fo) {
             yregs(c, line);
             continue;

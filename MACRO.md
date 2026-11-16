@@ -2,7 +2,7 @@
 
 Status: **M1 implemented** (2026-11-16: language, library lookup `-M`,
 `-macro-steps`, `-E`, listing, `tests/test_macro.c`, guide chapter 19);
-**C1 (`hlasm2za` conversion of MACRO..MEND) not started**. Nothing was
+**C1 (`hlasm2za` conversion of MACRO..MEND) implemented** (2026-11-16: `src/mconv.c`, `src/mflow.c`, `-m`, `-macro-dir`, `-flat`, `tests/test_mconv.c`, `make test-maclib`; structure recovery by ranges, not the full flow graph of section 10; DESIGN.md 16.1). Nothing was
 compared with HLASM (none available). Refinements made while coding M1:
 
 * `+` adds when one side is an int and the other a numeric string (so

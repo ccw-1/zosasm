@@ -949,6 +949,72 @@ EQU names unchanged, tabs in the middle of a statement are expanded to 8 column
 stops (HLASM has no tabs), and the case of member names in `COPY` is always
 folded to lower case.
 
+### 16.1 Macro conversion (C1, `src/mconv.c`, `src/mflow.c`)
+
+`macro_def()` in `convert.c` collects the logical statements of a MACRO..MEND
+definition (`MHStmt`: name, operation, operands, remark; comments kept) and
+calls `mconv_macro()`. When it returns NULL the definition is commented out as
+before, with the reason in the warning. The member modes (`-m`, `-macro-dir`)
+write only `*` comment lines and the macros. Columns are counted in characters
+(`u8off`/`u8len`): the library is UTF-8 and `¬` etc. are multibyte.
+
+*mconv.c* translates statement by statement into **nodes** (`MNode`, in
+`mconv_int.h`): `N_CODE` (finished zosasm lines), `N_COND` (condition,
+negated condition, target), `N_GOTO`, `N_RETURN`, `N_LABEL`. Expressions are
+parsed into a typed tree (`E`: text, type int/string/bool, precedence) so
+that `K'&X GT 0` becomes `len(x) > 0`, `'&X'(2,3)` `substr(x, 1, 3)` and
+conditions can be negated (`!(a == b)` -> `a != b`, De Morgan). Model
+statements keep `&name`; a pre-pass declares what was not declared and
+resolves sequence symbols (an undefined one becomes `#error`). Zosasm line
+rules that matter: a model operand ending in `,` is read as continued (the
+converter adds `&{""}`), a label starting with `#` is quoted, a lone `&` is
+`&&`.
+
+*mflow.c* writes the nodes. `-flat` (or a failure) writes `#label`/`#goto`
+one to one. Otherwise `structure()` recovers control flow by **ranges of
+nodes**, not by a flow graph:
+
+* a *point* is the first node after a label group (labels and `//` comments
+  are transparent; `*` lines are output and count as code);
+* `cls[point]`: 1 end of macro or `MEXIT`, 2 a block of at most 6 code nodes
+  ending in `MEXIT`, 3 such a block at the end of the macro. Jumps to 1 and 2
+  become `#return` (2 copies the block: the error exit idiom), to 3 only
+  when no structure fits;
+* `emit_body` walks a range. A forward `COND` to a label at `q` writes
+  `#if (not cond) { [i+1,q) }`; when the node before `q` is a `GOTO` over a
+  following region it writes `#if/#else`; a `COND` followed by a leaving
+  `GOTO` or `MEXIT` is a guard clause; a `COND`+`GOTO` pair in the order
+  "branch first" is turned around. A label with back jumps starts a loop:
+  `#while (not cond)` when the head node is a `COND` to the loop exit, else
+  `#while (true)`; jumps to the head are `#continue` (dropped at the end of
+  the body), to the end `#break`. A range is only structured when no jump
+  from outside enters it (`closed()`);
+* everything else is a `#goto`, and the label is written where it is in the
+  structure (`#label`). Zosasm allows a `#goto` out of blocks but not into
+  one, so `gotos_valid()` checks every goto against the block tree (`bpar`);
+  when one enters a block the macro is written flat (`mflow_write` returns
+  -1 and `mconv_macro` warns);
+* code after an unconditional jump is dead and skipped up to the next live
+  label (`//` comments are kept). `landed[]` makes a class 3 block live only
+  when a structure ends there. The emission runs until `need` (labels a goto
+  targets) and `landed` stop changing.
+
+**Tests.** `tests/test_mconv.c` converts ten idiom macros flat and
+structured and expands both for several argument sets: texts and sorted
+diagnostic codes must be equal, and the shapes of the common idioms are
+checked. `tests/maclib_check.sh` (`ZASM_MACLIB=DIR make test-maclib`, local:
+the IBM library is not in the repository) does that for a whole library and
+compiles every result. On `SYS1.MACLIB` (2080 members) 2072 macros convert
+and all of them compile; about 43% need no `#goto`. 17 members are not
+converted (nested `MACRO`/`COPY`, `PUNCH`, `&SYSDATE`, `&SYSLOC`, members
+without `MEND`, odd `MEND ,` lines). Not compared with HLASM.
+
+**Not done.** `COPY` inside a macro, `AREAD`, `PUNCH`, `AINSERT`, `OPSYN`,
+`SETAF`/`SETCF`, nested `MACRO`, computed `AGO`, created `&(` symbols, real
+system variables (`&SYSDATE`, `&SYSLOC`...), `C'x'` terms in conditional
+assembly expressions, `#switch`/`#for` recognition, `else if` chains,
+multiple entries into a block (kept as `#goto`).
+
 ## 17. ELF output and the ASCII character set (`src/elf.c`, `src/ebcdic.c`)
 
 **Why.** The assembler model (sections, classes, relocations with a symbol or
@@ -1046,4 +1112,4 @@ transport, JSON-RPC batches, restricting `path`/`output` to a directory, a
 
 ## 19. Macro language (M1 implemented)
 
-See `MACRO.md`: a C-like macro language in the preprocessor stage (braced `#if/#while/#for/#switch` blocks written on `#` lines with free indentation, model statements substituted with `&name`, 0-based lists, block scoped variables, library lookup of macros by name). It keeps the semantics of HLASM conditional assembly, not its syntax; `hlasm2za` is to recover structured control flow from `AIF`/`AGO` (the survey of SYS1.MACLIB is in MACRO.md section 0). **M1 is implemented** (2026-11-16, not compared with HLASM): `src/macro.h` (API), `src/macro_int.h`, `src/macro_val.c` (values, list parsing, functions), `src/macro_expr.c` (lexer, Pratt parser, evaluator), `src/macro.c` (collector, compiler, runtime, library). A `#` line is classified by `mac_top_kind` (0 not macro, 1 `#macro`, 2 other macro statement; a classic `#if` without `{` stays a preprocessor directive). Bodies are compiled once to a flat `MStmt` array with jumps; every statement has a block depth and a variable lives at the depth of its block, being dropped when a statement of a lower depth runs (block scope without a scope stack; `#for` hidden variables `%lN`/`%iN` and the switch value `%sN` use the same rule, the first hidden `#let` carries the truncation depth). Frames are per call, `ms->top` is the open-code frame, globals are shared `MVal*` slots. `pp.c` provides the host callbacks (`emit`, `sect`, `is_defined`); generated lines are rescanned by `emit_line` (so they can call macros), multi-line statements travel as text with `\n`, calls are found in `emit_part_or_call` and `pp_file` (a call ending in a comma is joined first), library members by `is_macro_op`/`try_library_dir` (`-M` then `-I`, negative lookups cached in `pp->lib_tried`). Diagnostics ZA4050-4052, ZA4100-4130; `rep_notef` is a note severity that is not counted. Names that are instructions or directives (`mac_known_op`) are never looked up in the library. C1 (`hlasm2za`) is open.
+See `MACRO.md`: a C-like macro language in the preprocessor stage (braced `#if/#while/#for/#switch` blocks written on `#` lines with free indentation, model statements substituted with `&name`, 0-based lists, block scoped variables, library lookup of macros by name). It keeps the semantics of HLASM conditional assembly, not its syntax; `hlasm2za` is to recover structured control flow from `AIF`/`AGO` (the survey of SYS1.MACLIB is in MACRO.md section 0). **M1 is implemented** (2026-11-16, not compared with HLASM): `src/macro.h` (API), `src/macro_int.h`, `src/macro_val.c` (values, list parsing, functions), `src/macro_expr.c` (lexer, Pratt parser, evaluator), `src/macro.c` (collector, compiler, runtime, library). A `#` line is classified by `mac_top_kind` (0 not macro, 1 `#macro`, 2 other macro statement; a classic `#if` without `{` stays a preprocessor directive). Bodies are compiled once to a flat `MStmt` array with jumps; every statement has a block depth and a variable lives at the depth of its block, being dropped when a statement of a lower depth runs (block scope without a scope stack; `#for` hidden variables `%lN`/`%iN` and the switch value `%sN` use the same rule, the first hidden `#let` carries the truncation depth). Frames are per call, `ms->top` is the open-code frame, globals are shared `MVal*` slots. `pp.c` provides the host callbacks (`emit`, `sect`, `is_defined`); generated lines are rescanned by `emit_line` (so they can call macros), multi-line statements travel as text with `\n`, calls are found in `emit_part_or_call` and `pp_file` (a call ending in a comma is joined first), library members by `is_macro_op`/`try_library_dir` (`-M` then `-I`, negative lookups cached in `pp->lib_tried`). Diagnostics ZA4050-4052, ZA4100-4130; `rep_notef` is a note severity that is not counted. Names that are instructions or directives (`mac_known_op`) are never looked up in the library. C1 (`hlasm2za` conversion of MACRO..MEND) is implemented, see section 16.1.

@@ -141,7 +141,7 @@ int is_attr_quote(const char *s, size_t i) {
         if (is_sym_char(pc) || pc == '\'') return 0;
     }
     n = (unsigned char)s[i + 1];
-    return n != 0 && (is_sym_start(n) || n == '*' || n == '"');
+    return n != 0 && (is_sym_start(n) || n == '*' || n == '"' || n == '&');
 }
 
 long match_paren(const char *s, size_t i) {

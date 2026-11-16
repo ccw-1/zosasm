@@ -371,6 +371,20 @@ static MVal f_list(Ctx *c, MVal *a, int n) {
     return v_list(it, (size_t)n);
 }
 
+/* fill(n, v): a list of n copies of v (the declared array of HLASM LCLA &A(n)) */
+static MVal f_fill(Ctx *c, MVal *a, int n) {
+    int64_t k = arg_int(c, a[0]), i;
+    MVal *it;
+    (void)n;
+    if (k < 0 || k > 1000000) {
+        ma_err(c, "ZA4112", "fill: the size %lld is out of range", (long long)k);
+        k = 0;
+    }
+    it = xcalloc((size_t)(k + 1) * sizeof *it);
+    for (i = 0; i < k; i++) it[i] = a[1];
+    return v_list(it, (size_t)k);
+}
+
 static MVal f_int(Ctx *c, MVal *a, int n) {
     (void)n;
     return v_int(arg_int(c, a[0]));
@@ -515,7 +529,7 @@ static const Fn fn_table[] = {
     {"int", 1, 1, f_int},       {"str", 1, 1, f_str},       {"hex", 1, 2, f_hex},
     {"bin", 1, 2, f_bin},       {"min", 1, -1, f_min},      {"max", 1, -1, f_max},
     {"abs", 1, 1, f_abs},       {"empty", 1, 1, f_empty},   {"defined", 1, 1, f_defined},
-    {"attr", 2, 2, f_attr},
+    {"attr", 2, 2, f_attr},      {"fill", 2, 2, f_fill},
 };
 
 const Fn *fn_find(const char *name) {

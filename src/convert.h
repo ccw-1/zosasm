@@ -12,6 +12,9 @@ typedef struct {
     int strict;         /* write registers as %r1 for -strict-registers (default 1) */
     int width;          /* break operand lists after a comma beyond this width; 0 = never */
     const char *inc_ext; /* extension for COPY members, default ".inc" */
+    int flat;           /* macros: #goto/#label for every sequence symbol, no structure recovery */
+    int member;         /* a macro library member: write the macro definitions only, as .zmac text */
+    int comment_macros; /* macros: comment the definitions out (the old behaviour) */
 } ConvOptions;
 
 void conv_options_default(ConvOptions *o);

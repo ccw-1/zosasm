@@ -65,8 +65,10 @@ power of HLASM conditional assembly (guide chapter 19, `MACRO.md`).
 
 `hlasm2za FILE.asm` converts HLASM source (card columns, upper case, `COPY`,
 registers as numbers or `EQU` names) to zosasm source, by default with
-`%r1` registers so that the result assembles with `-strict-registers`; macros
-and conditional assembly are commented out or left and reported (guide
+`%r1` registers so that the result assembles with `-strict-registers`.
+`MACRO`..`MEND` definitions become zosasm macros with the control flow
+recovered (`-m` for a library member, `-macro-dir` for a library, `-flat`
+for `#goto`); open code conditional assembly is left and reported (guide
 section 16, DESIGN.md section 16).
 
 `zosasm -elf FILE.za` writes a relocatable ELF64 object for Linux on Z (big

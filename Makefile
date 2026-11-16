@@ -10,7 +10,7 @@ SRC  := $(filter-out src/main.c src/hlasm2za.c src/mcp.c,$(wildcard src/*.c))
 OBJ  := $(SRC:src/%.c=build/%.o)
 TESTS := $(patsubst tests/%.c,build/%,$(wildcard tests/test_*.c))
 
-.PHONY: all test clean isa
+.PHONY: all test test-maclib clean isa
 all: build/zosasm build/hlasm2za build/zosasm-mcp
 
 build:
@@ -44,6 +44,10 @@ test: build/zosasm build/hlasm2za build/zosasm-mcp $(TESTS)
 	@fail=0; for t in $(TESTS); do ./$$t || fail=1; done; \
 	if [ -x tests/run_cli_tests.sh ]; then tests/run_cli_tests.sh || fail=1; fi; \
 	exit $$fail
+
+# acceptance run over a real HLASM macro library (local only): ZASM_MACLIB=DIR make test-maclib
+test-maclib: build/zosasm build/hlasm2za
+	tests/maclib_check.sh
 
 # regenerate src/isa_tab.c from isa/isa.json (isa.json itself comes from the
 # Principles of Operation: python3 tools/pop2json.py SA22-7832-14.pdf > isa/isa.json)

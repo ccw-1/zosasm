@@ -69,7 +69,7 @@ Status key: [x] done, [-] in progress, [ ] open.
 - [x] ELF64 output for Linux on Z (`-elf`, `-ascii`, `-charset`; DESIGN.md 17; checked with binutils, not run on a machine)
 - [x] MCP server `zosasm-mcp` for AI agents (tools, guide as resource; guide 18, DESIGN.md 18)
 - [x] macro language M1 (C-like braces, `&` substitution, `-M` library, guide 19; MACRO.md, DESIGN.md 19; not compared with HLASM)
-- [ ] `hlasm2za` conversion of MACRO..MEND to `.zmac` with structure recovery (MACRO.md C1, sections 10 and 12), `-flat`, `-macro-dir`, `make test-maclib`
+- [x] `hlasm2za` conversion of MACRO..MEND to `.zmac` with structure recovery (MACRO.md C1, sections 10 and 12), `-flat`, `-macro-dir`, `make test-maclib` (DESIGN.md 16.1; open: `#switch`/`#for`, `else if`, COPY/AREAD/PUNCH/AINSERT/OPSYN in macros)
 - [ ] MCP: prompts, restrict `path`/`output` to a directory
 - [ ] ELF: 31-bit class, debug information, run under qemu-s390x
 - [ ] `hlasm2za`: macro expansion of common IBM macros (`SAVE`, `RETURN`, `WTO`...), `EQUREGS`, DC forms zosasm lacks

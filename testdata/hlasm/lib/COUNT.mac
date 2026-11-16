@@ -1,0 +1,11 @@
+* A macro library member written for the tests: counts up to &N.
+         MACRO
+         COUNT &N
+         LCLA  &I
+&I       SETA  0
+.LOOP    AIF   (&I GE &N).DONE
+&I       SETA  &I+1
+         DC    F'&I'
+         AGO   .LOOP
+.DONE    ANOP
+         MEND

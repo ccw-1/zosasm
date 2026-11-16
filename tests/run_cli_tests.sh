@@ -204,11 +204,30 @@ $H -o - testdata/hlasm/prog.asm 2>/dev/null | cmp -s - testdata/hlasm/prog.za; c
 $H - < testdata/hlasm/prog.asm 2>/dev/null | cmp -s - testdata/hlasm/prog.za; check "hlasm2za from standard input" $? 0
 $H -o - docs/examples/hlasm-demo.asm 2>/dev/null | cmp -s - docs/examples/hlasm-demo.za; check "docs/examples/hlasm-demo.za is the conversion of hlasm-demo.asm" $? 0
 $X -strict-registers -Werror -o $T/demo.o docs/examples/hlasm-demo.za 2>/dev/null; check "hlasm-demo.za assembles with -strict-registers" $? 0
-$H -o $T/nc.za testdata/hlasm/notconv.asm 2>$T/err; check "hlasm2za with unconvertible statements: exit 0" $? 0
+$H -comment-macros -o $T/nc.za testdata/hlasm/notconv.asm 2>$T/err; check "hlasm2za with unconvertible statements: exit 0" $? 0
 grep -q 'notconv.asm:3: warning: macro definition commented out' $T/err; check "hlasm2za reports the macro" $? 0
 grep -q 'notconv.asm:9: warning: AIF is conditional assembly' $T/err; check "hlasm2za reports AIF" $? 0
 grep -q '^#include "myregs.inc"$' $T/nc.za; check "COPY becomes #include" $? 0
-$H -q -o $T/nc.za testdata/hlasm/notconv.asm 2>$T/err; [ ! -s $T/err ]; check "hlasm2za -q" $? 0
+$H -q -comment-macros -o $T/nc.za testdata/hlasm/notconv.asm 2>$T/err; [ ! -s $T/err ]; check "hlasm2za -q" $? 0
+# macros: converted by default, MACRO..MEND to #macro
+$H -o $T/nc2.za testdata/hlasm/notconv.asm 2>$T/err; check "hlasm2za converts the macro: exit" $? 0
+grep -q '^#macro SETUP(a) {' $T/nc2.za; check "hlasm2za writes #macro" $? 0
+grep -q 'macro definition commented out' $T/err; [ $? = 1 ]; check "hlasm2za: no commented out macro" $? 0
+# macro library members
+$H -m -o $T/COUNT.zmac testdata/hlasm/lib/COUNT.mac 2>/dev/null; check "hlasm2za -m exit" $? 0
+grep -q '^#macro COUNT(n) {' $T/COUNT.zmac; check "hlasm2za -m: macro" $? 0
+grep -q '#while (i < n) {' $T/COUNT.zmac; check "hlasm2za -m: loop recovered" $? 0
+grep -q '#goto' $T/COUNT.zmac; [ $? = 1 ]; check "hlasm2za -m: no #goto" $? 0
+grep -q '^\* A macro library member' $T/COUNT.zmac; check "hlasm2za -m: leading comment kept" $? 0
+$H -m -flat -o $T/COUNTF.zmac testdata/hlasm/lib/COUNT.mac 2>/dev/null
+grep -q '#goto loop' $T/COUNTF.zmac; check "hlasm2za -flat: #goto" $? 0
+printf 'T CSECT\n#include "COUNT.zmac"\n COUNT 3\n END\n' > $T/cnt.za
+$X -E -I$T -o /dev/null $T/cnt.za 2>&1 | grep -c "DC *F'" | grep -q '^3$'; check "the converted macro expands" $? 0
+mkdir -p $T/zm; $H -macro-dir testdata/hlasm/lib -o $T/zm > $T/sum 2>&1; check "hlasm2za -macro-dir exit" $? 0
+[ -s $T/zm/COUNT.zmac ] && [ -s $T/zm/FIND.zmac ]; check "hlasm2za -macro-dir writes every member" $? 0
+grep -q '2 members' $T/sum; check "hlasm2za -macro-dir summary" $? 0
+printf 'T CSECT\n#include "FIND.zmac"\n FIND 2\n END\n' > $T/fnd.za
+$X -E -I$T/zm -o /dev/null $T/fnd.za 2>&1 | grep -q "DC *F'2'"; check "the converted search loop expands" $? 0
 $H -o $T/none.za $T/missing.asm 2>/dev/null; check "hlasm2za missing file" $? 1
 $H 2>/dev/null; check "hlasm2za without input" $? 2
 $H -bogus x 2>/dev/null; check "hlasm2za bad option" $? 2

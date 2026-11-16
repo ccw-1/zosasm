@@ -1,0 +1,11 @@
+         MACRO
+         FIND  &K
+         LCLA  &M
+&M       SETA  1
+.L       AIF   (&M GT 3).NF
+         AIF   (&M EQ &K).FOUND
+&M       SETA  &M+1
+         AGO   .L
+.NF      MNOTE 4,'not found'
+.FOUND   DC    F'&M'
+         MEND

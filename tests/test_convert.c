@@ -173,12 +173,26 @@ static void test_unconverted(void) {
     /* COPY and ISEQ */
     CHECK_STR(conv(" COPY MyRegs\n"), "#include \"myregs.inc\"\n");
     CHECK_STR(conv(" ISEQ 73,80\n LR 1,2\n"), "         LR    %r1,%r2\n");
-    /* macros are commented out and reported */
+    /* a macro is converted and its call needs no warning */
     r = conv("         MACRO\n&L       MYM &A\n         MEND\n         MYM 1\n");
-    CHECK(strstr(r, "*          MACRO\n") != NULL);
-    CHECK(strstr(r, "* &L       MYM &A\n") != NULL);
+    CHECK(strstr(r, "#macro MYM(a) {\n#}\n") != NULL);
     CHECK(strstr(r, "         MYM   1\n") != NULL);
-    CHECK_MSG(warns("         MACRO\n&L       MYM &A\n         MEND\n         MYM 1\n") == 2, "macro warnings");
+    CHECK_MSG(warns("         MACRO\n&L       MYM &A\n         MEND\n         MYM 1\n") == 0, "converted macro warnings");
+    /* -comment-macros: commented out and reported */
+    {
+        ConvOptions o;
+        int nw;
+        conv_options_default(&o);
+        o.comment_macros = 1;
+        r = conv_opt("         MACRO\n&L       MYM &A\n         MEND\n         MYM 1\n", &o, &nw);
+        CHECK(strstr(r, "*          MACRO\n") != NULL);
+        CHECK(strstr(r, "* &L       MYM &A\n") != NULL);
+        CHECK(strstr(r, "         MYM   1\n") != NULL);
+        CHECK_MSG(nw == 2, "macro warnings %d", nw);
+    }
+    /* a macro that cannot be converted is commented out with the reason */
+    r = conv("         MACRO\n         PUN\n         PUNCH 'X'\n         MEND\n");
+    CHECK(strstr(r, "*          MACRO\n") != NULL);
     /* conditional assembly stays and is reported */
     CHECK(warns("         AIF (&X).A\n") == 1);
     CHECK(warns(".A       ANOP\n") == 1);

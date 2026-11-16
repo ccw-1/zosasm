@@ -1511,7 +1511,8 @@ hlasm2za [options] input.asm        # writes input.za
 writes zosasm source, by default with every register in `%r1` notation, so
 that the result assembles with `-strict-registers`. It is a source to source
 converter that does not assemble anything and does not need the rest of the
-toolchain; it understands the *form* of HLASM statements, not macros.
+toolchain; it understands the *form* of HLASM statements, and since C1 it converts
+`MACRO` ... `MEND` definitions to zosasm macros (section 16.4).
 
 | option | meaning |
 |---|---|
@@ -1520,6 +1521,10 @@ toolchain; it understands the *form* of HLASM statements, not macros.
 | `-relaxed` | leave register numbers as they are (no `%r`) |
 | `-w N` | break an operand list after a comma beyond column N (default 100, 0 = never) |
 | `-inc-ext EXT` | extension of the files `COPY` becomes `#include` of (default `.inc`) |
+| `-m` | the input is a macro library member: write the macro definitions only (default output extension `.zmac`) |
+| `-macro-dir DIR` | convert every member `DIR/*.mac` like `-m`; `-o` names the output directory (default: next to the members); prints a summary |
+| `-flat` | macros: `#goto`/`#label` for every sequence symbol, no structure recovery |
+| `-comment-macros` | leave macro definitions as comments (the behaviour before C1) |
 | `-q` | no warnings |
 | `-version`, `-h` | version, usage |
 
@@ -1542,7 +1547,7 @@ a bad command line.
 | register numbers: `LR 1,2`, `L 1,4(2,3)`, `USING *,12`, `DROP 12` | `LR %r1,%r2`, `L %r1,4(%r2,%r3)`, `USING *,%r12`, `DROP %r12` (floating point, access, control and vector registers get `%f`, `%a`, `%c`, `%v`) |
 | `COPY name` | `#include "name.inc"` (lower case); convert the member itself with `hlasm2za -o name.inc` |
 | `ISEQ` | dropped |
-| `MACRO` ... `MEND` | commented out, one `*` line per source line (zosasm has no macros: use `#define` or `#include`) |
+| `MACRO` ... `MEND` | a zosasm `#macro` (section 16.4); `-comment-macros`: one `*` line per source line |
 
 An example. The HLASM input (72 columns, a continued operand and a continued
 string):
@@ -1641,15 +1646,19 @@ These are left as they are (or commented out) and reported, so that you can
 fix them by hand; zosasm then fails on them with a message that names the
 line.
 
-* **Macro definitions** are commented out, calls of them stay: replace them by
-  `#define` macros, by `#include` files or by the statements they would
-  generate. Calls of **system macros** (`SAVE`, `RETURN`, `WTO`, `GETMAIN`,
+* **Macro definitions** are converted (section 16.4); a definition that uses
+  something not converted (`COPY`, `AREAD`, `PUNCH`, `AINSERT`, `OPSYN`,
+  `SETAF`/`SETCF`, a nested `MACRO`, a computed `AGO`, created `&(` names,
+  system variables such as `&SYSDATE` or `&SYSLOC`) is commented out and
+  reported. Calls of **system macros** (`SAVE`, `RETURN`, `WTO`, `GETMAIN`,
   `STORAGE`, `SYSSTATE`...) are reported as "not an instruction or directive
   (a macro call?)"; the macro library is not available to zosasm, so write
-  what they expand to.
-* **Conditional assembly** (`AIF`, `AGO`, `ANOP`, `SETA`, `SETB`, `SETC`,
-  `LCL*`, `GBL*`, `ACTR`, `MNOTE`, `&variables`, `.sequence` symbols): use
-  `#if`, `#define`, `ASSERT` and `#error` (section 3).
+  what they expand to, or convert the macro library with `-macro-dir` and
+  give the result to `zosasm -M`.
+* **Conditional assembly outside a macro** (`AIF`, `AGO`, `ANOP`, `SETA`,
+  `SETB`, `SETC`, `LCL*`, `GBL*`, `MNOTE`, `&variables`, `.sequence`
+  symbols in open code): use `#if`, `#define`, `ASSERT` and `#error`
+  (section 3), or put the code into a macro.
 * **`OPSYN`, `PUSH`, `POP`, `ACONTROL`, `ADATA`, `CEJECT`, `EXITCTL`,
   `REPRO`, `ALIAS`**: not supported by zosasm (`ALIAS` is replaced by quoted
   symbols, section 2.2).
@@ -1660,6 +1669,49 @@ line.
 The converter works on the text only, so after converting run the result
 through `zosasm -strict-registers -Werror`; a clean run means that nothing
 was left behind.
+
+### 16.4 Macro definitions
+
+`hlasm2za` turns a `MACRO` ... `MEND` definition into a macro of chapter 19
+(`#macro NAME(a, b = 1) {` ... `#}`). A library member is converted with
+`-m`, a whole library with `-macro-dir DIR -o OUT` (every `DIR/*.mac` becomes
+`OUT/NAME.zmac`; the summary gives the counts). `zosasm -M OUT` then finds the
+macros by name.
+
+What the converter does with a definition:
+
+* **Prototype.** Positional parameters, keyword parameters with their
+  defaults (`&KEY=VAL` becomes `key = "VAL"`), `&SYSLIST` (`rest...` is added
+  to the parameters and `&SYSLIST(n)` is `sys.args[n-1]`). Names are lower
+  case, the `&` marks of the body are kept in model statements only.
+* **Variables.** `LCLA/B/C` and `GBLA/B/C` become `#let` and `#global`, put
+  at the top of the macro (arrays are `fill(n, 0)` or `fill(n, "")`); `SETA`,
+  `SETB`, `SETC` become assignments. A variable that is not declared is
+  an empty local, with a warning.
+* **Expressions.** `AIF` conditions, `K'`, `N'`, `T'`, `L'`, `D'`, `'a'(i,n)`
+  substrings (1-based to 0-based), `(UPPER ...)`, `(LOWER ...)`, `(DOUBLE
+  ...)`, `INDEX`, `SIGNED` and `D2A` are translated; `AND`, `OR`, `NOT`, `EQ`, `NE` and the
+  rest become operators, and conditions are negated the readable way
+  (`<=` becomes `>`).
+* **Model statements.** `&NAME`, `&NAME.`, `&NAME(1)` become `&name`,
+  `&{name}`, `&name[0]`; the name field `&LBL` becomes `&sys.label:`; `&SYSNDX`
+  and `&SYSECT` become `sys.ndx` and `sys.sect`. `MNOTE` becomes `#note`,
+  `#warning` or `#error` by its severity.
+* **Control flow.** `AIF`, `AGO`, `MEXIT`, sequence symbols and `ANOP` are
+  turned into `#if` / `#else`, `#while` / `#break` / `#continue` and
+  `#return`. An error exit shared by many branches (a message and `MEXIT`)
+  is copied to each branch as a guard clause. What cannot be shown as a
+  structure (several entries into one block) keeps `#goto name` and
+  `#label name` for those jumps only, and `-flat` writes every sequence
+  symbol that way. A jump that cannot be written (a `#goto` into a block)
+  makes the converter write the whole macro flat and report it.
+
+Every conversion was checked by expanding the flat and the structured form
+with many argument sets: the output must be identical (`tests/test_mconv.c`,
+and the same check over a whole library with `make test-maclib`). Nothing was
+compared with HLASM itself, which was not available; read the result of a
+macro that matters against its source.
+
 
 ---
 
@@ -1993,7 +2045,8 @@ BUF      DS    CL600
 
 * An unknown operation is looked up as `name.zmac`, then `name.mac` in the
   `-M` directories and then the `-I` directories. A file may define several
-  macros. This is how a directory of converted HLASM macros is used.
+  macros. This is how a directory of converted HLASM macros is used
+  (`hlasm2za -macro-dir`, section 16.4).
 * A macro calls others and itself; the depth is limited to 64 (ZA4120) and an
   expansion to `-macro-steps N` statements, default 1,000,000 (ZA4121; the
   HLASM `ACTR`).
