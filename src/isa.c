@@ -6,6 +6,49 @@
 
 #include "util.h"
 
+int isa_rule(const IsaInst *in, char c, int k, long *arg) {
+    const char *p = in->rules;
+    if (arg) *arg = 0;
+    while (*p) {
+        if (*p == c && atoi(p + 1) == k && p[1] >= '0' && p[1] <= '9') {
+            const char *q = p + 1;
+            while (*q >= '0' && *q <= '9') q++;
+            if (*q == '=' && arg) *arg = strtol(q + 1, NULL, c == 'u' ? 16 : 10);
+            return 1;
+        }
+        while (*p && *p != ' ') p++;
+        while (*p == ' ') p++;
+    }
+    return 0;
+}
+
+int isa_rules_ok(const IsaInst *in, const int64_t v[6]) {
+    IsaSlots sl;
+    int i;
+    long arg;
+    if (!in->rules[0]) return 1;
+    isa_slots(in, &sl);
+    for (i = 0; i < sl.n; i++) {
+        const IsaSlot *s = &sl.s[i];
+        int64_t x = v[s->field];
+        if (s->kind == SK_REG) {
+            if (isa_rule(in, 'e', i, NULL) && (x & 1)) return 0;
+            if (isa_rule(in, 'f', i, NULL) && (x & 2)) return 0;
+        } else if (s->kind == SK_IMM) {
+            if (isa_rule(in, 'u', i, &arg) && x >= 0 && x <= 15 && ((arg >> x) & 1)) return 0;
+            if (isa_rule(in, 'r', i, &arg) && (x < 0 || x > arg)) return 0;
+        } else if (s->kind == SK_ADDR && s->mid >= 0 && s->mid_kind == 'L') {
+            int64_t len = v[s->mid] + 1;
+            if (isa_rule(in, 'L', i, &arg) && len > arg) return 0;
+            if (isa_rule(in, 'E', i, NULL) && (len & 1)) return 0;
+        }
+    }
+    if (isa_rule(in, 'D', 0, NULL) && sl.n >= 2 && sl.s[0].mid >= 0 && sl.s[1].mid >= 0 &&
+        v[sl.s[1].mid] + 1 >= v[sl.s[0].mid] + 1)
+        return 0;
+    return 1;
+}
+
 size_t isa_nops(const IsaInst *in) {
     size_t n = 0;
     while (n < 6 && in->ops[n]) n++;

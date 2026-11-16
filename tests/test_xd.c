@@ -143,10 +143,10 @@ static void expect_codes(const char *name, const char *src, const char *want) {
 
 static void test_errors(void) {
     expect_codes("CXD is no constant", "T CSECT\nW DXD F\n DC Q(W),J(W),R(T),CXD\n", "ZA2014");
-    expect_codes("Q length", "T CSECT\nW DXD F\n DC QL5(W)\n", "ZA2029");
+    expect_codes("Q length", "T CSECT\nW DXD F\n DC QL5(W)\n", "ZA2016");
     expect_codes("QD length", "T CSECT\nW DXD F\n DC QDL8(W),QL4(W)\n", "");
     expect_codes("J length", "T CSECT\nW DXD F\n DC JL1(W)\n", "ZA2029");
-    expect_codes("R length", "T CSECT\n DC RL2(T)\n", "ZA2029");
+    expect_codes("R length", "T CSECT\n DC RL2(T)\n", "ZA2016");
     expect_codes("Q unknown", "T CSECT\n DC Q(NOPE)\n", "ZA2060");
     expect_codes("Q label", "T CSECT\nL1 DS 0H\n DC Q(L1)\n", "ZA2060");
     expect_codes("R no entry", "T CSECT\nL1 DS 0H\n DC R(L1)\n", "ZA2060");
@@ -182,7 +182,7 @@ static void test_qy(void) {
     /* QY is 3 bytes at a halfword boundary */
     r = reloc_at(g, 8);
     CHECK(r && r->reference == GOFF_REF_LONGDISP);
-    expect_codes("QY length", "T CSECT\n DC QYL4(W)\nW DXD F\n", "ZA2029");
+    expect_codes("QY length", "T CSECT\n DC QYL4(W)\nW DXD F\n", "ZA2016");
 }
 
 int main(void) {

@@ -819,16 +819,70 @@ static int check_reg(Asm *a, Span sp, const IsaOperand *f, int64_t r, int64_t *v
     return 1;
 }
 
-static int reg_field(Asm *a, Stmt *st, Operand o, const IsaOperand *f, int64_t *vals, int idx) {
+static int reg_field(Asm *a, Stmt *st, Operand o, const IsaInst *in, int k, const IsaOperand *f,
+                     int64_t *vals, int idx) {
     int64_t r;
     if (!asm_register(a, st, o, f->flags, &r)) return 0;
-    return check_reg(a, asm_op_span(st, o), f, r, vals, idx);
+    if (!check_reg(a, asm_op_span(st, o), f, r, vals, idx)) return 0;
+    /* register pairs, as HLASM checks them (ASMA029E) */
+    if (isa_rule(in, 'e', k, NULL) && (r & 1)) {
+        diag_help(rep_errorf(a->rep, "ZA2080", asm_op_span(st, o),
+                             "register %lld cannot start a general register pair", (long long)r),
+                  "this operand names an even-odd pair of registers: use an even register");
+        return 0;
+    }
+    if (isa_rule(in, 'f', k, NULL) && (r & 2)) {
+        diag_help(rep_errorf(a->rep, "ZA2080", asm_op_span(st, o),
+                             "floating-point register %lld cannot start an extended pair",
+                             (long long)r),
+                  "extended precision operands use the pairs 0-2, 1-3, 4-6, 5-7, 8-10, 9-11, "
+                  "12-14 and 13-15: use register 0, 1, 4, 5, 8, 9, 12 or 13");
+        return 0;
+    }
+    return 1;
 }
 
-static int imm_field(Asm *a, Stmt *st, Operand o, const IsaOperand *f, int64_t *vals, int idx) {
+static int imm_field(Asm *a, Stmt *st, Operand o, const IsaInst *in, int k, const IsaOperand *f,
+                     int64_t *vals, int idx) {
     int64_t v, lo = 0, hi;
     unsigned bits = f->bits;
+    long arg;
+    int sgn = isa_rule(in, 's', k, NULL), uns = isa_rule(in, 'n', k, NULL);
     if (!asm_abs_expr(a, st, o, "an immediate operand", &v)) return 0;
+    if (isa_rule(in, 'u', k, &arg) && v >= 0 && v <= 15 && ((arg >> v) & 1)) {
+        diag_help(rep_errorf(a->rep, "ZA2082", asm_op_span(st, o),
+                             "the mask value %lld is not valid for this instruction",
+                             (long long)v),
+                  "HLASM rejects it too (ASMA029E style operand check)");
+        return 0;
+    }
+    if (isa_rule(in, 'r', k, &arg) && !(sgn || uns) && (v < 0 || v > arg)) {
+        rep_errorf(a->rep, "ZA2082", asm_op_span(st, o), "the value %lld must be between 0 and %ld",
+                   (long long)v, arg);
+        return 0;
+    }
+    if ((sgn || uns) && bits < 32) {
+        /* HLASM: a value outside the field's own signed or unsigned window is
+         * truncated to the field with warning ASMA320W */
+        int64_t wlo = sgn ? -((int64_t)1 << (bits - 1)) : 0;
+        int64_t whi = sgn ? ((int64_t)1 << (bits - 1)) - 1 : ((int64_t)1 << bits) - 1;
+        if (v < wlo || v > whi) {
+            diag_help(rep_warnf(a->rep, "ZA2081", asm_op_span(st, o),
+                                "immediate value %lld may have the wrong sign or magnitude for "
+                                "this %u-bit %s field",
+                                (long long)v, bits, sgn ? "signed" : "unsigned"),
+                      "the low %u bits are used (allowed %lld to %lld)", bits, (long long)wlo,
+                      (long long)whi);
+            v = (int64_t)((uint64_t)v & (((uint64_t)1 << bits) - 1));
+        }
+        if (isa_rule(in, 'r', k, &arg) && v > arg) {
+            rep_errorf(a->rep, "ZA2082", asm_op_span(st, o),
+                       "the value %lld must be between 0 and %ld", (long long)v, arg);
+            return 0;
+        }
+        vals[idx] = v;
+        return 1;
+    }
     hi = bits >= 63 ? INT64_MAX : ((int64_t)1 << bits) - 1;
     if (f->flags & F_SIGNED) lo = -((int64_t)1 << (bits - 1));
     if (v < lo || v > hi) {
@@ -903,13 +957,17 @@ static int rel_field(Asm *a, Stmt *st, Operand o, const IsaOperand *f, int64_t *
         rep_errorf(a->rep, "ZA2045", e->sp, "the branch target offset %lld is odd", (long long)diff);
         return 0;
     }
-    vals[idx] = diff / 2;
+    /* IBM HLASM stores the offset from an external symbol (0 for a plain one); the binder adds the whole distance (oracle
+     * run: LARL/BRASL to an EXTRN worked with 0, not with the offset difference) */
+    vals[idx] = r->target ? v.abs / 2 : diff / 2;
     *ri_out = r;
     return 1;
 }
 
 /* evaluate one D(X,B)-style operand */
-static int addr_field(Asm *a, Stmt *st, Operand o, const Slot *sl, int nfields, int64_t *vals,
+static int64_t dp_prev_len; /* DP and MP: the first length of the statement */
+
+static int addr_field(Asm *a, Stmt *st, Operand o, const Slot *sl, int slot_no, int64_t *vals,
                       const IsaInst *in) {
     AddrOp ad = asm_split_addr(o);
     const IsaOperand *dispf = isa_op(in, (size_t)sl->field);
@@ -920,7 +978,6 @@ static int addr_field(Asm *a, Stmt *st, Operand o, const Slot *sl, int nfields, 
     Value dv;
     int has_mid = 0, explicit_base = 0;
     const Operand *mid_item = NULL, *base_item = NULL;
-    (void)nfields;
     if (dispf->flags & F_SIGNED) {
         dmin = -((int64_t)1 << 19);
         dmax = ((int64_t)1 << 19) - 1;
@@ -1015,9 +1072,12 @@ static int addr_field(Asm *a, Stmt *st, Operand o, const Slot *sl, int nfields, 
         if (sl->mid_kind == 'L') {
             const IsaOperand *mf = isa_op(in, (size_t)sl->mid);
             int64_t max = (int64_t)1 << mf->bits;
-            if (mid < 1 || mid > max) {
-                Diag *d = rep_errorf(a->rep, "ZA2039", e->sp, "length %lld is out of range 1 to %lld",
-                                     (long long)mid, (long long)max);
+            long arg;
+            if (isa_rule(in, 'L', slot_no, &arg)) max = arg;
+            /* HLASM accepts an explicit length 0 and encodes it as 1 */
+            if (mid < (has_mid ? 0 : 1) || mid > max) {
+                Diag *d = rep_errorf(a->rep, "ZA2039", e->sp, "length %lld is out of range %d to %lld",
+                                     (long long)mid, has_mid ? 0 : 1, (long long)max);
                 if (!has_mid) {
                     char *desc = expr_describe(e);
                     diag_help(d,
@@ -1027,7 +1087,20 @@ static int addr_field(Asm *a, Stmt *st, Operand o, const Slot *sl, int nfields, 
                 }
                 return 0;
             }
-            vals[sl->mid] = mid - 1;
+            if (isa_rule(in, 'E', slot_no, NULL) && (mid & 1)) {
+                rep_errorf(a->rep, "ZA2083", e->sp, "length %lld must be even", (long long)mid);
+                return 0;
+            }
+            if (isa_rule(in, 'D', slot_no, NULL)) { /* DP, MP: the divisor is shorter */
+                if (dp_prev_len > 0 && mid >= dp_prev_len) {
+                    rep_errorf(a->rep, "ZA2084", e->sp,
+                               "the second length %lld must be less than the first (%lld)",
+                               (long long)mid, (long long)dp_prev_len);
+                    return 0;
+                }
+                dp_prev_len = mid;
+            }
+            vals[sl->mid] = mid < 1 ? 0 : mid - 1;
         } else {
             vals[sl->mid] = mid;
         }
@@ -1119,6 +1192,7 @@ static uint8_t *assemble_inst(Asm *a, Stmt *st, const IsaInst *in, const Operand
     uint8_t *out = xmalloc(8);
     char err[160];
     memset(vals, 0, sizeof vals);
+    dp_prev_len = 0;
     slots_of(in, &sl);
     for (i = 0; i < ops->n; i++) {
         const Slot *s = &sl.s[i];
@@ -1126,10 +1200,10 @@ static uint8_t *assemble_inst(Asm *a, Stmt *st, const IsaInst *in, const Operand
         int ok = 0;
         switch (s->kind) {
         case SK_REG:
-            ok = reg_field(a, st, ops->v[i], f, vals, s->field);
+            ok = reg_field(a, st, ops->v[i], in, (int)i, f, vals, s->field);
             break;
         case SK_IMM:
-            ok = imm_field(a, st, ops->v[i], f, vals, s->field);
+            ok = imm_field(a, st, ops->v[i], in, (int)i, f, vals, s->field);
             break;
         case SK_REL: {
             RelImm *r;
@@ -1138,7 +1212,7 @@ static uint8_t *assemble_inst(Asm *a, Stmt *st, const IsaInst *in, const Operand
             break;
         }
         case SK_ADDR:
-            ok = addr_field(a, st, ops->v[i], s, (int)nf, vals, in);
+            ok = addr_field(a, st, ops->v[i], s, (int)i, vals, in);
             break;
         }
         if (!ok) good = 0;

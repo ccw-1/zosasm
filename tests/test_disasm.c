@@ -206,7 +206,7 @@ static const char *const programs[] = {
     "BIG      DXD   0D,70000X\n"
     "NONE     DXD   0H\n"
     "ONE      DXD   X\n"
-    "NONEL    DXD   XL0\n"
+    "NONEL    DXD   0X\n"
     "P1       CATTR PART(PT),ALIGN(3)\n"
     "         DC    F'1'\n"
     "         DC    J(PT),Q(BIG),J(C2),J(B_TEXT),JD(ONE)\n"
@@ -319,12 +319,16 @@ static void test_programs(void) {
         smart_trip(name, programs[i]);
     }
     {
-        size_t n;
-        char *text = read_file("testdata/hello.za", &n);
-        CHECK(text != NULL);
-        if (text) {
-            round_trip("testdata/hello.za", text);
-            smart_trip("testdata/hello.za", text);
+        static const char *const files[] = {"testdata/hello.za", "testdata/oracle/g1.asm",
+                                            "testdata/oracle/g2.asm"};
+        size_t n, f;
+        for (f = 0; f < sizeof files / sizeof files[0]; f++) {
+            char *text = read_file(files[f], &n);
+            CHECK_MSG(text != NULL, "%s", files[f]);
+            if (text) {
+                round_trip(files[f], text);
+                smart_trip(files[f], text);
+            }
         }
     }
 }

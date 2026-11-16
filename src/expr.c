@@ -105,6 +105,7 @@ typedef struct {
     int base;
     Reporter *rep;
     int err;
+    int minus; /* the term follows a unary minus: 2147483648 is allowed */
 } EP;
 
 static Expr *mk(ExprKind k, Span sp) {
@@ -155,7 +156,9 @@ static Expr *parse_unary(EP *p) {
         size_t start = p->pos;
         Expr *x, *e;
         p->pos++;
+        p->minus = op == '-';
         x = parse_unary(p);
+        p->minus = 0;
         if (p->err) return NULL;
         e = mk(EX_UN, ep_span(p, start));
         e->op = op;
@@ -454,6 +457,9 @@ static Expr *parse_quoted(EP *p, size_t start, const char *word) {
                                              ? b[i] - '0'
                                              : za_toupper((unsigned char)b[i]) - 'A' + 10));
             }
+            if ((uint64_t)v > 0xFFFFFFFFu)
+                return ep_fail(p, "ZA1007", start, p->pos - start,
+                               "hexadecimal term does not fit 32 bits (HLASM: ASMA146E)");
         } else if (u == 'B') {
             if (n == 0 || n > 64)
                 return ep_fail(p, "ZA1007", start, p->pos - start,
@@ -464,6 +470,9 @@ static Expr *parse_quoted(EP *p, size_t start, const char *word) {
                                    "invalid digits in %c'...' term", u);
                 v = (int64_t)(((uint64_t)v << 1) | (uint64_t)(b[i] - '0'));
             }
+            if ((uint64_t)v > 0xFFFFFFFFu)
+                return ep_fail(p, "ZA1007", start, p->pos - start,
+                               "binary term does not fit 32 bits (HLASM: ASMA146E)");
         } else {
             size_t el;
             unsigned char *eb;
@@ -491,6 +500,8 @@ static Expr *parse_primary(EP *p) {
     size_t start;
     int c;
     Expr *e;
+    int minus = p->minus;
+    p->minus = 0;
     ep_skip(p);
     if (p->pos >= p->len) return ep_fail(p, "ZA1001", p->pos, 1, "expression expected here");
     start = p->pos;
@@ -520,8 +531,9 @@ static Expr *parse_primary(EP *p) {
                 n = n * 10 + d;
             p->pos++;
         }
-        if (over)
-            return ep_fail(p, "ZA1004", start, p->pos - start, "number %.*s is too large",
+        if (over || n > 2147483647LL + (minus && n == 2147483648LL))
+            return ep_fail(p, "ZA1004", start, p->pos - start,
+                           "number %.*s is too large (HLASM: decimal terms go up to 2147483647)",
                            (int)(p->pos - start), p->s + start);
         e = mk(EX_NUM, ep_span(p, start));
         e->num = n;

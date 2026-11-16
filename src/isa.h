@@ -40,6 +40,7 @@ typedef struct {
     uint8_t opt;          /* trailing assembler operands that may be omitted */
     const char *facility; /* facility code(s) of the Principles of Operation, "" = base */
     const char *desc;     /* instruction name */
+    const char *rules;    /* operand rules of the real assembler, "" = none (isa_rule) */
 } IsaInst;
 
 extern const IsaOperand isa_operand_tab[];
@@ -54,6 +55,15 @@ const char *const *isa_mnemonics(size_t *n);
 /* Operand descriptors in syntactic order. */
 size_t isa_nops(const IsaInst *in);
 const IsaOperand *isa_op(const IsaInst *in, size_t i);
+
+/* Operand rules that HLASM applies beyond the field width, found with
+ * tools/oracle_rules.py.  The tokens are listed in that script; isa_rule()
+ * looks for token kind c on operand k and returns 1 when it is there, with the
+ * number after '=' (hex for 'u', decimal for 'L') in *arg (0 when none). */
+int isa_rule(const IsaInst *in, char c, int k, long *arg);
+/* 1 when the decoded field values (one per table field) obey all the rules; the
+ * disassembler writes anything else as data. */
+int isa_rules_ok(const IsaInst *in, const int64_t v[6]);
 
 /* Build the machine code (in->length bytes into out) from one value per
  * operand. Returns 0, or -1 with a message in err. */

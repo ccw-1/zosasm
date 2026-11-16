@@ -74,7 +74,9 @@ static void test_fixed(void) {
     hex(" DC FD'U18446744073709551615'\n", "FFFFFFFFFFFFFFFF");
     hex(" DC FD'-9223372036854775808'\n", "8000000000000000");
     /* previous behaviour */
-    hex(" DC FL1'255,-128'\n", "FF80");
+    hex(" DC FL1'127,-128'\n", "7F80");
+    hex(" DC FL1'U255'\n", "FF");
+    err(" DC FL1'255'\n", "ZA2023");
     hex(" DC F'+7,-7'\n", "00000007" "FFFFFFF9");
     err(" DC FL1'256'\n", "ZA2023");
     err(" DC FD'9223372036854775808'\n", "ZA2023");
@@ -293,7 +295,7 @@ static void test_dfp_range(void) {
     warns(" DC ED'12E-102'\n", "00000001", 1);
     same(" DC ED'12E-102'\n", " DC ED'1E-101'\n");
     err(" DC EDS1'1'\n", "ZA2057");
-    err(" DC EDL5'1'\n", "ZA2053");
+    err(" DC EDL5'1'\n", "ZA2016");
     err(" DC ED'1R4'\n", "ZA2053");
     err(" DC ED'1R7'\n", "ZA2053");
     err(" DC EB'1R8'\n", "ZA2053");
@@ -375,7 +377,7 @@ static void test_s(void) {
     err(" DC S(5000)\n", "ZA2036");
     err(" DC S(1(16))\n", "ZA2041");
     err(" DC SL3(1)\n", "ZA2016");
-    err(" DC SYL2(1)\n", "ZA2029");
+    err(" DC SYL2(1)\n", "ZA2016");
     err(" DC SL.8(1)\n", "ZA2069");
     err("L1 DS 0H\n DC S(L1)\n", "ZA2030");
 }

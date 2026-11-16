@@ -152,6 +152,7 @@ struct Symbol {
     size_t def_idx; /* index of the defining statement */
     int weak;     /* WXTRN */
     int entry;    /* ENTRY */
+    uint8_t amode, rmode; /* AMODE/RMODE statement naming an ENTRY symbol, 0 = none */
     Section *sect;
     XAttr *xattr;
     int used;
@@ -167,6 +168,13 @@ struct Symbol {
     char regkind;     /* EQU %r12: a register name: 'R', 'F', 'A', 'C' or 'V'; 0 otherwise */
 };
 
+typedef struct {
+    char *name;
+    Span sp;
+    int is_amode;
+    uint8_t val;
+} SymMode;
+typedef Vec(SymMode) SymModeVec;
 typedef Vec(Stmt *) StmtVec;
 typedef Vec(Section *) SectionVec;
 typedef Vec(Symbol *) SymbolVec;
@@ -435,6 +443,7 @@ struct Asm {
     char *end_entry;
     Span end_span;
     XattrVec xattrs;
+    SymModeVec symmodes; /* AMODE/RMODE statements naming no section yet */
     EntryVec entries;
     StrMap secs;
     PoolVec pools;
@@ -587,6 +596,7 @@ int float_bytes(const char *text, int ieee, int n, uint8_t *out, const char **er
 /* E, D and L constants of every kind: ext is 0, 'H', 'Q', 'B' or 'D'; with
  * an exponent modifier (power of 10) and a scale modifier (hexadecimal
  * digits). 1 ok, 2 ok with a warning in *warn, 0 not a number, -1 error. */
+void float_set_type(char typ); /* E, D or L for binary floating point of unusual length, else 0 */
 int float_const(const char *text, char ext, int n, long exp10, long scale, uint8_t *out,
                 const char **err, const char **warn);
 /* F and H: whole number result of text * 10^exp10 * 2^scale, rounded */

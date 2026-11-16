@@ -263,7 +263,9 @@ static int do_relocs(Ctx *x, ElfSec *e) {
             int plt = 0;
             if (r->off < 2 || (r->len != 2 && r->len != 4))
                 return fail(x, "this relative relocation has no ELF form", sn);
-            addend = read_be(at, r->len, 1) * 2 + r->off;
+            /* an external target stores its own offset only (as IBM does); the instruction starts 2 bytes before
+             * the field, which is what the PC-relative relocation measures from */
+            addend = r->target ? read_be(at, r->len, 1) * 2 + 2 : read_be(at, r->len, 1) * 2 + r->off;
             if (r->target && r->target->kind == SYM_EXT) {
                 /* BRC/BRAS (A7x4/A7x5) and BRCL/BRASL (C0x4/C0x5) may go through a PLT */
                 int op0 = at[-2], op1 = at[-1] & 0x0F;

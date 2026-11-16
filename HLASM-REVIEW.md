@@ -6,6 +6,10 @@ zosasm is not bound to HLASM compatibility, so each row is a free decision:
 **Do** (worth building), **Redo** (the need is real, the HLASM form is not
 the best one), **Skip**.
 
+Status 2026-11: the DC/DS rules, instruction operand rules and GOFF flags were
+checked against a real HLASM (DESIGN.md section 20, PLAN.md "Oracle checks");
+the other rows below are still decisions made from the manual.
+
 Proposed verdict is in the last column; "?" marks a question for you.
 
 ## Assembler instructions not in zosasm

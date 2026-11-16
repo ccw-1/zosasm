@@ -582,6 +582,36 @@ constant). `GL6'42C1'` pads with the DBCS blank `4040`, `GL2'42C142C2'`
 truncates on the right, and the length must be a multiple of 2. `T'name` of a
 `G` constant is `@`.
 
+#### 5.1.2 Rules compared with IBM HLASM
+
+These rules were compared with IBM HLASM (`as`, release 6.0) by assembling the
+probes in `testdata/oracle/` on z/OS with `tools/oracle.sh` (section 14).
+
+* A length modifier of 0 is an error (`ZA2016`) for every type, in `DC` and
+  `DS`. The largest lengths are `C`, `X` 256 (`DS` 65535, `DXD` too), `B` 256,
+  `P` and `Z` 16, `F`, `H`, `FD` 8, `A` 4, `AD` 8, `V` 3 or 4, `S` 2, `SY` 3,
+  `Y` 2; `E`, `D` and `L` take 1 to 8, 1 to 8 and 1 to 16 bytes (`EH`, `DH`,
+  `LH`, `EB`, `DB`, `LB` at least 2; `ED`, `DD`, `LD` exactly 4, 8, 16).
+* The modifiers must be in the order `S`, `E`, `L`, ...: `FE2S1'1'` is an error.
+* `F` and `H` values outside the signed range are an error (`ZA2023`) unless
+  written with the `U` prefix (`F'U4294967295'`). A value of an absolute `A`
+  constant is cut to the low bytes without a message (`AL1(256)` is `00`).
+  `Y` accepts -32768 to 65535.
+* A relocatable `A` or `Y` constant of 2 bytes is a warning (`ZA2086`), of 1
+  byte an error.
+* `P` allows 31 digits, `Z` 16 (`ZA2028`). When the length modifier is
+  shorter than the digits, the leading digits are dropped silently
+  (`PL2'12345'` is `345C`).
+* Blanks inside the nominal value of all numeric constants are ignored:
+  `X'12 34'` is `1234`, `F'1 2'` is `12`.
+* An empty nominal value is an error except for `CL2''` (blanks).
+* Floating point with a length other than the natural one gives a value with
+  the exponent width of the type and 8*n bits, rounded (`EL1` is an error in
+  hexadecimal float, "precision lost").
+* Instructions: register pairs, lengths, immediate windows (`ZA2081` warns for
+  values that HLASM accepts with a warning) and masks follow the table in
+  `isa/oracle_rules.json` (`ZA2080` to `ZA2084`).
+
 ### 5.2 Literals
 
 `=F'100'` (or any DC operand after `=`) in an instruction operand stores the
@@ -1377,11 +1407,22 @@ of system macros, a few macro statements).
 
 **Not implemented.** `ADATA`, `MNOTE`; `G`
 constants with real DBCS text (hexadecimal only); `CU` code page options
-(UTF-16LE/UTF-8); other code pages for `CA`/`CE`; register
-pair checks (an odd register where a pair is needed assembles and fails when
-run).
+(UTF-16LE/UTF-8); other code pages for `CA`/`CE`.
 
-**Not verified against IBM.** No z/OS system has been available. The
+**Verified against IBM.** An oracle run (2026-11) on z/OS with HLASM 6.0 and
+the binder compared: the operand rules of all 483 instructions that have
+register pairs, length, immediate or mask limits (`isa/oracle_rules.json`),
+the DC/DS rules of section 5.1.2 (bytes and errors), hexadecimal and binary
+floating point constants of any length, and the GOFF flags of sections, entry
+points and A-constants to local labels and external symbols (also linked and
+run). `tools/oracle.sh testdata/oracle/X.asm` repeats such a run (it needs
+`ssh` access to a z/OS host with `as`; see the script header) and
+`tools/oracle_cmp.py` compares the listing. Known differences that remain:
+HLASM does the arithmetic of expressions in 32 bits (zosasm in 64),
+HLASM writes some extra empty classes (`B_IDRL`, `B_PRV`), and the parent
+section of an `EXTRN` is the section current at the statement in HLASM.
+
+**Not verified against IBM.** The
 following encodings were made from the documentation and from tests that
 check the bytes by hand, but were not compared with IBM's assembler or run
 through the binder: the GOFF records for `Q`, `J`, `R` and `CXD`; the

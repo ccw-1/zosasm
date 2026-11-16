@@ -188,6 +188,63 @@ static int dc_check_modifiers(Asm *a, Stmt *st, DcSpec *sp) {
     return 1;
 }
 
+/* The lengths HLASM accepts for a constant type (found with the HLASM oracle,
+ * tools/oracle.sh): C and X go to 256 in DC and 65535 in DS, B to 256, P and Z
+ * to 16, the address types have their own windows, the binary floating-point
+ * types start at 2 and the decimal ones have one length. */
+static void dc_len_range(const DcSpec *sp, int is_ds, int64_t *lo, int64_t *hi) {
+    int ext = sp->ext;
+    *lo = 1;
+    *hi = 8;
+    switch (sp->typ) {
+    case 'C':
+    case 'X':
+        *hi = is_ds ? 65535 : 256;
+        break;
+    case 'B':
+        *hi = 256;
+        break;
+    case 'P':
+    case 'Z':
+        *hi = 16;
+        break;
+    case 'G':
+        *hi = 256;
+        break;
+    case 'E':
+    case 'D':
+    case 'L': {
+        int64_t nat = sp->typ == 'E' ? 4 : sp->typ == 'D' ? 8 : 16;
+        *hi = sp->typ == 'L' ? 16 : 8;
+        if (ext == 'D')
+            *lo = *hi = nat;
+        else if (ext == 'B' || ext == 'H')
+            *lo = 2;
+        break;
+    }
+    case 'A':
+    case 'Q':
+    case 'J':
+        *hi = ext == 'D' ? 8 : 4;
+        break;
+    case 'R':
+        *lo = 3;
+        *hi = ext == 'D' ? 8 : 4;
+        break;
+    case 'Y':
+        *hi = 2;
+        break;
+    case 'S':
+        *lo = *hi = ext == 'Y' ? 3 : 2;
+        break;
+    case 'V':
+        *lo = 3;
+        *hi = 4;
+        break;
+    }
+    if (sp->typ == 'Q' && ext == 'Y') *lo = *hi = 3;
+}
+
 /* Parse one operand of DC or DS: [dup]T[ext][Lnn]['nominal' | (nominal)].
  * Reports errors and returns 0 when the operand cannot be used. */
 int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp) {
@@ -274,6 +331,11 @@ int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp) {
              s[i + 1] == '(')) {
             int64_t n;
             int at = (int)i;
+            if (c == 'S' && sp->has_exp) {
+                dc_err(a, st, "ZA2014", o.off + (int)i, (int)(len - i),
+                       "the scale modifier must come before the exponent modifier");
+                return 0;
+            }
             i++;
             if (!dc_snumber(a, st, s, &i, o.off, c == 'S' ? "scale modifier" : "exponent modifier",
                             &n))
@@ -353,20 +415,17 @@ int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp) {
         }
     }
     if (sp->has_len) {
-        int64_t max = 8;
-        if (strchr("CXBPZ", sp->typ)) max = 65535;
-        if (sp->typ == 'G') max = 256;
-        if (sp->typ == 'L') max = 16;
-        if (sp->typ == 'S') max = sp->ext == 'Y' ? 3 : 2;
-        if (sp->length > max || (sp->length < 1 && !(sp->length == 0 && sp->dup >= 0))) {
+        int64_t lo, max;
+        dc_len_range(sp, za_streqi(st->op, "DS") || za_streqi(st->op, "DXD"), &lo, &max);
+        if (sp->length > max || sp->length < lo) {
             if (sp->bits)
                 dc_err(a, st, "ZA2016", o.off, (int)len,
-                       "bit length %lld is outside 1 to %lld for type %c", (long long)sp->bits,
-                       (long long)max * 8, sp->typ);
+                       "bit length %lld is outside %lld to %lld for type %c", (long long)sp->bits,
+                       (long long)lo * 8, (long long)max * 8, sp->typ);
             else
                 dc_err(a, st, "ZA2016", o.off, (int)len,
-                       "length modifier %lld is outside 1 to %lld for type %c",
-                       (long long)sp->length, (long long)max, sp->typ);
+                       "length modifier %lld is outside %lld to %lld for type %c",
+                       (long long)sp->length, (long long)lo, (long long)max, sp->typ);
             return 0;
         }
     }
@@ -385,12 +444,18 @@ int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp) {
     return 1;
 }
 
+/* HLASM ignores blanks inside the nominal value of the numeric constants
+ * (X'12 34' is 1234, F'1 2' is 12; oracle-verified). */
 void split_nominal(const DcSpec *sp, OperandVec *out) {
     size_t i, start = 0, n = strlen(sp->nom);
     for (i = 0; i <= n; i++) {
         if (i == n || sp->nom[i] == ',') {
             Operand o;
-            o.text = xstrndup(sp->nom + start, i - start);
+            Buf nb = {0};
+            size_t j;
+            for (j = start; j < i; j++)
+                if (sp->nom[j] != ' ') buf_putc(&nb, sp->nom[j]);
+            o.text = xstrdup(buf_cstr(&nb));
             o.off = sp->nom_off + (int)start;
             vec_push(out, o);
             start = i + 1;
@@ -632,7 +697,7 @@ static int dc_int(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
 }
 
 /* Turn the value of an A/Y operand into bytes and a relocation (pass 2). */
-static int addr_con(Asm *a, Stmt *st, const Expr *e, Value v, int n, DcVal *res) {
+static int addr_con(Asm *a, Stmt *st, const Expr *e, Value v, int n, DcVal *res, int strict) {
     Term *terms = xmalloc((size_t)(v.nterms + 1) * sizeof *terms);
     int nt = 0, i;
     memset(res, 0, sizeof *res);
@@ -645,7 +710,8 @@ static int addr_con(Asm *a, Stmt *st, const Expr *e, Value v, int n, DcVal *res)
         terms[nt++] = v.terms[i];
     }
     if (nt == 0) {
-        if (n >= 1 && n < 8) {
+        /* A: the low n bytes, no message (HLASM); Y has a window of its own */
+        if (strict && n >= 1 && n < 8) {
             int64_t lo = -((int64_t)1 << (8 * n - 1)), hi = ((int64_t)1 << (8 * n)) - 1;
             if (v.abs < lo || v.abs > hi) {
                 diag_help(rep_errorf(a->rep, "ZA2023", e->sp, "value %lld does not fit in %d byte(s)",
@@ -674,13 +740,16 @@ static int addr_con(Asm *a, Stmt *st, const Expr *e, Value v, int n, DcVal *res)
             st->bad = 1;
             return 0;
         }
-        if (n != 3 && n != 4 && n != 8) {
+        if (n < 2 || n > 8 || (n > 4 && n != 8)) {
             diag_help(rep_errorf(a->rep, "ZA2024", e->sp,
                                  "a relocatable address cannot be stored in %d byte(s)", n),
-                      "relocatable A-type constants are 3, 4 or 8 bytes long (A, AL3, AD)");
+                      "relocatable A-type constants are 2 (with a warning), 3, 4 or 8 bytes long "
+                      "(AL2, AL3, A, AD)");
             st->bad = 1;
             return 0;
         }
+        if (n == 2)
+            rep_warnf(a->rep, "ZA2086", e->sp, "2-byte relocatable address constant");
         for (k = 0; k < 2; k++) /* k == 0: additions, k == 1: subtractions */
             for (i = 0; i < nt; i++) {
                 DcRelTerm *it = &items[np];
@@ -736,7 +805,7 @@ static int dc_addr(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
             push_val(out, zeros((size_t)n), (size_t)n);
             continue;
         }
-        if (!addr_con(a, st, e, v, n, &val)) good = 0;
+        if (!addr_con(a, st, e, v, n, &val, sp->typ == 'Y')) good = 0;
         vec_push(out, val);
     }
     return good;
@@ -788,8 +857,8 @@ static int dc_v(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
     OperandVec items = {0};
     size_t k;
     if (sp->has_len) n = (int)sp->length;
-    if (n != 3 && n != 4 && n != 8) {
-        dc_err(a, st, "ZA2024", sp->off, sp->n, "a V-type constant is 3, 4 or 8 bytes long, not %d",
+    if (n != 3 && n != 4) {
+        dc_err(a, st, "ZA2024", sp->off, sp->n, "a V-type constant is 3 or 4 bytes long, not %d",
                n);
         return 0;
     }
@@ -974,6 +1043,12 @@ static int dc_decimal(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
                    sp->typ);
             return 0;
         }
+        if (nd > (sp->typ == 'P' ? 31u : 16u)) { /* HLASM ASMA068S, whatever the length */
+            dc_err(a, st, "ZA2028", items.v[k].off, (int)strlen(items.v[k].text),
+                   "a %s constant holds at most %d digits, not %zu",
+                   sp->typ == 'P' ? "packed" : "zoned", sp->typ == 'P' ? 31 : 16, nd);
+            return 0;
+        }
         if (sp->typ == 'P') {
             size_t total = nd + 1, off = total % 2;
             nb = (total + off) / 2;
@@ -986,14 +1061,11 @@ static int dc_decimal(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
             if (sp->has_len) {
                 size_t want = (size_t)sp->length;
                 uint8_t *nbv;
-                if (nb > want) {
-                    dc_err(a, st, "ZA2028", items.v[k].off, (int)strlen(items.v[k].text),
-                           "packed value needs %d byte(s) but the length is %d", (int)nb,
-                           (int)want);
-                    return 0;
-                }
                 nbv = xcalloc(want + 1);
-                memcpy(nbv + (want - nb), b, nb);
+                if (nb > want) /* the leading digits are dropped (HLASM: no message) */
+                    memcpy(nbv, b + (nb - want), want);
+                else
+                    memcpy(nbv + (want - nb), b, nb);
                 b = nbv;
                 nb = want;
             }
@@ -1005,14 +1077,12 @@ static int dc_decimal(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
             if (sp->has_len) {
                 size_t want = (size_t)sp->length;
                 uint8_t *nbv;
-                if (nb > want) {
-                    dc_err(a, st, "ZA2028", items.v[k].off, (int)strlen(items.v[k].text),
-                           "zoned value needs %d byte(s) but the length is %d", (int)nb, (int)want);
-                    return 0;
-                }
                 nbv = xmalloc(want + 1);
                 memset(nbv, 0xF0, want);
-                memcpy(nbv + (want - nb), b, nb);
+                if (nb > want)
+                    memcpy(nbv, b + (nb - want), want);
+                else
+                    memcpy(nbv + (want - nb), b, nb);
                 b = nbv;
                 nb = want;
             }
@@ -1309,7 +1379,7 @@ void dir_ccw(Asm *a, Stmt *st) {
                 Value val;
                 if (!e || !asm_eval(a, st, e, 0, &val)) {
                     ok = 0;
-                } else if (val.defined && !addr_con(a, st, e, val, (int)addr.n, &addr)) {
+                } else if (val.defined && !addr_con(a, st, e, val, (int)addr.n, &addr, 1)) {
                     ok = 0;
                 } else if (!val.defined) {
                     ok = 0;

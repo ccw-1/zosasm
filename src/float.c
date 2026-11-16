@@ -320,8 +320,42 @@ static void scale16(const Big *n, const Big *d, long e, Big *a, Big *b) {
         big_shl(a, (size_t)(4 * -e));
 }
 
+static int hfp_core(const Big *N, const Big *D, int neg, int n, long scale, int mode, uint8_t *out,
+                    const char **err);
+
+/* Lengths 9 to 15 (HLASM): the first n bytes of the extended format. With 9
+ * bytes only the high-order double is there (rounded) plus the exponent byte
+ * of the low-order one; with more, the digits of the low-order double are
+ * rounded to the bytes that fit. A length of 1 holds no digit at all. */
 static int hfp_bytes(const Big *N, const Big *D, int neg, int n, long scale, int mode, uint8_t *out,
                      const char **err) {
+    uint8_t t[16];
+    int r, i;
+    if (n == 1) {
+        *err = "precision lost: a hexadecimal floating-point constant of 1 byte holds no digit "
+               "(HLASM ASMA073E)";
+        return -1;
+    }
+    if (n < 9 || n > 15) return hfp_core(N, D, neg, n, scale, mode, out, err);
+    if (n == 9) {
+        r = hfp_core(N, D, neg, 8, scale, mode, t, err);
+        if (r < 0) return r;
+        memcpy(out, t, 8);
+        out[8] = (uint8_t)((t[0] & 0x80) | (((t[0] & 0x7F) - 14) & 0x7F));
+        return r;
+    }
+    r = hfp_core(N, D, neg, 16, scale, mode, t, err);
+    if (r < 0) return r;
+    if (t[n] >> 4 >= 8) { /* round the kept digits up */
+        for (i = n - 1; i > 8; i--)
+            if (++t[i]) break;
+    }
+    memcpy(out, t, (size_t)n);
+    return r;
+}
+
+static int hfp_core(const Big *N, const Big *D, int neg, int n, long scale, int mode, uint8_t *out,
+                    const char **err) {
     int digits;
     long e;
     Big a, b, a16, num, den, q, r, limit;
@@ -409,7 +443,20 @@ static Big big_ones(size_t bits) {
     return b;
 }
 
+/* The exponent width of the binary floating-point type being converted (8, 11
+ * or 15 bits for E, D and L) when the length is not the natural one: HLASM
+ * builds the constant in a format with that exponent and 8*n-1-bits fraction
+ * bits. 0: use the natural format of the length. */
+static int ieee_ebits;
+
+void float_set_type(char typ) { ieee_ebits = typ == 'E' ? 8 : typ == 'D' ? 11 : typ == 'L' ? 15 : 0; }
+
 static void ieee_params(int n, int *p, int *bias) {
+    if (ieee_ebits && n != (ieee_ebits == 8 ? 4 : ieee_ebits == 11 ? 8 : 16)) {
+        *p = 8 * n - ieee_ebits;
+        *bias = (1 << (ieee_ebits - 1)) - 1;
+        return;
+    }
     switch (n) {
     case 4:
         *p = 24;
@@ -466,10 +513,7 @@ static int ieee_bytes(const Big *N, const Big *D, int neg, int n, int mode, uint
     long emin, emax, e2, eff, s;
     Big num, den, q, r, res, frac;
     static char msg[160];
-    if (n != 4 && n != 8 && n != 16) {
-        *err = "binary floating-point constants need a length of 4, 8 or 16 bytes";
-        return -1;
-    }
+    (void)err;
     ieee_params(n, &p, &bias);
     emax = bias;
     emin = 1 - bias;
@@ -905,10 +949,6 @@ int float_const(const char *text, char ext, int n, long exp10, long scale, uint8
             }
             dfp_special(&dfp_fmts[n == 4 ? 0 : n == 8 ? 1 : 2], kind, neg, out);
         } else if (ieee) {
-            if (n != 4 && n != 8 && n != 16) {
-                *err = "binary floating-point constants need a length of 4, 8 or 16 bytes";
-                return -1;
-            }
             ieee_special(kind, neg, n, out);
         } else {
             if (n < 1 || (n > 8 && n != 16)) {
@@ -970,10 +1010,8 @@ int float_const(const char *text, char ext, int n, long exp10, long scale, uint8
             mul_pow10(&N, &D, exp10);
         }
         if (big_is_zero(&N)) {
-            if (ieee ? (n != 4 && n != 8 && n != 16) : (n > 8 && n != 16)) {
-                *err = ieee ? "binary floating-point constants need a length of 4, 8 or 16 bytes"
-                            : "hexadecimal floating-point constants need a length of 1 to 8 or "
-                              "16 bytes";
+            if (!ieee && n > 16) {
+                *err = "hexadecimal floating-point constants need a length of 1 to 16 bytes";
                 return -1;
             }
             memset(out, 0, (size_t)n);
@@ -1042,7 +1080,7 @@ int fixed_bytes(const char *text, int n, long exp10, long scale, uint8_t *out, c
         q = lim;
     } else {
         Big top = big_copy(&lim);
-        if (!u && n >= 8) { /* signed 8 byte values stop at 2^63 - 1 */
+        if (!u) { /* signed values stop at 2^(8n-1) - 1 (HLASM ASMA072E); U'n' is unsigned */
             big_shr(&top, 1);
         }
         if (big_cmp(&q, &top) >= 0) {
@@ -1064,8 +1102,11 @@ int dc_float(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
         char *t = str_trim(items.v[k].text);
         uint8_t *b = xcalloc((size_t)(n < 1 ? 1 : n) + 1);
         const char *err, *warn;
-        int r = float_const(t, sp->ext, n, (long)sp->exp10, (long)sp->scale, b, &err, &warn);
+        int r;
         DcVal v;
+        float_set_type(sp->ext == 'B' ? sp->typ : 0);
+        r = float_const(t, sp->ext, n, (long)sp->exp10, (long)sp->scale, b, &err, &warn);
+        float_set_type(0);
         if (r == 0) {
             diag_help(dc_err(a, st, "ZA2050", items.v[k].off, (int)strlen(items.v[k].text) + 1,
                              "\"%s\" is not a decimal floating-point number", items.v[k].text),

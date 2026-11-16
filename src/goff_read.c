@@ -132,7 +132,6 @@ static const char *decode(GoffModule *m, Logical *l) {
         }
         e->name = all;
         e->name_len = nl;
-        if (e->id != m->esds.n + 1) return fail("ESDID %d out of sequence (expected %d)", (int)e->id, (int)m->esds.n + 1);
         vec_push(&m->esds, e);
         break;
     }
@@ -200,6 +199,11 @@ static const char *decode(GoffModule *m, Logical *l) {
     return NULL;
 }
 
+static int esd_cmp(const void *a, const void *b) {
+    const GoffESD *x = *(const GoffESD *const *)a, *y = *(const GoffESD *const *)b;
+    return x->id < y->id ? -1 : x->id > y->id;
+}
+
 GoffModule *goff_parse(const uint8_t *b, size_t len, const char **err) {
     GoffModule *m = xcalloc(sizeof *m);
     Vec(Logical *) recs = {0};
@@ -249,6 +253,15 @@ GoffModule *goff_parse(const uint8_t *b, size_t len, const char **err) {
             return NULL;
         }
     }
+    /* HLASM writes the ESD records of an object out of ESDID order (LD entries
+     * after the ERs); the table is indexed by ESDID - 1 */
+    qsort(m->esds.v, m->esds.n, sizeof m->esds.v[0], esd_cmp);
+    for (i = 0; i < m->esds.n; i++) {
+        if (m->esds.v[i]->id != i + 1) {
+            *err = fail("ESDID %d missing or duplicated", (int)i + 1, 0);
+            return NULL;
+        }
+    }
     m->logical = (int)recs.n;
     if (recs.n == 0 || recs.v[recs.n - 1]->typ != GOFF_T_END) {
         *err = "goff: last record is not END";
@@ -268,10 +281,13 @@ void goff_dump(const GoffModule *m, FILE *w) {
     for (i = 0; i < m->esds.n; i++) {
         const GoffESD *e = m->esds.v[i];
         char *nm = ebcdic_decode(e->name, e->name_len);
-        fprintf(w, "ESD %-2d id=%u parent=%u off=%u len=%d ns=%d amode=%d rmode=%d scope=%d exec=%d align=%d \"%s\"\n",
+        uint8_t ba[10];
+        goff_behavior_pack(&e->attr, ba);
+        fprintf(w, "ESD %-2d id=%u parent=%u off=%u len=%d ns=%d amode=%d rmode=%d scope=%d exec=%d align=%d "
+                   "ba=%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X \"%s\"\n",
                 (int)e->type, (unsigned)e->id, (unsigned)e->parent, (unsigned)e->offset, (int)(int32_t)e->length,
                 e->name_space, e->attr.amode, e->attr.rmode, e->attr.scope, e->attr.executable,
-                e->attr.alignment, nm);
+                e->attr.alignment, ba[0], ba[1], ba[2], ba[3], ba[4], ba[5], ba[6], ba[7], ba[8], ba[9], nm);
         free(nm);
     }
     for (i = 0; i < m->texts.n; i++) {

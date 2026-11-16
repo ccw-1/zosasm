@@ -1,0 +1,5 @@
+EXTSYM   CSECT
+EXTSYM   AMODE 31
+EXTSYM   RMODE ANY
+         BR    14
+         END

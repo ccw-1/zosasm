@@ -496,11 +496,21 @@ void dir_mode(Asm *a, Stmt *st) {
     sec = a->sect;
     if (st->name[0]) {
         sec = strmap_get(&a->secs, st->name);
-        if (!sec) {
-            diag_help(rep_errorf(a->rep, "ZA3040", st->name_span,
-                                 "%s names \"%s\", which is not a section yet", up, st->name),
-                      "put the %s statement after the CSECT it applies to", up);
-            st->bad = 1;
+        if (!sec) { /* an ENTRY symbol, checked when pass 1 ends */
+            SymMode sm;
+            val = ops.v[0].text;
+            if (is_a ? !amode_byte(val, &v) : !rmode_byte(val, &v)) {
+                diag_help(rep_errorf(a->rep, is_a ? "ZA3041" : "ZA3042", asm_op_span(st, ops.v[0]),
+                                     "invalid %s \"%s\"", up, val),
+                          is_a ? "use 24, 31, 64, ANY or MIN" : "use 24, 31, 64 or ANY");
+                st->bad = 1;
+                return;
+            }
+            sm.name = st->name;
+            sm.sp = st->name_span;
+            sm.is_amode = is_a;
+            sm.val = v;
+            vec_push(&a->symmodes, sm);
             return;
         }
     }

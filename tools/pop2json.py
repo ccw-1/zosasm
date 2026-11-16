@@ -509,8 +509,24 @@ def clean(s):
     return re.sub(r'[^\x20-\x7e]', '?', s).lower()
 
 
+# Corrections found by comparing the generated table with the real HLASM
+# (tools/oracle.sh, 2026-11-16); the book's text layout loses them.
+#  * Appendix B shows VSTEBRG and VSTEBRH with the operation code of VSTEBRF
+#    (E60B); HLASM encodes VSTEBRH as E609 and VSTEBRG as E60A.
+OPCODE_FIX = {'VSTEBRH': 'E609', 'VSTEBRG': 'E60A'}
+#  * the mnemonics with a trailing Z (zero remaining bits, bit 0 of I4) or T
+#    (test results only, bit 0 of I3) are the base instruction with that bit
+#    set: mnemonic -> (byte index in the instruction, bit mask)
+ORV_FIX = {'RISBGZ': (3, 0x80), 'RISBGNZ': (3, 0x80), 'RISBHGZ': (3, 0x80),
+           'RISBLGZ': (3, 0x80), 'RNSBGT': (2, 0x80), 'ROSBGT': (2, 0x80),
+           'RXSBGT': (2, 0x80)}
+
+
 def build(P, L, R, warn):
     rows = parse_appendix_b(P)
+    for r in rows:
+        if r['mnemonic'] in OPCODE_FIX:
+            r['opcode'] = OPCODE_FIX[r['mnemonic']]
     syn = parse_syntax(L, R)
     manual = {'KDSA': ('R1,R2', 'RRE')}       # no syntax line is picked up for KDSA
     tab = Table()
@@ -636,6 +652,8 @@ def add_extended(tab, insts, byname, J, warn):
         e = {'mnemonic': ext.lower(), 'format': fmt, 'length': be['length'],
              'opcode': buf.hex().upper(), 'operands': names, 'opt': eopt,
              'facility': be['facility'], 'desc': clean(comment) if comment else be['desc']}
+        if ext.upper() in ORV_FIX:        # "control (Z|T) treated as being one": prose in POP
+            orv[ORV_FIX[ext.upper()][0]] |= ORV_FIX[ext.upper()][1]
         if any(orv):
             e['or'] = orv.hex().upper()
         insts.append(e)
@@ -655,6 +673,14 @@ def main():
     for b in bad:
         warn('Appendix J line not understood: ' + b)
     insts.sort(key=lambda e: (e['mnemonic'], e['opcode']))
+    # operand rules found with the real HLASM (tools/oracle_rules.py)
+    rf = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'isa', 'oracle_rules.json')
+    if os.path.exists(rf):
+        orules = json.load(open(rf))
+        for e in insts:
+            r = orules.get('%s %s' % (e['mnemonic'], e['format']))
+            if r:
+                e['rules'] = r
     doc = {
         'version': 2,
         'source': 'IBM z/Architecture Principles of Operation, SA22-7832-14 (Appendix B, '

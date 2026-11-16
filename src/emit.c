@@ -56,7 +56,6 @@ static const char *emit_class(GoffWriter *w, const Module *m, Section *s, Class 
     uint8_t bind = c->attr.merge ? GOFF_BIND_MERGE : GOFF_BIND_CAT;
     GoffESD ed, pr;
     const char *e;
-    if (!strcmp(c->name, DEFAULT_CLASS)) exec = GOFF_EXEC_CODE;
     if (c->attr.noload)
         loading = GOFF_NOLOAD;
     else if (c->attr.defload)
@@ -162,17 +161,18 @@ static const char *emit_prv(GoffWriter *w, const Module *m, Section *s) {
     return NULL;
 }
 
-static void init_ld(GoffESD *ld, Section *s, const char *name, const Class *c) {
+static void init_ld(GoffESD *ld, Section *s, const char *name, const Class *c, int is_sect) {
     uint8_t exec = (uint8_t)c->attr.executable;
-    if (!strcmp(c->name, DEFAULT_CLASS)) exec = GOFF_EXEC_CODE;
     memset(ld, 0, sizeof *ld);
     ld->type = GOFF_LD;
     ld->parent = c->part ? c->pr : c->esd;
     set_name(ld, name);
     ld->name_space = GOFF_NS_NORMAL;
-    ld->attr.amode = s->amode;
+    if (is_sect) {
+        ld->attr.amode = s->amode;
+        ld->attr.rmode = s->rmode;
+    }
     ld->attr.executable = exec;
-    ld->attr.scope = GOFF_SCOPE_MODULE;
 }
 
 /* Q, CXD, J and R constants.  These encodings follow the reference and
@@ -261,7 +261,7 @@ static int reloc_item(const Class *c, const Reloc *r, GoffReloc *g, char *err, s
             g->referent = GOFF_REFERENT_LABEL;
         } else {
             g->rid = r->cls->esd;
-            g->referent = GOFF_REFERENT_CLASS;
+            g->referent = GOFF_REFERENT_LABEL;
         }
     } else {
         snprintf(err, errsz, "relocation without a target");
@@ -363,6 +363,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
         GoffESD sd;
         memset(&sd, 0, sizeof sd);
         sd.type = GOFF_SD;
+        sd.name_space = GOFF_NS_NORMAL;
         set_name(&sd, sect_name(s));
         sd.attr.common = s->kind == K_COM;
         TRY(goff_write_esd(w, &sd));
@@ -374,7 +375,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
         if (s->name[0]) {
             GoffESD ld;
             Symbol *sym;
-            init_ld(&ld, s, s->name, s->classes.v[0]);
+            init_ld(&ld, s, s->name, s->classes.v[0], 1);
             apply_xattr(&ld.attr, xattr_of(m, s->name));
             TRY(goff_write_esd(w, &ld));
             sym = module_symbol(m, s->name);
@@ -400,7 +401,11 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
             for (i = 0; i < nek; i++) {
                 Symbol *sym = ek[i].sym;
                 GoffESD ld;
-                init_ld(&ld, s, sym->name, sym->piece->cls);
+                init_ld(&ld, s, sym->name, sym->piece->cls, 0);
+                if (sym->amode || sym->rmode) {
+                    ld.attr.amode = sym->amode ? sym->amode : GOFF_AMODE_31;
+                    ld.attr.rmode = sym->rmode;
+                }
                 ld.offset = (uint32_t)ek[i].off;
                 apply_xattr(&ld.attr, sym->xattr);
                 TRY(goff_write_esd(w, &ld));
@@ -417,12 +422,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
             er.parent = s->esd;
             set_name(&er, sym->name);
             er.name_space = GOFF_NS_NORMAL;
-            er.attr.amode = s->amode;
-            er.attr.scope = GOFF_SCOPE_SECTION;
-            if (sym->weak) {
-                er.attr.bind_strength = GOFF_STRENGTH_WEAK;
-                er.attr.scope = GOFF_SCOPE_MODULE;
-            }
+            if (sym->weak) er.attr.bind_strength = GOFF_STRENGTH_WEAK;
             apply_xattr(&er.attr, sym->xattr);
             TRY(goff_write_esd(w, &er));
             sym->esd = er.id;

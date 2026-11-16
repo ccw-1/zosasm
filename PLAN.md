@@ -86,33 +86,49 @@ Status key: [x] done, [-] in progress, [ ] open.
   `hlasm-dwarf/dwemb.asm` is real HLASM source (assembles with zosasm).
 * `/home/knoppix/pop/` (z/Architecture documentation, `zcg/`, SA22-7832-14).
 
-## Oracle checks (need z/OS; network to pok56 was down at project start)
+## Oracle checks (run on z/OS host igor, 2026-11-15/16)
 
 Facts in the GOFF writer/mapping that come from the manual and must be
 confirmed against objects produced by real HLASM (`as -mgoff`) and by the
-binder. Each line becomes a test when z/OS is reachable.
+binder. The oracle is `as -mgoff` (HLASM R6.0) on host `igor`; sources
+`testdata/oracle/*.asm`; `tools/oracle.sh` compares per statement, results are
+checked by `tests/test_oracle.c`.
 
 | # | Question | Assumed | Verified |
 |---|---|---|---|
-| 1 | HDR: architecture level and module properties | level 1, no properties | no |
+| 1 | HDR: architecture level and module properties | level 1, no properties | HLASM writes 0 in the architecture level; not changed |
 | 2 | END record count counts logical records incl. HDR/END | yes | no |
 | 3 | ED for a plain CSECT: class `B_TEXT`, alignment doubleword, RMODE from RMODE stmt | as DESIGN.md | no |
 | 4 | LD emitted for the CSECT name, offset 0, scope module | yes | no |
-| 5 | A-con to a local label: referent = class (ED, or PR), R-ID = ED, offset as addend in text; to ER: referent label | yes (as `hello.goff` and the spec) | no |
+| 5 | A-con to a local label: referent = class (ED, or PR), R-ID = ED, offset as addend in text; to ER: referent label | yes (as `hello.goff` and the spec) | **yes**: a local label is a LABEL referent (g1/g2/g3), fixed in `emit.c` |
 | 6 | Same-class relative branch: resolved by assembler, no RLD (an A-con to a label in the same ED still needs an RLD) | yes | no |
-| 7 | Relative-immediate (`BRASL X`) to another ED/ER: ref type 6 | yes | no |
+| 7 | Relative-immediate (`BRASL X`) to another ED/ER: ref type 6 | yes | **yes** for an EXTRN (only the addend is stored; linked and run) |
 | 8 | V-con: ER, ref type 0, AMODE-sensitive bit | yes | no |
 | 9 | `CATTR PART(p)`: PR with name space 2, text attached to PR | yes | no |
 | 10 | XATTR `SCOPE(EXPORT)` -> binding scope 4, name space 3 on PR | per manual | no |
 | 11 | Name > 8 chars in ESD continuation records exactly as written | yes | no |
 | 12 | Text longer than 56 bytes: continuation record layout | yes | no |
 | 13 | Pad bytes of fixed records are zero | yes | no |
-| 14 | Binder (`ld`) accepts our minimal module (SD/ED/LD/TXT/END) | untested | no |
-| 15 | EBCDIC vs ASCII `DC C'..'` default matches HLASM (`CODEPAGE`) | EBCDIC 1047 | no |
+| 14 | Binder (`ld`) accepts our minimal module (SD/ED/LD/TXT/END) | untested | **yes** (`xlc -o prog main.o a.o b.o`, run) |
+| 15 | EBCDIC vs ASCII `DC C'..'` default matches HLASM (`CODEPAGE`) | EBCDIC 1047 | **yes** (also `^ [ ]`); HLASM option CODEPAGE(1148) on igor |
 
-How to run the oracle once pok56 is reachable:
+Also checked (not in the table): the operand rules of the instructions
+(`isa/oracle_rules.json`, ZA2080-2084), the DC/DS length windows, value
+ranges, blanks in nominals, P/Z digits, float lengths (GUIDE 5.1.2), SD flags
+and entry AMODE/RMODE statements.
 
-1. copy `testdata/oracle/*.asm` (plain HLASM subset) with z-scp,
-2. `as -mgoff -o x.o x.asm` on z/OS, copy `x.o` back,
-3. `zosasm -dump x.o` and `zosasm -dump ours.o`, diff after normalizing
-   ESDID order.
+Still open: ER parent section (HLASM: the section current at the EXTRN),
+HDR/END fields, COM, CATTR PART/XATTR forms, V-con, long names, text over 56
+bytes, `A(EXTA-A)` referent, extra `B_IDRL`/`B_PRV` classes of HLASM, 32-bit
+expression arithmetic of HLASM, literals, USING forms, ORG, `L.n`, `CU`, `CCW`,
+decimal float, macro-less directives (ACONTROL, PUSH/POP, OPSYN, PUNCH, COPY,
+AREAD, AINSERT, `&SYS*`).
+
+How to run the oracle:
+
+1. HLASM source of at most 71 columns, second statement `PRINT DATA` (the
+   listing shows only 8 bytes of a DC otherwise),
+2. `tools/oracle.sh testdata/oracle/X.asm` (host `igor`, see the header of the
+   script); `ZORACLE_REUSE=1` repeats only the zosasm side,
+3. read the `same / different / hlasm-error` lines; `warn` lines list
+   HLASM warnings that zosasm may not give.

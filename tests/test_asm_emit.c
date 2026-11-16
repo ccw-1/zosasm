@@ -114,7 +114,7 @@ static void test_structure(void) {
     if (g->relocs.n == 3 && er && w) {
         CHECK(g->relocs.v[0].offset == 4 && g->relocs.v[1].offset == 8 &&
               g->relocs.v[2].offset == 12);
-        CHECK(g->relocs.v[0].referent == GOFF_REFERENT_CLASS && g->relocs.v[0].rid == ed->id);
+        CHECK(g->relocs.v[0].referent == GOFF_REFERENT_LABEL && g->relocs.v[0].rid == ed->id);
         CHECK(g->relocs.v[1].rid == er->id && g->relocs.v[2].rid == w->id);
     }
     CHECK(g->end.kind == GOFF_ENTRY_BYID && g->end.esdid == ed->id && g->end.offset == 0);
@@ -280,7 +280,7 @@ static void test_sub_relocs(void) {
     /* the first constant is absolute; then +EXTA -A, +EXTA -EXTB, +B -A, -B */
     CHECK(g->relocs.v[0].offset == 4 && g->relocs.v[0].action == GOFF_ACTION_ADD);
     CHECK(g->relocs.v[1].offset == 4 && g->relocs.v[1].action == GOFF_ACTION_SUB &&
-          g->relocs.v[1].referent == GOFF_REFERENT_CLASS);
+          g->relocs.v[1].referent == GOFF_REFERENT_LABEL);
     CHECK(g->relocs.v[2].offset == 8 && g->relocs.v[2].action == GOFF_ACTION_ADD);
     CHECK(g->relocs.v[3].offset == 8 && g->relocs.v[3].action == GOFF_ACTION_SUB &&
           g->relocs.v[3].referent == GOFF_REFERENT_LABEL);

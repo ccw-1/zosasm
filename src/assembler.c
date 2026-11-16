@@ -1042,6 +1042,24 @@ static void finish(Asm *a) {
             asm_note_ref(a, s, a->end_span);
         }
     }
+    for (i = 0; i < a->symmodes.n; i++) {
+        SymMode *m = &a->symmodes.v[i];
+        Symbol *s = asm_lookup(a, m->name);
+        const char *up = m->is_amode ? "AMODE" : "RMODE";
+        if (!s || (!s->entry && s->kind != SYM_SECT)) {
+            diag_help(rep_errorf(a->rep, "ZA3040", m->sp,
+                                 "%s names \"%s\", which is neither a section nor an ENTRY symbol",
+                                 up, m->name),
+                      "put the %s statement after the CSECT it applies to, or name an ENTRY label",
+                      up);
+            continue;
+        }
+        if (s->kind == SYM_SECT && s->sect) {
+            if (m->is_amode) s->sect->amode = m->val; else s->sect->rmode = m->val;
+        } else {
+            if (m->is_amode) s->amode = m->val; else s->rmode = m->val;
+        }
+    }
     for (i = 0; i < a->xattrs.n; i++) {
         XattrStmt *x = a->xattrs.v[i];
         Symbol *s = asm_lookup(a, x->name);

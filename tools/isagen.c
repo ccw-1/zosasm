@@ -352,6 +352,11 @@ int main(int argc, char **argv) {
         cstr(need(in, "facility", J_STR, mn)->str);
         printf(", ");
         cstr(need(in, "desc", J_STR, mn)->str);
+        printf(", ");
+        {
+            const J *rj = get(in, "rules");
+            cstr(rj && rj->t == J_STR ? rj->str : "");
+        }
         printf("},\n");
     }
     printf("};\n\nconst size_t isa_inst_count = sizeof isa_inst_tab / sizeof isa_inst_tab[0];\n");

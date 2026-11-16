@@ -1201,3 +1201,27 @@ transport, JSON-RPC batches, restricting `path`/`output` to a directory, a
 ## 19. Macro language (M1 implemented)
 
 See `MACRO.md`: a C-like macro language in the preprocessor stage (braced `#if/#while/#for/#switch` blocks written on `#` lines with free indentation, model statements substituted with `&name`, 0-based lists, block scoped variables, library lookup of macros by name). It keeps the semantics of HLASM conditional assembly, not its syntax; `hlasm2za` is to recover structured control flow from `AIF`/`AGO` (the survey of SYS1.MACLIB is in MACRO.md section 0). **M1 is implemented** (2026-11-16, not compared with HLASM): `src/macro.h` (API), `src/macro_int.h`, `src/macro_val.c` (values, list parsing, functions), `src/macro_expr.c` (lexer, Pratt parser, evaluator), `src/macro.c` (collector, compiler, runtime, library). A `#` line is classified by `mac_top_kind` (0 not macro, 1 `#macro`, 2 other macro statement; a classic `#if` without `{` stays a preprocessor directive). Bodies are compiled once to a flat `MStmt` array with jumps; every statement has a block depth and a variable lives at the depth of its block, being dropped when a statement of a lower depth runs (block scope without a scope stack; `#for` hidden variables `%lN`/`%iN` and the switch value `%sN` use the same rule, the first hidden `#let` carries the truncation depth). Frames are per call, `ms->top` is the open-code frame, globals are shared `MVal*` slots. `pp.c` provides the host callbacks (`emit`, `sect`, `is_defined`); generated lines are rescanned by `emit_line` (so they can call macros), multi-line statements travel as text with `\n`, calls are found in `emit_part_or_call` and `pp_file` (a call ending in a comma is joined first), library members by `is_macro_op`/`try_library_dir` (`-M` then `-I`, negative lookups cached in `pp->lib_tried`). Diagnostics ZA4050-4052, ZA4100-4130; `rep_notef` is a note severity that is not counted. Names that are instructions or directives (`mac_known_op`) are never looked up in the library. C1 (`hlasm2za` conversion of MACRO..MEND) is implemented, see section 16.1.
+
+## 20. Oracle comparison with IBM HLASM (2026-11)
+
+Tools: `tools/oracle.sh` (runs `as -mgoff` on a z/OS host over `ssh`, fetches
+the digest of the listing made by `tools/oracle_cmp.py --digest`, assembles the
+same source with zosasm and compares per statement; `ZORACLE_HOST`,
+`ZORACLE_DIR`, ...), `tools/oracle_cmp.py` (statement pairing by source line
+number, tolerance for alignment padding, which HLASM lists as trailing zeros),
+`tools/oracle_gen.c` + `tools/oracle_probe.py` + `tools/oracle_rules.py`
+(generate probes of every instruction operand and turn the HLASM answers into
+`isa/oracle_rules.json`; `tools/pop2json.py` merges it into `isa/isa.json`,
+`src/isa.c` has `isa_rule()` and `isa_rules_ok()`). Probe sources are in
+`testdata/oracle/` (at most 71 columns; the second statement is `PRINT DATA`
+because HLASM lists only the first 8 bytes of a DC otherwise).
+
+What came out of it: the instruction diagnostics ZA2080-ZA2084, the DC/DS
+length windows and value rules (`dc_len_range` in `dc.c`, ZA2086 for a 2 byte
+relocatable address, `fixed_bytes`, `dc_decimal`, `split_nominal` dropping
+blanks, `float_set_type`/`hfp_core` in `float.c`), term limits in `expr.c`,
+GOFF details in `emit.c` (SD flags, a local label as LABEL referent, entry
+AMODE/RMODE) and the ELF addend. Remaining differences are listed in
+PLAN.md ("Oracle checks"). The listings of HLASM and the generated probe
+output are IBM material and are not stored in the repository; only our own
+sources are.

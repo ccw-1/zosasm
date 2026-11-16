@@ -685,7 +685,7 @@ static int try_decode(DClass *c, size_t o, DIns *di) {
     size_t k;
     if (o % 2 || o + 2 > c->len || c->bad[o]) return 0;
     in = isa_decode(c->data + o, c->len - o, v);
-    if (!in) return 0;
+    if (!in || !isa_rules_ok(in, v)) return 0;
     len = in->length;
     for (k = 0; k < (size_t)len; k++)
         if (c->ins_at[o + k] || c->occ[o + k] == 1) return 0;
@@ -709,12 +709,14 @@ static int try_decode(DClass *c, size_t o, DIns *di) {
                 rel = c->rel_at[fo] - 1;
         }
         if (rel < 0) {
+            /* HLASM decimal terms stop at 2147483647: *+n cannot be written for a far branch */
+            if (2 * v[s->field] > 2147483647 || 2 * v[s->field] < -2147483647) return 0;
             di->target = (int64_t)o + 2 * v[s->field];
         } else {
             DRel *r = &c->rels[rel];
             di->rel = rel;
             if (r->er) {
-                di->target = 2 * v[s->field] + (int64_t)o; /* the addend */
+                di->target = 2 * v[s->field]; /* the addend (HLASM stores the offset from the symbol only) */
             } else {
                 int64_t t = r->base + 2 * v[s->field] + (int64_t)o;
                 if (t < 0 || t > (int64_t)r->cls->len) return 0;
@@ -968,6 +970,9 @@ static char *ins_operands(Ctx *x, const DClass *c, const DIns *di) {
             reg_text(&o, f->flags, v);
             break;
         case SK_IMM:
+            /* a signed immediate that HLASM would warn about when written unsigned */
+            if (f->bits < 32 && isa_rule(di->in, 's', i, NULL) && v >= ((int64_t)1 << (f->bits - 1)))
+                v -= (int64_t)1 << f->bits;
             buf_printf(&o, "%lld", (long long)v);
             break;
         case SK_REL:
@@ -1068,7 +1073,10 @@ static void emit_adcon(Ctx *x, const DRel *r, const char *label) {
         }
         addend_text(&ops, r->val);
     }
-    o2 = xasprintf("%cL%d(%s)", r->vcon ? 'V' : 'A', r->len, buf_cstr(&ops));
+    if (r->len == 8)
+        o2 = xasprintf("AD(%s)", buf_cstr(&ops));
+    else
+        o2 = xasprintf("%cL%d(%s)", r->vcon ? 'V' : 'A', r->len, buf_cstr(&ops));
     stmt(&x->out, label, "DC", o2);
     free(o2);
 }
@@ -1200,7 +1208,8 @@ static void emit_dxd(Ctx *x, const DPr *p) {
         warnf(x, "the alignment %d of %s is written as 8", p->align, p->name);
     if (al) buf_printf(&ops, "0%s", al);
     if (big) buf_printf(&ops, "%s%lldXL32768", ops.len ? "," : "", (long long)big);
-    if (rest || (!big && !al)) buf_printf(&ops, "%sXL%lld", ops.len ? "," : "", (long long)rest);
+    if (rest) buf_printf(&ops, "%sXL%lld", ops.len ? "," : "", (long long)rest);
+    else if (!big && !al) buf_puts(&ops, "0X"); /* a zero length modifier is an error */
     stmt(&x->out, p->name, "DXD", buf_cstr(&ops));
 }
 
@@ -1226,24 +1235,30 @@ static void emit_section(Ctx *x, DSect *s, size_t sect_idx) {
         DClass *c = s->classes.v[i];
         size_t k;
         for (k = 0; k < c->names.n; k++)
-            if (!c->names.v[k].sect && !c->names.v[k].zs) stmt(&x->out, NULL, "ENTRY", c->names.v[k].name);
+            if (!c->names.v[k].sect && !c->names.v[k].zs) {
+                const GoffBehavior *eb = &c->names.v[k].esd->attr;
+                const char *ea = amode_name(eb->amode), *er = rmode_name(eb->rmode);
+                stmt(&x->out, NULL, "ENTRY", c->names.v[k].name);
+                if (ea && eb->amode) stmt(&x->out, c->names.v[k].name, "AMODE", ea);
+                if (er && eb->rmode) stmt(&x->out, c->names.v[k].name, "RMODE", er);
+            }
     }
     for (i = 0; i < s->prs.n; i++) emit_dxd(x, s->prs.v[i]);
     for (i = 0; i < x->ers.n; i++) {
         DEr *er = x->ers.v[i];
         if (er->sect != s || !er->used) continue;
         stmt(&x->out, NULL, er->weak ? "WXTRN" : "EXTRN", er->name);
-        xattr_stmt(x, er->name, &er->esd->attr, er->weak ? GOFF_SCOPE_MODULE : GOFF_SCOPE_SECTION, 0);
+        xattr_stmt(x, er->name, &er->esd->attr, GOFF_SCOPE_UNSPEC, 0);
     }
-    if (s->ld && s->name) xattr_stmt(x, s->name, &s->ld->attr, GOFF_SCOPE_MODULE, class_exec(first));
+    if (s->ld && s->name) xattr_stmt(x, s->name, &s->ld->attr, GOFF_SCOPE_UNSPEC, first->ed->attr.executable);
     for (i = 0; i < s->classes.n; i++) {
         DClass *c = s->classes.v[i];
         size_t k;
         for (k = 0; k < c->names.n; k++)
             if (!c->names.v[k].sect && !c->names.v[k].zs)
-                xattr_stmt(x, c->names.v[k].name, &c->names.v[k].esd->attr, GOFF_SCOPE_MODULE,
-                           class_exec(c));
-        if (c->pr) xattr_stmt(x, c->part, &c->pr->attr, GOFF_SCOPE_UNSPEC, class_exec(c));
+                xattr_stmt(x, c->names.v[k].name, &c->names.v[k].esd->attr, GOFF_SCOPE_UNSPEC,
+                           c->ed->attr.executable);
+        if (c->pr) xattr_stmt(x, c->part, &c->pr->attr, GOFF_SCOPE_UNSPEC, c->ed->attr.executable);
     }
     for (i = 0; i < s->classes.n; i++) {
         DClass *c = s->classes.v[i];
