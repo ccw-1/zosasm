@@ -333,6 +333,16 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
             }                                                     \
         }                                                         \
     } while (0)
+    /* IBM HLASM (probe er1): every EXTRN and WXTRN makes an ER, used or not, below the
+     * section that was current at the statement */
+    for (i = 0; i < m->sym_order.n; i++) {
+        Symbol *x_ = m->sym_order.v[i];
+        Section *par_ = secs.v[0];
+        if (x_->kind != SYM_EXT) continue;
+        for (si = 0; si < secs.n; si++)
+            if (secs.v[si] == x_->ext_sect) par_ = secs.v[si];
+        NOTE(x_, par_);
+    }
     for (si = 0; si < secs.n; si++)
         for (ci = 0; ci < secs.v[si]->classes.n; ci++) {
             Class *c = secs.v[si]->classes.v[ci];

@@ -1263,7 +1263,18 @@ static void emit_section(Ctx *x, DSect *s, size_t sect_idx) {
     for (i = 0; i < s->prs.n; i++) emit_dxd(x, s->prs.v[i]);
     for (i = 0; i < x->ers.n; i++) {
         DEr *er = x->ers.v[i];
-        if (er->sect != s || !er->used) continue;
+        size_t q;
+        int folded = 0;
+        if (er->sect != s) continue;
+        /* IBM HLASM writes an ER for every EXTRN, used or not; an ER named like a label
+         * definition comes from R(label) and is made again by the assembler */
+        for (q = 0; q < x->m->esds.n; q++) {
+            const GoffESD *ld = x->m->esds.v[q];
+            if (ld->type == GOFF_LD && ld->name_len == er->esd->name_len &&
+                !memcmp(ld->name, er->esd->name, ld->name_len))
+                folded = 1;
+        }
+        if (folded) continue;
         stmt(&x->out, NULL, er->weak ? "WXTRN" : "EXTRN", er->name);
         xattr_stmt(x, er->name, &er->esd->attr, GOFF_SCOPE_UNSPEC, 0);
     }

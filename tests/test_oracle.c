@@ -314,6 +314,20 @@ static void test_object_rules(void) {
         e = find_esd(g, GOFF_ED, "B_TEXT");
         CHECK(e && e->attr.amode == GOFF_AMODE_31 && e->attr.rmode == GOFF_RMODE_31);
     }
+    /* every EXTRN/WXTRN is an ER, parent = section current at the statement */
+    g = emit_src("P1 CSECT\n DC A(XA)\nP2 CSECT\n EXTRN XA\n EXTRN XU\n WXTRN XW\n END\n");
+    if (g) {
+        const GoffESD *xa = find_esd(g, GOFF_ER, "XA"), *xu = find_esd(g, GOFF_ER, "XU"),
+                      *xw = find_esd(g, GOFF_ER, "XW"), *p2 = find_esd(g, GOFF_SD, "P2");
+        CHECK(xa && xu && xw && p2);
+        if (xa && xu && xw && p2) {
+            uint32_t p2id = 0;
+            size_t i;
+            for (i = 0; i < g->esds.n; i++)
+                if (g->esds.v[i] == p2) p2id = (uint32_t)i + 1;
+            CHECK(xa->parent == p2id && xu->parent == p2id && xw->parent == p2id);
+        }
+    }
     /* one-sided AMODE and RMODE */
     g = emit_src("A CSECT\nA RMODE ANY\n DC F'1'\nB CSECT\nB RMODE 64\n DC F'1'\n"
                  "C CSECT\nC AMODE 64\n DC F'1'\nD CSECT\nD RMODE 24\n DC F'1'\n END\n");

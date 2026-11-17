@@ -119,8 +119,9 @@ and entry AMODE/RMODE statements.
 
 Object comparison (`tools/oracle_obj.sh`, 2026-11-16) is clean for all probes `g1 g1x g2 g3 dc2b cat1 cn1 cn2 com1 lc1 lc2 am1 st1-st9`
 (except the accepted differences: B_IDRL, empty B_PRV, IDRL record, HDR level 0, END counts).
-Still open: ER parent section (HLASM: the section current at the EXTRN),
-HDR/END fields, V-con AMODE bit, long names, text over 56
+ER rule found 2026-11-16 (`er1` probe): HLASM makes an ER for every EXTRN/WXTRN, parent = section current at the statement; done.
+`tools/oracle_amb.sh NAME` (z/OS `amblist` on both objects): same content, only B_IDRL/IDRL/ESDID shift, END count, HDR level differ.
+Still open: HDR/END fields (accepted: zosasm writes real count, level 1), V-con AMODE bit, long names, text over 56
 bytes, `A(EXTA-A)` referent, extra `B_IDRL`/`B_PRV` classes of HLASM, 32-bit
 expression arithmetic of HLASM, literals, USING forms, ORG, `L.n`, `CU`, `CCW`,
 decimal float, macro-less directives (ACONTROL, PUSH/POP, OPSYN, PUNCH, COPY,

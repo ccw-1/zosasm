@@ -1426,8 +1426,8 @@ run). `tools/oracle.sh testdata/oracle/X.asm` repeats such a run (it needs
 `tools/oracle_cmp.py` compares the listing. Known differences that remain:
 HLASM does the arithmetic of expressions in 32 bits (zosasm in 64),
 HLASM writes some extra empty classes (`B_IDRL`, an empty `B_PRV`) that zosasm
-does not, and the parent section of an `EXTRN` is the section current at the
-statement in HLASM.
+does not, and HLASM writes the END record count as 0 and the architecture
+level of the HDR as 0 (zosasm writes the real count and level 1).
 
 A second oracle run compared the objects themselves (`tools/oracle_obj.sh`:
 `as -mgoff`, fetch the object, `zosasm -dump` of both, `tools/oracle_obj.py`
@@ -1441,7 +1441,13 @@ ER of the same name, `RMODE 31|ANY` alone gives `AMODE 31`, `RMODE 64` gives
 `AMODE 64`, `AMODE 64` gives `RMODE 31`, a `CSECT` statement resumes the last
 location counter of `B_TEXT`, and the location counters (`LOCTR`) of a class
 follow each other without padding, their items aligning to the final address
-(the assembly is repeated until the piece starts settle).
+(the assembly is repeated until the piece starts settle). Every `EXTRN` and
+`WXTRN` makes an external reference (ER), even when it is never used, and its
+parent is the section current at the statement (also when only an earlier
+section uses it). `tools/oracle_amb.sh NAME` runs the z/OS `amblist` on both
+objects as a second, independent reader; apart from the extra `B_IDRL` class,
+the IDRL record (which shifts the ESD ids), the END count and the HDR level,
+the decoded listings agree.
 
 **Not verified against IBM.** The
 following encodings were made from the documentation and from tests that

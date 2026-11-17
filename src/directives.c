@@ -644,6 +644,7 @@ void dir_extrn(Asm *a, Stmt *st) {
         if (created) {
             old->kind = SYM_EXT;
             old->weak = weak;
+            old->ext_sect = a->sect;
         }
     }
 }

@@ -39,7 +39,7 @@ def label(esd, i):
         return "esd%d" % i
     t = {0: "SD", 1: "ED", 2: "LD", 3: "PR", 4: "ER"}.get(e["typ"], str(e["typ"]))
     p = esd.get(e["par"])
-    if e["typ"] == 4 or not p:  # external references: the parent is not significant
+    if not p:
         return "%s:%s" % (t, e["name"])
     return "%s:%s@%s" % (t, e["name"], label(esd, e["par"]))
 

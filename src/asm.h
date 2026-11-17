@@ -164,6 +164,7 @@ struct Symbol {
     int used;
     uint32_t esd;    /* ER esdid */
     uint32_t ld_esd; /* LD esdid */
+    Section *ext_sect; /* EXTRN/WXTRN: the section current at the statement (parent of its ER) */
     uint32_t r_er;   /* ER esdid made for an R-type constant naming this local symbol */
     /* external dummy section (SYM_DXD, or a DSECT used in Q/J: xd) */
     int64_t xd_len;
