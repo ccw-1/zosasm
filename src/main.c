@@ -4,8 +4,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "asm.h"
+#include "dbg.h"
 #include "disasm.h"
 #include "goff.h"
 #include "listing.h"
@@ -16,7 +18,7 @@
 #include "zsym.h"
 
 static void usage(FILE *f) {
-    fprintf(f, "usage: zosasm [-o out.o] [-elf] [-ascii|-charset ascii|ebcdic] [-gz0|-gz1|-gz2] [-DNAME[=val]] [-Idir] [-Mdir] [-sysparm STR] [-macro-steps N] [-E] [-reproducible] [-strict-registers] [-l FILE [-ldata] [-lpage N] [-lbrief]] [-diag text|json] [-color] [-Werror] [-max-errors N] source.za\n"
+    fprintf(f, "usage: zosasm [-o out.o] [-elf] [-ascii|-charset ascii|ebcdic] [-gz0|-gz1|-gz2] [-g [-gdwarf FILE] [-gdir DIR] [-gmap FROM=TO] [-gdbgpath PATH]] [-DNAME[=val]] [-Idir] [-Mdir] [-sysparm STR] [-macro-steps N] [-E] [-reproducible] [-strict-registers] [-l FILE [-ldata] [-lpage N] [-lbrief]] [-diag text|json] [-color] [-Werror] [-max-errors N] source.za\n"
                "       zosasm -dump file.o\n"
                "       zosasm [-o out.za] -disasm file.o\n"
                "       zosasm [-o dir] -unpack file.o\n"
@@ -43,6 +45,13 @@ static void usage(FILE *f) {
                "                  the directory given with -o (default .)\n"
                "  -gz0|-gz1|-gz2  symbolic object information (ZSYM) in the object: none | symbols and\n"
                "                  statements (default) | also the original source files\n"
+               "  -g              also write FILE.dbg (DWARF, as z/OS as -g) and append the module that\n"
+               "                  links the object to it; the object is bound on z/OS, so the paths in\n"
+               "                  the debug information are those of the z/OS host:\n"
+               "  -gdwarf FILE    write the DWARF file here (default: the object name with .dbg)\n"
+               "  -gdir DIR       the z/OS directory that corresponds to the current directory\n"
+               "  -gmap FROM=TO   a path prefix of this machine and its z/OS counterpart (repeatable)\n"
+               "  -gdbgpath PATH  where the .dbg will be on z/OS (default: its path made with -gdir/-gmap)\n"
                "  -strict-registers  in a register position accept only %%r1 (any case; %%f %%a %%c %%v too)\n"
                "                  or a name made with NAME EQU %%r1, not plain numbers or other symbols;\n"
                "                  with -disasm the source is written that way\n"
@@ -73,6 +82,21 @@ static int do_dump(const char *path) {
         return 1;
     }
     goff_dump(m, stdout);
+    {
+        /* further modules (the debug link module written by -g) */
+        size_t at = m->bytes;
+        int k = 2;
+        while (at < n) {
+            GoffModule *m2 = goff_parse((const uint8_t *)b + at, n - at, &err);
+            if (!m2) {
+                fprintf(stderr, "zosasm: %s: module %d: %s\n", path, k, err);
+                return 1;
+            }
+            printf("\n=== module %d at byte %lu ===\n", k++, (unsigned long)at);
+            goff_dump(m2, stdout);
+            at += m2->bytes;
+        }
+    }
     {
         size_t zlen;
         uint8_t *z = zsym_extract(m, &zlen);
@@ -231,7 +255,9 @@ static char *default_output(const char *in) {
 
 int main(int argc, char **argv) {
     const char *out = NULL, *in = NULL, *disasm = NULL, *unpack = NULL;
-    int color = 0, json = 0, werror = 0, max_err = 50, i, only_pp = 0, zlevel = 1, generic = 0, elf = 0;
+    int color = 0, json = 0, werror = 0, max_err = 50, i, only_pp = 0, zlevel = 1, generic = 0, elf = 0, gflag = 0;
+    const char *gdwarf = NULL, *gdbgpath = NULL;
+    DbgOptions dopt;
     const char *charset = NULL;
     PpOptions ppo;
     SrcVec lines = {0};
@@ -247,6 +273,7 @@ int main(int argc, char **argv) {
 
     memset(&ppo, 0, sizeof ppo);
     memset(&lo, 0, sizeof lo);
+    memset(&dopt, 0, sizeof dopt);
     for (i = 1; i < argc; i++) {
         const char *a = argv[i];
         if (a[0] == '-' && a[1] == '-') a++; /* accept --flag too */
@@ -296,6 +323,27 @@ int main(int argc, char **argv) {
             charset = "ascii";
         } else if (!strcmp(a, "-charset") && i + 1 < argc) {
             charset = argv[++i];
+        } else if (!strcmp(a, "-g")) {
+            gflag = 1;
+        } else if (!strcmp(a, "-gdwarf") && i + 1 < argc) {
+            gdwarf = argv[++i];
+            gflag = 1;
+        } else if (!strcmp(a, "-gdir") && i + 1 < argc) {
+            dopt.gdir = argv[++i];
+            gflag = 1;
+        } else if (!strcmp(a, "-gdbgpath") && i + 1 < argc) {
+            gdbgpath = argv[++i];
+            gflag = 1;
+        } else if (!strcmp(a, "-gmap") && i + 1 < argc) {
+            char *m = xstrdup(argv[++i]), *eq = strchr(m, '=');
+            if (!eq || eq == m || !eq[1]) {
+                fprintf(stderr, "zosasm: -gmap takes FROM=TO\n");
+                return 2;
+            }
+            *eq = 0;
+            vec_push(&dopt.map_from, m);
+            vec_push(&dopt.map_to, eq + 1);
+            gflag = 1;
         } else if (!strcmp(a, "-gz0")) {
             zlevel = 0;
         } else if (!strcmp(a, "-gz1")) {
@@ -334,6 +382,10 @@ int main(int argc, char **argv) {
     }
     if (charset && strcmp(charset, "ascii") != 0 && strcmp(charset, "ebcdic") != 0) {
         fprintf(stderr, "zosasm: -charset takes ascii or ebcdic, not %s\n", charset);
+        return 2;
+    }
+    if (gflag && elf) {
+        fprintf(stderr, "zosasm: -g (z/OS debug information) cannot be combined with -elf\n");
         return 2;
     }
     za_ascii = charset ? !strcmp(charset, "ascii") : elf;
@@ -401,7 +453,38 @@ int main(int argc, char **argv) {
     }
     outname = out ? xstrdup(out) : default_output(in);
     f = fopen(outname, "wb");
-    if (!f || fwrite(obj, 1, olen, f) != olen || fclose(f) != 0) {
+    if (!f || fwrite(obj, 1, olen, f) != olen) {
+        fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
+        return 1;
+    }
+    if (gflag) {
+        DbgResult dr;
+        char *dbgname, cwd[4096];
+        const char *slash = strrchr(outname, '/'), *dot = strrchr(outname, '.');
+        size_t k = strlen(outname);
+        if (dot && (!slash || dot > slash)) k = (size_t)(dot - outname);
+        dbgname = gdwarf ? xstrdup(gdwarf) : xasprintf("%.*s.dbg", (int)k, outname);
+        dopt.cwd = getcwd(cwd, sizeof cwd) ? cwd : "";
+        dopt.main_file = in;
+        dopt.producer = xasprintf("zosasm %s", ZASM_VERSION_STR);
+        dopt.dbg_path = gdbgpath ? gdbgpath : dbg_host_path(&dopt, dbgname);
+        if (!dbg_build(mod, obj, olen, &dopt, &dr, err, sizeof err)) {
+            fprintf(stderr, "zosasm: %s: %s\n", in, err);
+            return 1;
+        }
+        if (fwrite(dr.mod2, 1, dr.mod2_len, f) != dr.mod2_len) {
+            fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
+            return 1;
+        }
+        {
+            FILE *df = fopen(dbgname, "wb");
+            if (!df || fwrite(dr.elf, 1, dr.elf_len, df) != dr.elf_len || fclose(df) != 0) {
+                fprintf(stderr, "zosasm: %s: %s\n", dbgname, strerror(errno));
+                return 1;
+            }
+        }
+    }
+    if (fclose(f) != 0) {
         fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
         return 1;
     }

@@ -241,7 +241,12 @@ GoffModule *goff_parse(const uint8_t *b, size_t len, const char **err) {
             vec_push(&recs, cur);
         }
         if (!more) cur->complete = 1;
+        if (typ == GOFF_T_END && !more) { /* end of the first module; more modules (debug) may follow */
+            len = off + GOFF_RECORD_LEN;
+            break;
+        }
     }
+    m->bytes = len;
     for (i = 0; i < recs.n; i++) {
         if (i == 0 && recs.v[i]->typ != GOFF_T_HDR) {
             *err = "goff: first record is not HDR";

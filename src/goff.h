@@ -141,6 +141,7 @@ typedef struct {
     GoffEnd end;
     uint32_t end_count; /* record count stored in END */
     int logical;        /* logical records seen */
+    size_t bytes;       /* bytes of the first module (a file may hold more modules) */
 } GoffModule;
 
 /* Parse an object; returns NULL and sets *err on failure. */

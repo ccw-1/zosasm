@@ -957,10 +957,13 @@ static void tool_assemble(const J *args, Buf *out) {
     int is_elf = 0, listing = jbool(args, "listing", 0), want_b64 = jbool(args, "object_base64", 0), gz;
     Buf text = {0}, st = {0};
     int first = 1;
-    unsigned char *obj = NULL;
-    size_t objlen = 0;
+    unsigned char *obj = NULL, *dbg = NULL;
+    size_t objlen = 0, dbglen = 0;
     long mx;
     const char *e;
+    const char *dwarf_out = jstr(args, "dwarf_output");
+    char *dbgfile = NULL;
+    int want_dwarf = jbool(args, "dwarf", 0);
 
     if (!tmp_open(&t)) { tool_fail(out, "cannot create a temporary directory"); return; }
     if ((e = write_files(&t, args)) != NULL) {
@@ -987,6 +990,36 @@ static void tool_assemble(const J *args, Buf *out) {
         }
         vec_push(&a, xasprintf("-gz%d", gz));
     }
+    if (want_dwarf) {
+        char **maps;
+        size_t nm, k;
+        int bad = 0;
+        if (is_elf) {
+            tmp_close(&t);
+            { tool_fail(out, "'dwarf' (z/OS debug information) cannot be combined with format \"elf\""); return; }
+        }
+        dbgfile = tmp_path(&t, ".dbg");
+        add_arg(&a, "-g");
+        add_arg(&a, "-gdwarf");
+        add_arg(&a, dbgfile);
+        if (jstr(args, "dwarf_dir")) {
+            add_arg(&a, "-gdir");
+            add_arg(&a, jstr(args, "dwarf_dir"));
+        }
+        if (jstr(args, "dwarf_dbgpath")) {
+            add_arg(&a, "-gdbgpath");
+            add_arg(&a, jstr(args, "dwarf_dbgpath"));
+        }
+        nm = str_array(args, "dwarf_map", &maps, &bad);
+        if (bad) {
+            tmp_close(&t);
+            { tool_fail(out, "'dwarf_map' must be an array of \"FROM=TO\" strings"); return; }
+        }
+        for (k = 0; k < nm; k++) {
+            add_arg(&a, "-gmap");
+            add_arg(&a, maps[k]);
+        }
+    }
     if (jbool(args, "werror", 0)) add_arg(&a, "-Werror");
     if (jbool(args, "reproducible", 0)) add_arg(&a, "-reproducible");
     mx = jint(args, "max_errors", -1);
@@ -1010,6 +1043,15 @@ static void tool_assemble(const J *args, Buf *out) {
     scrub(&r.out, &t);
 
     obj = r.status == 0 ? read_binary(objfile, &objlen) : NULL;
+    if (obj && dbgfile) {
+        dbg = read_binary(dbgfile, &dbglen);
+        if (dbg && dwarf_out && *dwarf_out && !write_whole(dwarf_out, dbg, dbglen)) {
+            buf_printf(&text, "zosasm succeeded but the debug file could not be written to %s: %s\n", dwarf_out,
+                       strerror(errno));
+            dwarf_out = NULL;
+            r.status = 1;
+        }
+    }
     if (obj && output && *output) {
         if (!write_whole(output, obj, objlen)) {
             buf_printf(&text, "zosasm succeeded but the object could not be written to %s: %s\n", output, strerror(errno));
@@ -1024,6 +1066,12 @@ static void tool_assemble(const J *args, Buf *out) {
         if (!output || !*output) {
             if (!want_b64) buf_puts(&text, "(the object was not kept: give 'output' to write it to a file or 'object_base64' to get it here)\n");
         }
+    }
+    if (dbg) {
+        buf_printf(&text, "debug file: %zu bytes (DWARF)%s%s\n", dbglen, dwarf_out && *dwarf_out ? ", written to " : "",
+                   dwarf_out && *dwarf_out ? dwarf_out : "");
+        if ((!dwarf_out || !*dwarf_out) && !jbool(args, "dwarf_base64", 0))
+            buf_puts(&text, "(the debug file was not kept: give 'dwarf_output' or 'dwarf_base64')\n");
     }
     diag_text(&text, "diagnostics (stderr)", &r.err);
     diag_text(&text, "standard output", &r.out);
@@ -1059,6 +1107,20 @@ static void tool_assemble(const J *args, Buf *out) {
             Buf b64 = {0};
             b64_encode(&b64, obj, objlen);
             w_key(&st, &first, "object_base64");
+            w_str(&st, b64.p ? b64.p : "", b64.len);
+        }
+    }
+    if (dbg) {
+        w_key(&st, &first, "dwarf_size");
+        buf_printf(&st, "%zu", dbglen);
+        if (dwarf_out && *dwarf_out) {
+            w_key(&st, &first, "dwarf_output");
+            w_cstr(&st, dwarf_out);
+        }
+        if (jbool(args, "dwarf_base64", 0)) {
+            Buf b64 = {0};
+            b64_encode(&b64, dbg, dbglen);
+            w_key(&st, &first, "dwarf_base64");
             w_str(&st, b64.p ? b64.p : "", b64.len);
         }
     }
@@ -1421,6 +1483,19 @@ static const char *tools_json(void) {
         "\"debug_info\":{\"type\":\"integer\",\"enum\":[0,1,2],\"description\":\"Symbolic information in a "
         "GOFF object (-gz): 0 none, 1 symbols and statements (default), 2 also the original sources. "
         "Ignored for ELF.\"},"
+        "\"dwarf\":{\"type\":\"boolean\",\"description\":\"Also make the debug information of z/OS "
+        "`as -g`: DWARF for dbx and LLDB in a separate .dbg file, plus a small link module appended to the "
+        "object (-g). Give 'dwarf_output' or 'dwarf_base64' to get the .dbg. Use 'dwarf_dir' to say where the "
+        "source and the .dbg will be ON Z/OS. Not with format elf. Guide chapter 21.\"},"
+        "\"dwarf_output\":{\"type\":\"string\",\"description\":\"File name to write the .dbg to.\"},"
+        "\"dwarf_base64\":{\"type\":\"boolean\",\"description\":\"Also return the .dbg base64 encoded in "
+        "'dwarf_base64'.\"},"
+        "\"dwarf_dir\":{\"type\":\"string\",\"description\":\"The z/OS directory that corresponds to the "
+        "current directory (-gdir); the .dbg path recorded in the object is made from it.\"},"
+        "\"dwarf_map\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Path "
+        "prefixes FROM=TO of this machine and the z/OS (-gmap).\"},"
+        "\"dwarf_dbgpath\":{\"type\":\"string\",\"description\":\"The z/OS path of the .dbg, at most 200 "
+        "bytes (-gdbgpath).\"},"
         "\"werror\":{\"type\":\"boolean\",\"description\":\"Treat warnings as errors (-Werror).\"},"
         "\"reproducible\":{\"type\":\"boolean\",\"description\":\"Fail on anything that makes the object "
         "differ between runs (-reproducible).\"},"

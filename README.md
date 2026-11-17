@@ -26,10 +26,11 @@ build/zosasm -l prog.lst -o prog.o prog.za  # assemble and write a listing
 build/hlasm2za old.asm                      # HLASM source -> zosasm source (old.za)
 build/zosasm -elf -o prog.o prog.za         # ELF64 s390x object for Linux on Z
 build/zafmt -i prog.za                      # format the source (guide chapter 20)
+build/zosasm -g -gdir /u/me -o prog.o prog.za  # also prog.dbg: debug info for dbx/LLDB (chapter 21)
 ```
 
 Options: `-o FILE`, `-DNAME[=VAL]`, `-Idir`, `-E`, `-dump FILE`,
-`-disasm FILE`, `-unpack FILE`, `-generic`, `-elf`, `-ascii`, `-charset NAME`, `-gz0`, `-gz1`, `-gz2`, `-reproducible`, `-strict-registers`,
+`-disasm FILE`, `-unpack FILE`, `-generic`, `-elf`, `-ascii`, `-charset NAME`, `-gz0`, `-gz1`, `-gz2`, `-g`, `-gdwarf`, `-gdir`, `-gmap`, `-gdbgpath`, `-reproducible`, `-strict-registers`,
 `-l FILE`, `-ldata`, `-lpage N`, `-lbrief`, `-version`, `-color`, `-max-errors N`, `-Werror`. Source files use the extension `.za`.
 
 Assembly time helpers (DESIGN.md sections 8 and 12): `sizeof(x)`,

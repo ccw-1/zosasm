@@ -86,6 +86,8 @@ void dir_copy(Asm *a, Stmt *st) {
 
 /* ---- statements -------------------------------------------------------- */
 
+int asm_is_directive(const char *upper_op) { return find_directive(upper_op) != NULL; }
+
 int asm_is_op(const char *upper_op) {
     size_t n;
     if (find_directive(upper_op)) return 1;

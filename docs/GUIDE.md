@@ -42,6 +42,7 @@ printed here is that file, and the test suite assembles each of them.
 18. For AI agents: the MCP server `zosasm-mcp`
 19. Macros: the C-like macro language
 20. Formatting source: `zafmt`
+21. Debug information for dbx and LLDB: `-g`
 
 ### Feature index
 
@@ -66,6 +67,7 @@ printed here is that file, and the test suite assembles each of them.
 | a subroutine, a table search, build variants | 15 | `linkage.za`, `table.za`, `config.za` |
 | convert existing HLASM source (columns, registers, `COPY`) | 16 | `hlasm-demo.asm`, `hlasm-demo.za` |
 | format `.za` source (columns, indentation of macros) | 20 | `linkage.za`, `cmacros.za` |
+| debug on z/OS with dbx or LLDB (`-g`, the `.dbg` file) | 21 | |
 | write objects for Linux on Z (ELF, ASCII text) | 17 | `linux-hello.za` |
 | let an AI agent assemble, inspect and read this guide (MCP) | 18 | |
 
@@ -1373,6 +1375,11 @@ zafmt [options] [file ...]          (chapter 20)
 | `-elf` | write a relocatable ELF64 object for Linux on Z instead of GOFF; implies `-ascii`, ignores `-gz` (section 17) |
 | `-ascii`, `-charset ascii\|ebcdic` | character set of `C'..'` constants and of the type attribute (default `ebcdic`; `ascii` with `-elf`) |
 | `-gz0`, `-gz1`, `-gz2` | symbolic information level (default `-gz1`) |
+| `-g` | also write `FILE.dbg` (DWARF for dbx and LLDB) and append the debug link module to the object (chapter 21) |
+| `-gdwarf FILE` | write the DWARF file to FILE (default: the object name with `.dbg`); implies `-g` |
+| `-gdir DIR` | the z/OS directory that corresponds to the current directory; implies `-g` |
+| `-gmap FROM=TO` | a path prefix of this machine and its z/OS counterpart, repeatable; implies `-g` |
+| `-gdbgpath PATH` | where the `.dbg` will be on z/OS, at most 200 bytes; implies `-g` |
 | `-generic` | with `-disasm`: ignore ZSYM |
 | `-reproducible` | fail on anything that makes the object differ between runs |
 | `-strict-registers` | registers only as `%r1` or an `EQU %r1` name (section 6.1); with `-disasm` the source is written that way |
@@ -2345,4 +2352,89 @@ by expanding the converted macro library before and after formatting).
 
 Not done: changing the case of names or operations, wrapping long operand
 lists, aligning `EQU` or `DC` columns across lines.
+
+## 21. Debug information for dbx and LLDB: `-g`
+
+z/OS `as -g -mgoff -o prog.o prog.asm` writes, next to the object, a file
+`prog.dbg` with DWARF, and puts a small link module into the object that
+names that file. dbx and the LLDB port find the DWARF through it after
+`ld` has made the program. `zosasm -g` does the same on any machine:
+
+```sh
+zosasm -g -gdir /u/me/proj -o prog.o prog.za     # writes prog.o and prog.dbg
+z-scp prog.o prog.dbg prog.za me@zos:/u/me/proj/ # tagged transfer, see below
+ssh zos 'cd /u/me/proj && ld -o prog prog.o && lldb prog'
+```
+
+`zosasm` is a cross assembler, so the paths written into the debug
+information must be those of the **z/OS host**, not of the machine that
+assembles:
+
+| option | meaning |
+|---|---|
+| `-g` | write the `.dbg` and append the link module |
+| `-gdwarf FILE` | name of the `.dbg` on this machine (default: the object name with `.dbg`) |
+| `-gdir DIR` | the z/OS directory that corresponds to the current directory. A source `sub/a.za` is recorded as `DIR/sub/a.za`, the `.dbg` as `DIR/prog.dbg` |
+| `-gmap FROM=TO` | files outside the current directory: a path prefix on this machine and the one on z/OS (several allowed, applied in order) |
+| `-gdbgpath PATH` | where the `.dbg` will be on z/OS, when it is not simply the name of the object under `-gdir` (at most 200 bytes) |
+
+Without `-gdir` the local absolute paths are recorded; that works when the
+files are mounted (or copied) under the same names. dbx and LLDB look for the
+`.dbg` at the recorded path first and then in their search directories
+(`target.debug-file-search-paths` in LLDB, `dbx -I` / `_DBX_USE_PATHNAME`), so a moved
+`.dbg` is found when its directory is given. The source is looked up at the
+recorded path too.
+
+**Transfer.** Both `.o` and `.dbg` are binary. The source must be tagged
+`ISO8859-1` (z-scp does that); an untagged source breaks `as`, and debuggers
+cannot show it.
+
+### 21.1 What is written
+
+* `prog.dbg`: an ELF32 big endian relocatable file (machine 22) with DWARF 4:
+  `.debug_info`, `.debug_abbrev`, `.debug_line`, `.debug_aranges`,
+  `.debug_pubnames` and IBM's `.debug_srcfiles` (the file table of the
+  `DW_TAG_IBM_src_file` entries), their `.rel.*` sections, and the symbols
+  `.text_cu1_id<N>` (one per CSECT or RSECT; the value is the offset of the
+  section in the `B_TEXT` class of the module) and `.ADATA_<32 hex>`, the
+  signature that ties the file to its object.
+* In the DWARF: one compile unit (`DW_LANG_IBM_Hlasm`, the producer is
+  `zosasm 0.1.0`); a `DW_TAG_subprogram` per CSECT/RSECT that has instructions;
+  a `DW_TAG_label` for every label in code; a `DW_TAG_variable` with
+  `DW_OP_addr` and a base or array type for every `DC`/`DS` label (the type
+  follows the type letter and the length: `int32`, `char[10]`, ...); the line
+  table with one sequence per section, one row per instruction (and `CNOP`);
+  all files that were read (`#include`, `COPY`-like) as separate file entries.
+  Statements that a macro generates are attributed to the line of the call.
+* In the object: a second GOFF module after the normal one, as `as -g` writes
+  it: the classes `D_@@ADBG_DBG` (part `DBGNAME`: length, the signature, the
+  EBCDIC path of the `.dbg`), `D_@@ADBG_MAP` (part `ENTRIES`, 32 bytes per CSECT)
+  and `D_@@ADBG_LIT`, and an ER for every CSECT. The binder accepts the file
+  as one input; `-dump` shows both modules, `-disasm` and `-unpack` read the
+  first one.
+* The signature is the MD5 of the first module and of the DWARF sections, so
+  the `.dbg` matches only its own object.
+
+### 21.2 Checked and not checked
+
+Verified on z/OS 2.5 (pok56, 2026-11): the object links with `/bin/ld`; IBM
+`dwarfdump -i -l` reads the `.dbg`; the LLDB port loads it through CDA and
+sets breakpoints by file and line, shows the source, steps, makes a back
+trace through several CSECTs, and the module of a source that includes a
+second file resolves lines in both files; the module structure agrees with
+the one of `as -g` (ESD attributes, text, relocations) except for the
+signature, the producer and the CSECT numbering. dbx 2.4 on that system
+shows no symbols for modules made by `as -g` either, so it could not be used
+as a reference.
+
+Not the same as `as -g`:
+
+* The DWARF is zosasm's own. The producer string differs; the line program
+  header is version 3 and has a file table, where IBM's has an empty one and
+  names the file with a vendor opcode; types are limited to integers, bytes
+  and arrays of them (no DSECT structure types, no `EQU` constants).
+* The `.dbg` has no symbols for the `B_IDRL` and `B_PRV` classes (IBM's has
+  them, with size 0).
+* `-g` and `-elf` exclude each other (ELF objects have no GOFF link module).
+* DBGNAME holds at most 200 bytes of path.
 

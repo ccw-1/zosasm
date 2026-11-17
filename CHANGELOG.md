@@ -4,6 +4,14 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 `vX.Y.Z`. Things not compared with IBM's tools are marked in the User's Guide
 (section 14).
 
+## Unreleased
+
+* `-g`, `-gdwarf`, `-gdir`, `-gmap`, `-gdbgpath`: debug information as z/OS `as -g`
+  writes it (a `.dbg` file with DWARF 4 plus the `D_@@ADBG_*` link module appended to
+  the object); MCP `zosasm_assemble` parameters `dwarf*`; guide chapter 21, DESIGN 21.
+  Checked with `ld`, `dwarfdump` and LLDB on z/OS, not with dbx.
+* `-dump` shows every module of a file; the readers use the first module.
+
 ## 0.1.0 - 2026-11-17
 
 First versioned release.

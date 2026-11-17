@@ -1272,3 +1272,53 @@ keeps it out of the library objects like `main.c`.
   blanks apart) with the arguments none, `A,B,C` and `X=1,Y=2`; the 18 sources under `docs/` and
   `testdata/` assemble to the same objects (`__FILE__` aside).
 
+
+## 21. Debug information of `-g` (`src/dbg*.c`, `src/md5.c`)
+
+Aim: what z/OS `/bin/as -g -mgoff` produces, written by a cross assembler, usable by dbx and the
+LLDB port (`CDADwarf.cpp`) after `ld`. The reference outputs were made on pok56 with probes of one
+CSECT, data only, several CSECTs, `COPY`/macros (2026-11, not committed; wiki `hlasm-dwarf.md`).
+Not byte-compatible with HLASM on purpose: the DWARF is zosasm's own, the container conventions
+that CDA needs are kept.
+
+* **Order** (`main.c`): assemble, `module_emit` (module 1, sets `Class.esd`), `dbg_build`, append
+  module 2 to the object file, write the `.dbg`. `dbg_build` needs the emitted object because the
+  signature covers it.
+* **`dbg.c`**: `collect` reads the `Module` after assembly. Sections: named CSECT/RSECT only.
+  Rows: the `ZRec`s of machine instructions and `CNOP`, sorted and deduplicated (`Stmt.file`/`line`
+  are the macro call line for generated statements and the file of a `#include`). Labels and
+  variables: symbols whose definition is a statement of the section; `DC`/`DS` labels become
+  variables with a type from the type letter, length and count (base type or array). `build_mod2`
+  writes the link module; `dbg_host_path` normalizes and maps paths (`-gdir`, `-gmap`).
+* **`dbg_dwarf.c`**: DWARF 4 big endian, address size 8. CU DIE with the IBM attributes
+  (`0x390f` source file, language `0xde00`), subprograms only for sections with instructions
+  (data-only sections put labels and variables at CU level), `.debug_line` version 3 with
+  `min_inst_length` 2 and one sequence per section, `.debug_srcfiles` units as IBM writes them
+  (length = payload + 1, abbrev code 1, a pad byte, tags `0xde15` directory / `0xde10` file).
+* **Addresses.** CDA relocates a `.text_cu1_id<N>` reference as `base of the module's B_TEXT +
+  in-place value` (the symbol value is cancelled). A section therefore carries its offset in the
+  in-place value of every address (`DSect.base`: the binder concatenates the `B_TEXT` EDs of the
+  CSECTs in order, each aligned like the ED, doubleword by default) and the symbol value is the
+  same offset. With the offset only in the symbol value LLDB put the second and later CSECTs at
+  address 0 (tested on pok56). Module 1 stays as `module_emit` writes it (ED offset 0 for every
+  section); IBM's object has module-relative ED offsets, which are not needed for the binder.
+* **`dbg_elf.c`**: ELF32 BE `ET_REL`, section and symbol order of IBM's file: null, `.text` (NOBITS,
+  `sh_link` 0xFFF2 as IBM writes it), the debug sections, `.rel.*`, `.strtab`, `.symtab`,
+  `.shstrtab`; symbols null, FILE, `.text_cu1_id<N>`, `.ADATA_<hex>`, section symbols, null. **The
+  section header table must be 8-byte aligned**: z/OS libelf answers "Unsupported file format"
+  (dwarfdump) / the CDA load fails (LLDB) otherwise, while an unaligned table made by simply
+  appending it after `.shstrtab` is accepted by GNU readelf.
+* **Link module** (`build_mod2`): SD `" "`, EDs `B_IDRL`, `B_PRV`, `B_TEXT`, `D_@@ADBG_DBG`
+  (PR `DBGNAME`: padded length, 16 byte signature, EBCDIC path, NUL), `D_@@ADBG_MAP` (PR `ENTRIES`,
+  32 bytes per CSECT: RLD to the ER, RLD to DBGNAME, a hash of `.text_cu1_id<N>` (ELF/PJW hash of
+  the EBCDIC name, N = ESD id of the section's `B_TEXT` ED in module 1), RLD to the name in `LIT`),
+  `D_@@ADBG_LIT` (PR `LIT`, the names), one ER per CSECT. The layout equals IBM's (`-dump` of both
+  compared for several programs: ESDs, text, RLDs).
+* **Signature**: MD5 over module 1 and the DWARF sections; the hex form is the `.ADATA_` symbol.
+  LLDB accepts a `.dbg` only if this symbol equals the 16 bytes in DBGNAME.
+* **Reading**: `goff_parse` stops at the first END record (`GoffModule.bytes`), so `-disasm`,
+  `-unpack` and the other readers see module 1 of a `-g` object; `-dump` loops over all modules.
+* **Not done**: types of DSECTs (structure types), `EQU` constants, `USING` ranges as DWARF
+  scopes, ADATA. dbx 2.4 on pok56 shows no symbols for IBM's own HLASM modules either, so dbx is
+  untested; `dwarfdump -i -l` and LLDB were used (tests `tests/test_dbg.c`, CLI tests, manual
+  runs `up.sh`-style: assemble, z-scp, `ld`, `lldb -b`).

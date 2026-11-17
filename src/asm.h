@@ -551,6 +551,7 @@ void dir_pushpop(Asm *a, Stmt *st);
 void dir_repro(Asm *a, Stmt *st);
 void dir_opsyn(Asm *a, Stmt *st);
 int asm_is_op(const char *upper_op); /* a directive or instruction */
+int asm_is_directive(const char *upper_op);
 void dir_punch(Asm *a, Stmt *st);
 size_t asm_directive_names(const char *const **names);
 
