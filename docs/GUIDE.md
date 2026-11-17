@@ -623,7 +623,12 @@ probes in `testdata/oracle/` on z/OS with `tools/oracle.sh` (section 14).
 `=F'100'` (or any DC operand after `=`) in an instruction operand stores the
 constant in a literal pool and uses its address. The pool is written at the
 next `LTORG` or, failing that, at `END`. Identical literals are shared; the
-pool is doubleword aligned and sorted by alignment 8, 4, 2, 1. A literal must
+pool is doubleword aligned. Like HLASM it is ordered by the **length** of
+the literal: lengths that are a multiple of 16 first, then 8, 4, 2 and the
+rest, in order of appearance inside each group (`=XL4'1'` is in the group 4,
+`=CL3'A'` in the last). A `*` in a literal is the address of the instruction
+that uses it (`L 1,=A(*)`), and such a literal is never shared. A literal
+ must
 be reachable from a `USING`, so put an `LTORG` close to the code that uses it
 if the program is longer than 4096 bytes.
 

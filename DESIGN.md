@@ -174,7 +174,7 @@ Only `ENTRY` labels become LDs.
 Literals (`=F'1'`, `=CL8'TEXT'`) are collected per pool. `LTORG` closes the
 pool (doubleword aligned, constants ordered by alignment 8,4,2,1, identical
 literal text shared); the last pool is placed at `END` at the end of the
-first control section. Literals become DC statements with generated labels
+first control section. Pool order follows HLASM (probes lt1-lt4): by the length of the literal, a multiple of 16, 8, 4, 2, else 1, stable inside a group (`asm_close_pool`, lengths from `dc_values` in DS mode); a `*` term is rewritten to a hidden label `$LSn` defined at the instruction and the literal is unique (`star_rewrite`, `Literal.shown` keeps the text for the listing). Literals become DC statements with generated labels
 `$LTn_m`, so the rest of the assembler needs no special case.
 
 The GOFF ESD record layout, behavioral attribute byte layout and RLD flag

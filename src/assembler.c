@@ -963,6 +963,7 @@ static void each(Asm *a) {
     a->usings.n = 0;
     a->using_id = 0;
     a->pool_no = 0;
+    a->star_no = 0;
     a->strict = za_strict_registers;
     a->afpr = 1;
     a->print_depth = 0;

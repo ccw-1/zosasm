@@ -25,7 +25,7 @@ static LitPool *cur_pool(Asm *a) {
     return a->pools.v[a->pool_no];
 }
 
-static const char *literal_label(Asm *a, Stmt *st, Operand o, const char *key) {
+static const char *literal_label(Asm *a, Stmt *st, Operand o, const char *key, const char *shown) {
     LitPool *p = cur_pool(a);
     Literal *l;
     Span sp;
@@ -46,6 +46,7 @@ static const char *literal_label(Asm *a, Stmt *st, Operand o, const char *key) {
     }
     l = xcalloc(sizeof *l);
     l->key = xstrdup(key);
+    l->shown = shown ? xstrdup(shown) : NULL;
     l->name = xasprintf("$LT%d_%d", a->pool_no, (int)p->lits.n);
     l->sp = sp;
     lo = o.off;
@@ -77,6 +78,30 @@ static const char *literal_label(Asm *a, Stmt *st, Operand o, const char *key) {
     return l->name;
 }
 
+/* IBM HLASM: a location counter reference (*) in a literal is the address of
+ * the instruction that uses the literal, and such a literal is never shared.
+ * The * terms are replaced by a hidden label at the instruction; NULL when
+ * the literal has none. A * is a term when it follows nothing, ( , + - * / or
+ * the equal sign, and is not inside quotes. */
+static char *star_rewrite(const char *key, const char *name) {
+    Buf b = {0};
+    int inq = 0, found = 0;
+    char prev = '=';
+    const char *p;
+    for (p = key; *p; p++) {
+        if (*p == '\'') inq = !inq;
+        if (!inq && *p == '*' && strchr("(,+-*/=", prev)) {
+            buf_puts(&b, name);
+            found = 1;
+        } else {
+            buf_putc(&b, *p);
+        }
+        if (!is_blank((unsigned char)*p)) prev = *p;
+    }
+    if (!found) return NULL;
+    return xstrdup(buf_cstr(&b));
+}
+
 /* Replace literal operands of an instruction by the labels of the
  * constants. */
 void asm_literal_operands(Asm *a, Stmt *st, OperandVec *ops) {
@@ -87,13 +112,35 @@ void asm_literal_operands(Asm *a, Stmt *st, OperandVec *ops) {
             free(key);
             continue;
         }
-        ops->v[i].text = (char *)literal_label(a, st, ops->v[i], key);
+        {
+            char *name = xasprintf("$LS%d", a->star_no);
+            char *k2 = star_rewrite(key, name);
+            if (k2) {
+                a->star_no++;
+                if (a->pass == 1 && a->cur && a->sect && a->sect->kind != K_DSECT) {
+                    Stmt *h = xcalloc(sizeof *h);
+                    asm_align(a, 2);
+                    h->file = st->file;
+                    h->line = st->line;
+                    h->name = name;
+                    h->name_span = st->op_span;
+                    h->op = "EQU";
+                    h->op_span = st->op_span;
+                    h->operands = "";
+                    h->remark = "";
+                    asm_define_label(a, h, 4, 'I');
+                }
+                ops->v[i].text = (char *)literal_label(a, st, ops->v[i], k2, key);
+            } else {
+                ops->v[i].text = (char *)literal_label(a, st, ops->v[i], key, NULL);
+            }
+        }
         free(key);
     }
 }
 
 /* Assemble the literals of the current pool at the location counter. Pool
- * constants are ordered by alignment, largest first. */
+ * constants are ordered by the alignment of their length, largest first. */
 void asm_close_pool(Asm *a) {
     LitPool *p = cur_pool(a);
     size_t i;
@@ -112,7 +159,20 @@ void asm_close_pool(Asm *a) {
             align[i] = 1;
             o.text = p->lits.v[i]->st->operands;
             o.off = 0;
-            if (dc_parse(a, p->lits.v[i]->st, o, &sp) && !sp.has_len) align[i] = dc_alignment(&sp);
+            if (dc_parse(a, p->lits.v[i]->st, o, &sp)) {
+                /* IBM HLASM (probe lt1): the pool is ordered by the length of the
+                 * literal (multiple of 16, 8, 4, 2, else 1), not by its type alignment */
+                DcVec vals = {0};
+                if (!sp.bits && dc_values(a, p->lits.v[i]->st, &sp, 1, &vals)) {
+                    int64_t total = 0;
+                    size_t j;
+                    for (j = 0; j < vals.n; j++) total += (int64_t)vals.v[j].n;
+                    total *= sp.dup;
+                    align[i] = total % 16 == 0 && total > 0 ? 16 : total % 8 == 0 && total > 0 ? 8 : total % 4 == 0 ? 4 : total % 2 == 0 ? 2 : 1;
+                } else if (!sp.has_len) {
+                    align[i] = dc_alignment(&sp);
+                }
+            }
         }
         a->rep = save;
         for (i = 0; i < p->lits.n; i++) p->lits.v[i]->st->bad = 0; /* the real run reports */
@@ -147,7 +207,7 @@ void asm_close_pool(Asm *a) {
                 r.cls = a->cur->cls;
                 r.off = a->cur->start + loc0 + a->lead_pad;
                 r.len = a->cur->loc - loc0 - a->lead_pad;
-                r.key = l->key;
+                r.key = l->shown ? l->shown : l->key;
                 r.owner = a->lit_owner == (size_t)-1 ? a->mod->zrecs.n : a->lit_owner;
                 vec_push(&a->mod->lits, r);
             }

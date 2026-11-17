@@ -292,6 +292,31 @@ static void test_dc_rules(void) {
 
 /* the object conventions found with tools/oracle_obj.sh (probes cat1, cn1, com1, am1,
  * lc1, st5, st6, st8, st9) */
+/* HLASM literal pool: ordered by the length of the literal (16, 8, 4, 2, 1), in order of
+ * appearance inside a group (probes lt1, lt3); * in a literal is the address of the
+ * instruction and the literal is not shared (lt4) */
+static void pool_is(const char *body, const char *want) {
+    Reporter *rep;
+    char *text = xasprintf("T CSECT\n USING T,15\n%s END\n", body);
+    Module *m = assemble(text, &rep);
+    char hex[256];
+    hex[0] = 0;
+    CHECK_MSG(m != NULL, "assembly failed");
+    if (m) {
+        Class *k = m->sections.v[0]->classes.v[0];
+        int64_t i;
+        for (i = 0; i < k->len && 2 * (size_t)i + 3 < sizeof hex; i++) sprintf(hex + 2 * i, "%02X", k->data[i]);
+    }
+    CHECK_MSG(!strcmp(hex, want), "pool %s, want %s", hex, want);
+}
+
+static void test_literal_pool(void) {
+    pool_is(" L 1,=XL2'1'\n L 1,=XL8'2'\n L 1,=XL4'3'\n L 1,=XL16'4'\n L 1,=XL3'5'\n",
+            "5810F0345810F0285810F0305810F0185810F036" "00000000"
+            "00000000000000000000000000000004" "0000000000000002" "00000003" "0001" "000005");
+    pool_is(" L 1,=A(*)\n L 1,=A(*)\n", "5810F0085810F00C" "0000000000000004");
+}
+
 static void test_object_rules(void) {
     GoffModule *g;
     const GoffESD *e, *prv, *pr;
@@ -405,5 +430,6 @@ int main(void) {
     test_elf_relimm();
     test_dc_rules();
     test_object_rules();
+    test_literal_pool();
     TEST_MAIN_END();
 }

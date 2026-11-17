@@ -418,6 +418,7 @@ typedef Vec(FuncUse) FuncUseVec;
 
 typedef struct {
     char *key;  /* operand text including '=' */
+    char *shown; /* the text as written when key differs (* terms), else NULL */
     char *name; /* generated label */
     Span sp;
     Stmt *st; /* synthetic DC statement */
@@ -456,6 +457,7 @@ struct Asm {
     StrMap secs;
     PoolVec pools;
     int pool_no;
+    int star_no; /* literals with a location counter reference in this pass */
     XdRefVec xdrefs;  /* names used by Q and J constants, resolved after pass 1 */
     FuncUseVec fuses; /* sizeof/alignof of DSECTs seen in pass 1 */
     size_t cur_idx;   /* index of the statement being assembled */
@@ -595,6 +597,7 @@ void asm_put_val(Asm *a, const DcVal *v);
 int64_t dc_alignment(const DcSpec *sp);
 int64_t dc_deflen(const DcSpec *sp);
 int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp);
+int dc_values(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, DcVec *vals);
 Diag *dc_err(Asm *a, Stmt *st, const char *code, int off, int n, const char *fmt, ...);
 void split_nominal(const DcSpec *sp, OperandVec *out);
 void be_bytes(uint64_t v, int n, uint8_t *out);

@@ -1093,7 +1093,7 @@ static int dc_decimal(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
 }
 
 /* the values of one parsed operand; for DS the data is only sized */
-static int dc_values(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, DcVec *vals) {
+int dc_values(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, DcVec *vals) {
     int ok = 0;
     size_t i;
     if (!sp->has_nom) {
