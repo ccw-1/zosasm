@@ -1358,6 +1358,7 @@ zosasm -dump file.o
 zosasm [-generic] [-o out.za] -disasm file.o
 zosasm [-o dir] -unpack file.o
 hlasm2za [options] input.asm        (section 16)
+zafmt [options] [file ...]          (chapter 20)
 ```
 
 | option | meaning |
@@ -1698,6 +1699,7 @@ a bad command line.
 | `COPY name` | `#include "name.inc"` (lower case); convert the member itself with `hlasm2za -o name.inc` |
 | `ISEQ` | dropped |
 | `MACRO` ... `MEND` | a zosasm `#macro` (section 16.4); `-comment-macros`: one `*` line per source line |
+| `SETA`, `SETB`, `SETC`, `LCLx`, `GBLx`, `AIF`, `AGO`, `ANOP` in open code | everything from the first such statement on becomes the macro `OPENCODE` and one call of it (section 16.5) |
 
 An example. The HLASM input (72 columns, a continued operand and a continued
 string):
@@ -1802,9 +1804,9 @@ line.
   variable other than the ones of section 16.4) is commented out and
   reported. Calls of **system macros** (`SAVE`, `RETURN`, `WTO`, `GETMAIN`,
   `STORAGE`, `SYSSTATE`...) are reported as "not an instruction or directive
-  (a macro call?)"; the macro library is not available to zosasm, so write
-  what they expand to, or convert the macro library with `-macro-dir` and
-  give the result to `zosasm -M`.
+  (a macro call?)"; zosasm has no IBM macro library of its own, so write
+  what they expand to, or convert the macro library you have with
+  `-macro-dir` and give the result to `zosasm -M`.
 * **Conditional assembly outside a macro** is converted since 2026-11-16
   (section 16.5, not compared with HLASM beyond one program); only the
   statements of `SETAF`, `SETCF`, computed `AGO`, created `&(` names and
@@ -1884,8 +1886,8 @@ What the converter does with a definition:
 Every conversion was checked by expanding the flat and the structured form
 with many argument sets: the output must be identical (`tests/test_mconv.c`,
 and the same check over a whole library with `make test-maclib`). Nothing was
-compared with HLASM itself, which was not available; read the result of a
-macro that matters against its source.
+compared with HLASM itself, except through one program (section 16.5); read the
+result of a macro that matters against its source.
 
 
 ---
