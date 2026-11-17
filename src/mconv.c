@@ -969,9 +969,9 @@ static int simple_ref(const char *t) {
 }
 
 /* The model text of one field: &refs written as &name or &{expr}, the rest case folded. */
-static char *model_text(MC *m, const char *s) {
+static char *model_text(MC *m, const char *s, int nofold) {
     Buf b = {0};
-    Vec(char *) reps = {0};
+    Vec(char *) reps = {0}, folds = {0};
     size_t i = 0, k;
     char *f, *r;
     Buf out = {0};
@@ -994,7 +994,11 @@ static char *model_text(MC *m, const char *s) {
                     vec_push(&reps, xasprintf("&%s", e.txt));
                 else
                     vec_push(&reps, xasprintf("&{%s}", e.txt));
-                buf_printf(&b, "_\x01%u\x02", (unsigned)(reps.n - 1));
+                /* HLASM folds the statement to upper case after the substitution, except
+                 * inside quotes: a string value gets upper(); the lower case marker x in the
+                 * placeholder tells conv_fold's verdict (X outside quotes) */
+                vec_push(&folds, e.ty == T_STR && !nofold ? xasprintf("&{upper(%s)}", e.txt) : NULL);
+                buf_printf(&b, "_\x01x%u\x02", (unsigned)(reps.n - 1));
             } else if (s[i + 1] == '(') {
                 fail(m, "a created set symbol (&(...)) is not converted");
                 buf_putc(&b, '&');
@@ -1010,10 +1014,10 @@ static char *model_text(MC *m, const char *s) {
     }
     f = conv_fold(buf_cstr(&b));
     for (i = 0; f[i]; i++) {
-        if (f[i] == '_' && f[i + 1] == '\x01') {
-            k = (size_t)strtoul(f + i + 2, &r, 10);
+        if (f[i] == '_' && f[i + 1] == '\x01' && (f[i + 2] == 'x' || f[i + 2] == 'X')) {
+            k = (size_t)strtoul(f + i + 3, &r, 10);
             if (*r == '\x02' && k < reps.n) {
-                buf_puts(&out, reps.v[k]);
+                buf_puts(&out, f[i + 2] == 'X' && folds.v[k] ? folds.v[k] : reps.v[k]);
                 i = (size_t)(r - f);
                 continue;
             }
@@ -1167,9 +1171,11 @@ static void conv_mnote(MC *m, const MHStmt *s) {
 
 static void conv_model(MC *m, const MHStmt *s) {
     Buf b = {0};
-    char *nm = s->name[0] && s->name[0] != '.' ? model_text(m, s->name) : NULL;
-    char *op = model_text(m, s->op);
-    char *opd = s->operands[0] ? model_text(m, s->operands) : NULL;
+    /* a macro call passes its operands on as written: the called macro folds them */
+    int call = !strchr(s->op, '&') && !asm_is_op(conv_fold(s->op));
+    char *nm = s->name[0] && s->name[0] != '.' ? model_text(m, s->name, call) : NULL;
+    char *op = model_text(m, s->op, 0);
+    char *opd = s->operands[0] ? model_text(m, s->operands, call) : NULL;
     size_t w = nm ? strlen(nm) + 3 : 0;
     if (opd && opd[strlen(opd) - 1] == ',') opd = xasprintf("%s&{\"\"}", opd); /* HLASM ends the operands here; zosasm would continue */
     if (nm && nm[0] == '#') { /* a name starting with # would read as a macro statement */

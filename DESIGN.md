@@ -1100,6 +1100,18 @@ members that are not valid HLASM. A
 `#goto` that leaves a nested loop towards a label after it is written by the
 dispatch loop, not as a labelled `#break`.
 
+**Open code (2026-11-16, unverified except wr3.asm).** `convert.c` `ca_start`,
+`open_push`, `open_finish`: from the first conditional assembly statement on,
+all statements and comments are collected in `Conv.open` and handed to
+`mconv_macro` as the macro `OPENCODE` (prototype, statements, MEND); the
+result is emitted as the `#macro` text and the call line. On failure the
+original lines are commented out with a warning. `model_text` folds the
+verdict of `conv_fold`: a string variable outside quotes becomes
+`&{upper(expr)}` (placeholder `_\x01x<k>\x02`, lower case `x` = `conv_fold`
+left it unchanged, so it was outside quotes) except in the fields of a
+statement whose operation is not an instruction or directive (`asm_is_op`):
+a macro call passes its operands on as written.
+
 ## 17. ELF output and the ASCII character set (`src/elf.c`, `src/ebcdic.c`)
 
 **Why.** The assembler model (sections, classes, relocations with a symbol or

@@ -66,7 +66,7 @@ Status key: [x] done, [-] in progress, [ ] open.
       pairs) derived from the POP prose; the table has no pair information
 - [ ] `-diag-format=json`, warning classes, `-Werror`
 - [x] listing file (`-l`), symbol cross reference (DESIGN.md 15)
-- [x] HLASM source -> zosasm source converter `hlasm2za` (DESIGN.md 16; macros, conditional assembly and `COPY` members are not converted)
+- [x] HLASM source -> zosasm source converter `hlasm2za` (DESIGN.md 16; macros and open-code conditional assembly are converted, `COPY` members are not)
 - [x] ELF64 output for Linux on Z (`-elf`, `-ascii`, `-charset`; DESIGN.md 17; checked with binutils, not run on a machine)
 - [x] MCP server `zosasm-mcp` for AI agents (tools, guide as resource; guide 18, DESIGN.md 18)
 - [x] macro language M1 (C-like braces, `&` substitution, `-M` library, guide 19; MACRO.md, DESIGN.md 19; not compared with HLASM)

@@ -193,9 +193,14 @@ static void test_unconverted(void) {
     /* a macro that cannot be converted is commented out with the reason */
     r = conv("         MACRO\n         PUN\n         LCLA &A\n&A       SETAF 'X'\n         MEND\n");
     CHECK(strstr(r, "*          MACRO\n") != NULL);
-    /* conditional assembly stays and is reported */
-    CHECK(warns("         AIF (&X).A\n") == 1);
-    CHECK(warns(".A       ANOP\n") == 1);
+    /* open code conditional assembly becomes a macro OPENCODE that is called in place */
+    r = conv("         LCLA  &I\n&I       SETA  1\n&N       SETC  'wr'\nL&N      DS    0H\n         AIF   (&I EQ 2).X\n"
+             "         LR    1,2\n.X       ANOP\n         END\n");
+    CHECK_MSG(strstr(r, "#macro OPENCODE() {") != NULL && strstr(r, "\n         OPENCODE\n") != NULL, "open code:\n%s", r);
+    CHECK_MSG(strstr(r, "upper(") != NULL, "open code: the SETC value is folded to upper case:\n%s", r);
+    CHECK(warns("         LCLA  &I\n&I       SETA  1\n") == 0);
+    CHECK(warns("         AIF (&X).A\n") == 2); /* &X is not declared, .A is not defined */
+    CHECK(warns("         SETAF 'X'\n") >= 1);
     CHECK(warns(" OPSYN X\n") == 1);
     /* an unknown operation (a macro call) */
     CHECK_STR(conv(" WTO 'x'\n"), "         WTO   'x'\n");

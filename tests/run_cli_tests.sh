@@ -215,7 +215,8 @@ $H -o - docs/examples/hlasm-demo.asm 2>/dev/null | cmp -s - docs/examples/hlasm-
 $X -strict-registers -Werror -o $T/demo.o docs/examples/hlasm-demo.za 2>/dev/null; check "hlasm-demo.za assembles with -strict-registers" $? 0
 $H -comment-macros -o $T/nc.za testdata/hlasm/notconv.asm 2>$T/err; check "hlasm2za with unconvertible statements: exit 0" $? 0
 grep -q 'notconv.asm:3: warning: macro definition commented out' $T/err; check "hlasm2za reports the macro" $? 0
-grep -q 'notconv.asm:9: warning: AIF is conditional assembly' $T/err; check "hlasm2za reports AIF" $? 0
+grep -q 'notconv.asm:9: warning: &X is not declared' $T/err; check "hlasm2za converts AIF in open code and reports the undeclared variable" $? 0
+grep -q '^#macro OPENCODE() {' $T/nc.za; check "hlasm2za wraps open code conditional assembly in OPENCODE" $? 0
 grep -q '^#include "myregs.inc"$' $T/nc.za; check "COPY becomes #include" $? 0
 $H -q -comment-macros -o $T/nc.za testdata/hlasm/notconv.asm 2>$T/err; [ ! -s $T/err ]; check "hlasm2za -q" $? 0
 # macros: converted by default, MACRO..MEND to #macro

@@ -70,6 +70,9 @@ typedef struct {
     StrMap dirs;   /* known directives */
     StrMap macros; /* macros defined in this file: 1 commented out, 2 converted */
     StrMap noted;  /* keys already warned about */
+    MHStmtVec open; /* open code from the first conditional assembly statement on */
+    size_t open_first; /* its first line index */
+    int wrapping;
     Buf out;
 } Conv;
 
@@ -573,6 +576,77 @@ static void macro_def(Conv *c, size_t macro_first, size_t *pi) {
     *pi = i;
 }
 
+/* Open code conditional assembly: from the first statement that uses it to the end of the
+ * source, the statements become the body of a macro OPENCODE (converted like any macro) that
+ * is called in place. IBM HLASM substitutes variables in every statement of open code; the
+ * macro language of zosasm does so only inside macros. */
+static int ca_start(const char *fp, const Fields *f) {
+    return in_list(CASTMT, fp) || f->name[0] == '.' || f->name[0] == '&' || f->op[0] == '&' ||
+           has_amp(f->name) || has_amp(f->operands);
+}
+
+static void open_push(Conv *c, int line, int kind, const char *name, const char *op, const char *operands,
+                      const char *remark, char *text) {
+    MHStmt s;
+    memset(&s, 0, sizeof s);
+    s.line = line;
+    s.kind = kind;
+    s.name = (char *)name;
+    s.op = (char *)op;
+    s.operands = (char *)operands;
+    s.remark = (char *)remark;
+    s.text = text;
+    vec_push(&c->open, s);
+}
+
+static void open_finish(Conv *c) {
+    MConvOptions mo;
+    MHStmt p, e;
+    char *res, *why = NULL;
+    size_t j;
+    int line = c->open.n ? c->open.v[0].line : 1;
+    memset(&mo, 0, sizeof mo);
+    mo.flat = c->o.flat;
+    mo.keep_goto = c->o.keep_goto;
+    mo.warn = macro_warn;
+    mo.user = c;
+    memset(&p, 0, sizeof p);
+    p.line = line;
+    p.kind = MH_STMT;
+    p.name = xstrdup("");
+    p.op = xstrdup("OPENCODE");
+    p.operands = xstrdup("");
+    p.remark = xstrdup("");
+    memset(&e, 0, sizeof e);
+    e.line = line;
+    e.kind = MH_STMT;
+    e.name = xstrdup("");
+    e.op = xstrdup("MEND");
+    e.operands = xstrdup("");
+    e.remark = xstrdup("");
+    {
+        MHStmtVec all = {0};
+        vec_push(&all, p);
+        for (j = 0; j < c->open.n; j++) vec_push(&all, c->open.v[j]);
+        vec_push(&all, e);
+        res = mconv_macro(&all, &mo, &why);
+    }
+    if (res) {
+        char *q = res;
+        push_comment(c, line, xstrdup("* ---- open code conditional assembly, converted to a macro called below ----"));
+        while (*q) {
+            char *nl = strchr(q, '\n');
+            push_comment(c, line, xstrndup(q, (size_t)(nl - q)));
+            q = nl + 1;
+        }
+        push_comment(c, line, xstrdup("         OPENCODE"));
+    } else {
+        push_comment(c, line, xstrdup("* ---- open code conditional assembly, not converted (see the warning) ----"));
+        for (j = c->open_first; j < c->lines.n; j++) push_comment(c, (int)j + 1, raw_comment(c, c->lines.v[j]));
+        warnf(c, line, "open code conditional assembly commented out: %s", why ? why : "not converted");
+    }
+}
+
 static void parse(Conv *c) {
     size_t i;
     int seen = 0;
@@ -585,9 +659,17 @@ static void parse(Conv *c) {
         Fields f;
         if (blank_str(t)) {
             LS l = {0};
+            if (c->wrapping) continue;
             l.kind = K_BLANK;
             l.line = line;
             vec_push(&c->ls, l);
+            continue;
+        }
+        if (c->wrapping && (t[0] == '*' || (t[0] == '.' && t[1] == '*'))) {
+            if (t[0] == '*')
+                open_push(c, line, MH_ASMCOMMENT, NULL, NULL, NULL, NULL, rtrim_dup(t + 1, strlen(t + 1)));
+            else
+                open_push(c, line, MH_MACCOMMENT, NULL, NULL, NULL, NULL, rtrim_dup(t + 2, strlen(t + 2)));
             continue;
         }
         if (t[0] == '*' || (t[0] == '.' && t[1] == '*')) {
@@ -625,6 +707,20 @@ static void parse(Conv *c) {
             continue;
         }
         if (c->o.member) continue; /* a macro library member: only the definitions */
+        if (!c->wrapping && ca_start(fp, &f)) {
+            c->wrapping = 1;
+            c->open_first = first;
+        }
+        if (c->wrapping) {
+            if (!strcmp(fp, "YREGS") && !*fo) {
+                int k;
+                for (k = 0; k < 16; k++)
+                    open_push(c, line, MH_STMT, xasprintf("R%d", k), "EQU", xasprintf("%d", k), "", NULL);
+                continue;
+            }
+            open_push(c, line, MH_STMT, f.name, f.op, f.operands, f.remark, NULL);
+            continue;
+        }
         if (!strcmp(fp, "YREGS") && !*fo) {
             yregs(c, line);
             continue;
@@ -638,6 +734,7 @@ static void parse(Conv *c) {
         push_stmt(c, line, fn, fp, fo, remark);
         classify(c, &c->ls.v[c->ls.n - 1]);
     }
+    if (c->wrapping) open_finish(c);
 }
 
 /* ---- registers ----------------------------------------------------------------- */
