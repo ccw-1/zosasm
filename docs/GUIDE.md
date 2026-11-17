@@ -41,6 +41,7 @@ printed here is that file, and the test suite assembles each of them.
 17. Linux on Z: ELF output (`-elf`) and the ASCII character set
 18. For AI agents: the MCP server `zosasm-mcp`
 19. Macros: the C-like macro language
+20. Formatting source: `zafmt`
 
 ### Feature index
 
@@ -64,6 +65,7 @@ printed here is that file, and the test suite assembles each of them.
 | know what differs from HLASM, what is unverified | 14 | |
 | a subroutine, a table search, build variants | 15 | `linkage.za`, `table.za`, `config.za` |
 | convert existing HLASM source (columns, registers, `COPY`) | 16 | `hlasm-demo.asm`, `hlasm-demo.za` |
+| format `.za` source (columns, indentation of macros) | 20 | `linkage.za`, `cmacros.za` |
 | write objects for Linux on Z (ELF, ASCII text) | 17 | `linux-hello.za` |
 | let an AI agent assemble, inspect and read this guide (MCP) | 18 | |
 
@@ -427,7 +429,7 @@ MAIN     RMODE ANY
 ALTENT   DS    0H
          BR    14
          LTORG                    literals go here, inside the range of USING
-PRINTF   XATTR LINKAGE(XPLINK),SCOPE(LIBRARY)   describe the ER
+PRINTF   XATTR LINKAGE(XPLINK),SCOPE(LIBRARY) describe the ER
 
 * LOCTR: one section, several location counters, joined in order
 DATA     LOCTR
@@ -953,10 +955,10 @@ PARMSIZE EQU   sizeof(PARM)       a closed DSECT may be measured at once (32)
 
 BUILTIN  CSECT
          LA    1,sizeof(PARM)     in an operand
-         LHI   2,offsetof(PARM,P_TABLE)  16
-         LHI   3,countof(P_TABLE)        4
-         LHI   4,alignof(PARM)           8
-         LHI   5,sizeof(P_TABLE)>=16     comparisons give 1 or 0
+         LHI   2,offsetof(PARM,P_TABLE) 16
+         LHI   3,countof(P_TABLE)       4
+         LHI   4,alignof(PARM)    8
+         LHI   5,sizeof(P_TABLE)>=16    comparisons give 1 or 0
 
 AREA     DS    CL(sizeof(PARM))   storage as big as the DSECT
 MAP      DC    A(sizeof(BUILTIN)) a CSECT's own size, known in pass 2
@@ -989,7 +991,7 @@ HX       DC    E'1.5',D'-0.1',L'3.14159265358979323846'
 BI       DC    EB'1.5',DB'0.1',LB'1'
 DEC      DC    ED'1.5',DD'0.1',LD'1'
 * a rounding mode after the value, and special values
-RND      DC    EB'0.1R5',EB'0.1R4'      toward zero, nearest even
+RND      DC    EB'0.1R5',EB'0.1R4' toward zero, nearest even
 SPEC     DC    DB'(INF)',DB'-(INF)',DB'(QNAN)',EB'(MAX)'
 * scale and exponent modifiers apply to fixed point and hexadecimal float
 SC       DC    FS8'35.92',HS6'-25.46',EE3'3.414'
@@ -2211,7 +2213,7 @@ CMAC     CSECT
          STOREREGS (14,15),base=11,off=8
          FILLZ BUF,600
 #for (let i = 0; i < n; i++) {
-         DC    A(&i)
+    DC    A(&i)
 #}
 BUF      DS    CL600
          END
@@ -2293,3 +2295,52 @@ BUF      DS    CL600
   (`MACRO.md` section 11).
 * **Not verified against HLASM**: no HLASM was available to compare the
   expansion of IBM's macros with this implementation.
+
+## 20. Formatting source: `zafmt`
+
+```
+zafmt [-i | -o FILE | -check] [-op N] [-remark N] [-indent N] [-blank N] [file ...]
+```
+
+`zafmt` rewrites `.za` source into one layout. Without a file (or with `-`) it
+reads standard input; the result goes to standard output, back into the file
+with `-i`, or to the file named by `-o`. `-check` changes nothing, lists the
+files that are not formatted and exits with 1 when there is one (for a commit
+hook or a build). Only blanks and line ends change: no token is added, removed
+or reordered, so the object is the same (checked by assembling the examples and
+by expanding the converted macro library before and after formatting).
+
+| rule | default | option |
+|---|---|---|
+| name in column 1, operation in column | 10 | `-op` |
+| operands start 6 columns after the operation (one blank after a longer one; a long name pushes the operation right, the operands keep their column unless the operation reaches them) | | |
+| remarks start in column | 35 | `-remark` |
+| a continuation line (operands ending in a comma) starts at the operand column | | |
+| at most this many blank lines in a row | 2 | `-blank` |
+| indentation per block level of the macro language | 4 | `-indent` |
+
+* Remarks of neighbouring lines whose operands reach the remark column are
+  aligned with each other; the other remarks stay in the remark column.
+* Text that starts in the remark column or beyond is kept as a remark, also
+  after an operation without operands (`LTORG   the pool is here`). Text that
+  starts closer to the operation is operands as far as zosasm is concerned,
+  so it is aligned like operands (the result assembles the same).
+* Comment lines (`*`, `;`, `//` in column 1) are kept. Trailing blanks go,
+  tabs between fields become spaces, CR LF becomes LF, the file ends in one
+  newline. The record after `REPRO` is data and is not touched.
+* Lines of the macro language (`#...`) stay in column 1 outside blocks. Inside
+  a braced block (`#macro`, `#if (..) {`, `#for`, `#while`, `#switch`) they are
+  indented by `-indent` per level; `#}`, `#} else {` are one level out, `#case` and
+  `#default` are at the level of their `#switch` and the statements below them
+  one level in. The statements of the generated source in a block have no fixed
+  columns: they are indented like the `#` lines, a label is written `NAME:` and
+  the operation follows after one blank. `#include`, `#define`, `#if`..`#endif`
+  without braces are directives and are not indented. A `#` statement that
+  continues on the next line (open parenthesis or `\`) keeps its shape: the
+  continuation lines move with the first line.
+* A line whose quote or parenthesis is not closed is only stripped of trailing
+  blanks.
+
+Not done: changing the case of names or operations, wrapping long operand
+lists, aligning `EQU` or `DC` columns across lines.
+

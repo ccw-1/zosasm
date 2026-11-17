@@ -6,7 +6,7 @@ files. Portable C99; it needs only a C compiler and `make`.
 ## Building
 
 ```sh
-make          # build/zosasm, build/hlasm2za and build/zosasm-mcp
+make          # build/zosasm, build/hlasm2za, build/zafmt and build/zosasm-mcp
 make test     # unit tests and command line tests
 make clean
 ```
@@ -25,6 +25,7 @@ build/zosasm -E prog.za                     # show the preprocessed source
 build/zosasm -l prog.lst -o prog.o prog.za  # assemble and write a listing
 build/hlasm2za old.asm                      # HLASM source -> zosasm source (old.za)
 build/zosasm -elf -o prog.o prog.za         # ELF64 s390x object for Linux on Z
+build/zafmt -i prog.za                      # format the source (guide chapter 20)
 ```
 
 Options: `-o FILE`, `-DNAME[=VAL]`, `-Idir`, `-E`, `-dump FILE`,

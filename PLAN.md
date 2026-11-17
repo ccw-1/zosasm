@@ -67,6 +67,7 @@ Status key: [x] done, [-] in progress, [ ] open.
 - [ ] `-diag-format=json`, warning classes, `-Werror`
 - [x] listing file (`-l`), symbol cross reference (DESIGN.md 15)
 - [x] HLASM source -> zosasm source converter `hlasm2za` (DESIGN.md 16; macros and open-code conditional assembly are converted, `COPY` members are not)
+- [x] source formatter `zafmt` (guide chapter 20, DESIGN.md 20)
 - [x] ELF64 output for Linux on Z (`-elf`, `-ascii`, `-charset`; DESIGN.md 17; checked with binutils, not run on a machine)
 - [x] MCP server `zosasm-mcp` for AI agents (tools, guide as resource; guide 18, DESIGN.md 18)
 - [x] macro language M1 (C-like braces, `&` substitution, `-M` library, guide 19; MACRO.md, DESIGN.md 19; not compared with HLASM)

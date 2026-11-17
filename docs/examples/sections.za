@@ -11,7 +11,7 @@ MAIN     RMODE ANY
 ALTENT   DS    0H
          BR    14
          LTORG                    literals go here, inside the range of USING
-PRINTF   XATTR LINKAGE(XPLINK),SCOPE(LIBRARY)   describe the ER
+PRINTF   XATTR LINKAGE(XPLINK),SCOPE(LIBRARY) describe the ER
 
 * LOCTR: one section, several location counters, joined in order
 DATA     LOCTR

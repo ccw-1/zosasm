@@ -1241,3 +1241,34 @@ sources are.
 **Binder check** (`tools/oracle_ld.sh`, `testdata/oracle/ld/`): objects made by zosasm and by HLASM are interchangeable for `ld`/`xlc`; the four mixes give the same result at run time. The same holds for plain `ld -o x obj` of `g1`, `g2`, `g3`, `dc2b`: the same IEW messages (only the expected unresolved externals). Observation: an `A(SDNAME)` stored in a second class (`CATTR`) of the same CSECT is 504 bytes off after binding with HLASM's own object as well (no class: correct); not investigated.
 
 **Object comparison** (`tools/oracle_obj.sh`, `tools/oracle_obj.py`, 2026-11-16): the HLASM object is fetched with z-scp and read by `zosasm -dump`, as is ours; the script compares the ESD tree (names path, attributes), text and RLD items structurally. It ignores the extra `B_IDRL` and an empty `B_PRV`, `C_ADATA*`, the class offsets of the HLASM location space (HLASM puts one space over all classes of a section; zosasm's offsets are class relative) and the ED offset stored in A-con and relative-immediate text. Found and fixed: CATTR defaults (`ClassAttr.cattr`), CNOP pad bytes, COM, Q/QY referent CLASS, B_PRV/DXD attributes, owner of a pseudo register (`Section.prv_owner`, `dir_dxd`), `R(local)` ER (`Symbol.r_er`), one-sided AMODE/RMODE, CSECT resume (`Section.text_cur`), LOCTR pieces without padding. The last needs an alignment that depends on the final start of the piece: `asm_assemble_all` repeats the assembly with the starts of the previous run (`Piece.hint`, a map keyed `section\x01class\x01piece`) until all starts agree modulo 4096; after 5 rounds it falls back to doubleword aligned piece starts (`Asm.round8`). A module without a second location counter is assembled once. Diagnostics of the discarded runs are removed with `rep_mark`/`rep_rewind`. ER rule: every `SYM_EXT` becomes an ER in `module_emit`, parent = `Symbol.ext_sect` (section current at the EXTRN/WXTRN), `-dump` shows it, `oracle_obj.py` compares it; the disassembler writes every ER back as EXTRN/WXTRN unless `R(label)` recreates it. `tools/oracle_amb.sh` is the amblist cross-check.
+
+## 20. The source formatter (`zafmt`, `src/fmt.c`, `src/zafmt.c`)
+
+`za_format(text, len, opts)` (`fmt.h`) works on lines and never changes a token: it splits
+each line into fields the way the real readers do and writes the fields again in columns.
+`zafmt.c` is only the command line (`-i`, `-o`, `-check`, the column options); the Makefile
+keeps it out of the library objects like `main.c`.
+
+* **Statements** (`split_stmt`) use `scan_operand_end` of `reader.c` (first blank outside
+  quotes and parentheses ends the operands). Outside blocks the name field is column 1 (a
+  quoted name may hold blanks); inside blocks the fields are read like `model_fields` of
+  `macro.c` (an optional `LABEL:` in front, the first token otherwise the operation,
+  `&{...}` masked), because that is how the macro compiler reads model statements. A
+  continuation (operands ending in a comma) is read with the same rule as `read_statements`.
+* **`#` lines** are tracked with copies of `code_scan` / `code_delta` / `const_end`
+  (`macro.c`): a leading `}` closes, a trailing `{` opens a block; at depth 0 only a
+  line that is not one of the classic directives opens one (`mac_top_kind`). A stack
+  remembers which blocks are switches so that `#case`/`#default` can be written one
+  level out. The copies must be kept in step with `macro.c`.
+* **Remarks**: lines with a remark are held back in a group (`put_stmt`); `flush_group` aligns
+  the lines that reach the remark column (head width + 1 >= column) at the widest of them and
+  puts the others at the column. Pending blank lines are written before the first held line.
+  Text that starts at or beyond the remark column in the source is taken as a remark (so
+  `LTORG   text` keeps its shape); the layout writes it in the remark column again, which makes
+  the result stable.
+* **Idempotence** is a test (`tests/test_fmt.c`, `fmt_idem`). Checked while writing it (not part
+  of `make test`, needs the local macro library): `zafmt` over the 2076 converted SYS1.MACLIB
+  members is a fixed point, and the macros expand to the same text (blank lines and trailing
+  blanks apart) with the arguments none, `A,B,C` and `X=1,Y=2`; the 18 sources under `docs/` and
+  `testdata/` assemble to the same objects (`__FILE__` aside).
+

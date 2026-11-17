@@ -29,7 +29,7 @@ CMAC     CSECT
          STOREREGS (14,15),base=11,off=8
          FILLZ BUF,600
 #for (let i = 0; i < n; i++) {
-         DC    A(&i)
+    DC    A(&i)
 #}
 BUF      DS    CL600
          END

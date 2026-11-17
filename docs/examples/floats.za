@@ -6,7 +6,7 @@ HX       DC    E'1.5',D'-0.1',L'3.14159265358979323846'
 BI       DC    EB'1.5',DB'0.1',LB'1'
 DEC      DC    ED'1.5',DD'0.1',LD'1'
 * a rounding mode after the value, and special values
-RND      DC    EB'0.1R5',EB'0.1R4'      toward zero, nearest even
+RND      DC    EB'0.1R5',EB'0.1R4' toward zero, nearest even
 SPEC     DC    DB'(INF)',DB'-(INF)',DB'(QNAN)',EB'(MAX)'
 * scale and exponent modifiers apply to fixed point and hexadecimal float
 SC       DC    FS8'35.92',HS6'-25.46',EE3'3.414'

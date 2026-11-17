@@ -336,6 +336,23 @@ grep -q '"success":true' $T/m.out; check "mcp assemble: macro from files and sys
 mcp '{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n","macro_steps":0}}}' > $T/m.out
 grep -q 'macro_steps' $T/m.out; check "mcp assemble: bad macro_steps" $? 0
 
+# zafmt: the source formatter
+F=build/zafmt
+printf 'loop lr 1,2 r\n\n\n\n\n#macro M() {\n LR 1,2\n#}\n' > $T/f1.za
+$F $T/f1.za > $T/f1.out; check "zafmt exit" $? 0
+grep -q '^loop     lr    1,2' $T/f1.out; check "zafmt puts the operation in column 10" $? 0
+grep -q '^    LR    1,2$' $T/f1.out; check "zafmt indents a block" $? 0
+$F -check $T/f1.za > $T/f1.chk; check "zafmt -check: unformatted file" $? 1
+grep -q f1.za $T/f1.chk; check "zafmt -check names the file" $? 0
+cp $T/f1.za $T/f2.za; $F -i $T/f2.za; check "zafmt -i" $? 0
+cmp -s $T/f2.za $T/f1.out; check "zafmt -i writes the formatted text" $? 0
+$F -check $T/f2.za; check "zafmt -check: formatted file" $? 0
+$F < $T/f1.za | cmp -s - $T/f1.out; check "zafmt from standard input" $? 0
+$F -o $T/f3.za $T/f1.za; cmp -s $T/f3.za $T/f1.out; check "zafmt -o" $? 0
+$F -op 12 $T/f1.za | grep -q '^loop       lr    1,2'; check "zafmt -op" $? 0
+$F -bad $T/f1.za 2>/dev/null; check "zafmt unknown option" $? 2
+$F -check docs/examples/linkage.za docs/examples/table.za docs/examples/hello.za; check "zafmt: the examples are formatted" $? 0
+
 rm -rf $T
 [ $fail = 0 ] && echo "tests/run_cli_tests.sh: ok"
 exit $fail
