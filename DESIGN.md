@@ -1318,7 +1318,20 @@ that CDA needs are kept.
   LLDB accepts a `.dbg` only if this symbol equals the 16 bytes in DBGNAME.
 * **Reading**: `goff_parse` stops at the first END record (`GoffModule.bytes`), so `-disasm`,
   `-unpack` and the other readers see module 1 of a `-g` object; `-dump` loops over all modules.
-* **Not done**: types of DSECTs (structure types), `EQU` constants, `USING` ranges as DWARF
-  scopes, ADATA. dbx 2.4 on pok56 shows no symbols for IBM's own HLASM modules either, so dbx is
+* **DSECTs** (beyond IBM, which writes nothing for them; verified with `dwarfdump` and LLDB on
+  pok56, 2026-11-17): a named DSECT with a length becomes a `DW_TAG_structure_type` (`DStruct`),
+  its `DC`/`DS` labels of non-zero length become `DW_TAG_member`s (type as for variables,
+  `DW_AT_data_member_location` = offset; `DS 0H` labels and EQUs are left out). No address occurs,
+  so none of the relocation rules apply. A `USING` of such a DSECT with a base register that is not
+  dependent (`UsingRec`, with `zbeg`/`zend` = the indexes in `Module.zrecs` of the USING and of the
+  statement that ended it, set in `list_usings`) holds over the addresses from the USING to the
+  DROP (or the end of the CSECT): `DUse`. `build_uses` cuts the CSECT at every start/end into
+  non-overlapping unnamed `DW_TAG_lexical_block`s (a debugger finds one block per address) with a
+  `DW_TAG_variable` of the structure type per active USING, location `DW_OP_breg<reg> -off`
+  (`off` = the USING's base offset); the name is the USING label or the DSECT name, `NAME_R<n>`
+  when two active USINGs have the same name. LLDB: `frame variable` shows `(RECD) OLD = (CNT =
+  99, ...)` inside the block only. Dependent USINGs, ranges (`lo`/`hi`, `end`) and absolute
+  USINGs are ignored.
+* **Not done**: `EQU` constants, ADATA. dbx 2.4 on pok56 shows no symbols for IBM's own HLASM modules either, so dbx is
   untested; `dwarfdump -i -l` and LLDB were used (tests `tests/test_dbg.c`, CLI tests, manual
   runs `up.sh`-style: assemble, z-scp, `ld`, `lldb -b`).

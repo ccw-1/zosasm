@@ -10,6 +10,8 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
   writes it (a `.dbg` file with DWARF 4 plus the `D_@@ADBG_*` link module appended to
   the object); MCP `zosasm_assemble` parameters `dwarf*`; guide chapter 21, DESIGN 21.
   Checked with `ld`, `dwarfdump` and LLDB on z/OS, not with dbx.
+* `-g`: a DSECT becomes a DWARF structure type, and a `USING` of a DSECT with a base register
+  gives a variable of that type (`frame variable` in LLDB) over the range it holds.
 * `-dump` shows every module of a file; the readers use the first module.
 
 ## 0.1.0 - 2026-11-17

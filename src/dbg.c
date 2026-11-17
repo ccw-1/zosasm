@@ -178,6 +178,13 @@ static int cmp_row(const void *x, const void *y) {
     return a->seq < b->seq ? -1 : a->seq > b->seq;
 }
 
+static DStruct *struct_of(Dbg *g, const Section *s) {
+    size_t i;
+    for (i = 0; i < g->structs.n; i++)
+        if (g->structs.v[i]->sect == s) return g->structs.v[i];
+    return NULL;
+}
+
 static DSect *dsect_of(Dbg *g, const Class *c) {
     size_t i;
     for (i = 0; i < g->sects.n; i++)
@@ -209,6 +216,16 @@ static void collect(Dbg *g) {
         }
         vec_push(&g->sects, d);
     }
+    /* DSECTs: a structure type each (IBM writes nothing for them) */
+    for (i = 0; i < m->sections.n; i++) {
+        Section *s = m->sections.v[i];
+        DStruct *st;
+        if (s->kind != K_DSECT || !s->name[0] || s->classes.n == 0 || s->classes.v[0]->len <= 0) continue;
+        st = xcalloc(sizeof *st);
+        st->sect = s;
+        st->len = s->classes.v[0]->len;
+        vec_push(&g->structs, st);
+    }
     /* code rows */
     for (k = 0; k < m->zrecs.n; k++) {
         const ZRec *z = &m->zrecs.v[k];
@@ -234,14 +251,55 @@ static void collect(Dbg *g) {
         DLab l;
         if (s->kind != SYM_LABEL || !s->piece) continue;
         d = dsect_of(g, s->piece->cls);
-        if (!d) continue;
         def = s->def_idx < m->stmts.n ? m->stmts.v[s->def_idx] : NULL;
         if (!def || strcmp(def->name, s->name) != 0) continue; /* made by the assembler (literals) */
+        if (!d) { /* a data item of a DSECT: a member of its structure */
+            DStruct *st = s->piece->cls->sect->kind == K_DSECT ? struct_of(g, s->piece->cls->sect) : NULL;
+            if (st && s->piece->cls == st->sect->classes.v[0] && def->op &&
+                (za_streqi(def->op, "DC") || za_streqi(def->op, "DS")) && s->len > 0 && s->count > 0 &&
+                s->off >= 0 && s->off < st->len) {
+                l.name = s->name;
+                l.off = s->off;
+                l.var = 1;
+                l.type = label_type(g, s);
+                vec_push(&st->mems, l);
+            }
+            continue;
+        }
         l.name = s->name;
         l.off = s->piece->start + s->off;
         l.var = def->op && (za_streqi(def->op, "DC") || za_streqi(def->op, "DS")) && s->len > 0 && s->count > 0;
         l.type = l.var ? label_type(g, s) : -1;
         vec_push(&d->labs, l);
+    }
+    for (i = 0; i < g->structs.n; i++) {
+        DStruct *st = g->structs.v[i];
+        if (st->mems.n) qsort(st->mems.v, st->mems.n, sizeof *st->mems.v, cmp_lab);
+    }
+    /* USINGs of a DSECT with a base register: the structure is at register - off while it lasts */
+    for (i = 0; i < m->usings.n; i++) {
+        const UsingRec *u = &m->usings.v[i];
+        const Class *kc;
+        DStruct *st;
+        DSect *d;
+        DUse use;
+        const ZRec *zb;
+        if (u->dependent || u->reg < 0 || u->reg > 15 || u->zbeg >= m->zrecs.n) continue;
+        kc = u->key.kind == B_PIECE ? ((Piece *)u->key.p)->cls : u->key.kind == B_CLASS ? (Class *)u->key.p : NULL;
+        st = kc && kc->sect->kind == K_DSECT ? struct_of(g, kc->sect) : NULL;
+        zb = &m->zrecs.v[u->zbeg];
+        d = zb->cls ? dsect_of(g, zb->cls) : NULL;
+        if (!st || !d) continue;
+        use.st = st;
+        use.reg = u->reg;
+        use.off = u->off;
+        use.name = u->label ? u->label : st->sect->name;
+        use.lo = zb->off;
+        use.hi = d->len;
+        if (u->zend < m->zrecs.n && m->zrecs.v[u->zend].cls == zb->cls && m->zrecs.v[u->zend].off < use.hi)
+            use.hi = m->zrecs.v[u->zend].off;
+        if (use.lo >= use.hi) continue;
+        vec_push(&d->uses, use);
     }
     for (i = 0; i < g->sects.n; i++) {
         DSect *d = g->sects.v[i];

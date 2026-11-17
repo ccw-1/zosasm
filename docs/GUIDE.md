@@ -2406,6 +2406,14 @@ cannot show it.
   table with one sequence per section, one row per instruction (and `CNOP`);
   all files that were read (`#include`, `COPY`-like) as separate file entries.
   Statements that a macro generates are attributed to the line of the call.
+* DSECTs (this goes beyond `as -g`, which writes nothing for them): a named
+  `DSECT` becomes a `DW_TAG_structure_type` whose members are its `DC`/`DS` labels
+  (`type lookup RECD` in LLDB). Where a `USING RECD,3` (labeled or not, one base register)
+  is in force, from the `USING` to the `DROP` or the end of the CSECT, the code has a
+  lexical block with a variable of that structure type at the register, so
+  `frame variable` shows the record, for example `(RECD) OLD = (CNT = 99, NAME = "WORLD   ")`.
+  The name is the USING label or the DSECT name. Dependent `USING`s, ranges and
+  absolute `USING`s give no variable.
 * In the object: a second GOFF module after the normal one, as `as -g` writes
   it: the classes `D_@@ADBG_DBG` (part `DBGNAME`: length, the signature, the
   EBCDIC path of the `.dbg`), `D_@@ADBG_MAP` (part `ENTRIES`, 32 bytes per CSECT)
@@ -2423,7 +2431,9 @@ sets breakpoints by file and line, shows the source, steps, makes a back
 trace through several CSECTs, and the module of a source that includes a
 second file resolves lines in both files; the module structure agrees with
 the one of `as -g` (ESD attributes, text, relocations) except for the
-signature, the producer and the CSECT numbering. dbx 2.4 on that system
+signature, the producer and the CSECT numbering; DSECT structure types and
+the variables at a `USING` were checked with `dwarfdump` and `type lookup` /
+`frame variable` of the LLDB port. dbx 2.4 on that system
 shows no symbols for modules made by `as -g` either, so it could not be used
 as a reference.
 
@@ -2431,8 +2441,8 @@ Not the same as `as -g`:
 
 * The DWARF is zosasm's own. The producer string differs; the line program
   header is version 3 and has a file table, where IBM's has an empty one and
-  names the file with a vendor opcode; types are limited to integers, bytes
-  and arrays of them (no DSECT structure types, no `EQU` constants).
+  names the file with a vendor opcode; data types are integers, bytes, hexadecimal
+  floats and arrays of them, and DSECT structures (no `EQU` constants).
 * The `.dbg` has no symbols for the `B_IDRL` and `B_PRV` classes (IBM's has
   them, with size 0).
 * `-g` and `-elf` exclude each other (ELF objects have no GOFF link module).

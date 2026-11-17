@@ -41,6 +41,17 @@ typedef struct {
     int file, line, seq;
 } DRow;
 
+typedef struct DStruct DStruct;
+
+/* a USING of a DSECT over a range of the CSECT: a variable of the structure type at register - off */
+typedef struct {
+    int64_t lo, hi; /* addresses in the CSECT */
+    DStruct *st;
+    int reg;
+    int64_t off;
+    char *name;
+} DUse;
+
 typedef struct {
     Section *sect;
     Class *cls; /* B_TEXT */
@@ -49,7 +60,16 @@ typedef struct {
     int64_t base; /* start of its text in the B_TEXT class of the module (the binder concatenates the EDs) */
     Vec(DLab) labs;
     Vec(DRow) rows;
+    Vec(DUse) uses;
 } DSect;
+
+/* a DSECT as a structure type: its data items are the members */
+struct DStruct {
+    Section *sect;
+    int64_t len;
+    Vec(DLab) mems;
+    uint32_t off; /* DIE offset in .debug_info */
+};
 
 typedef struct {
     char *name, *abs, *dir, *base;
@@ -67,6 +87,7 @@ typedef struct {
     const Module *m;
     char *comp_dir, *cu_name;
     Vec(DSect *) sects;
+    Vec(DStruct *) structs;
     Vec(DFile) files;
     StrMap filemap; /* file name -> index + 1 */
     Vec(DDir) dirs;

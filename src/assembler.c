@@ -934,6 +934,7 @@ static void list_usings(Asm *a, Stmt *st) {
             r->dropped.file = st->file;
             r->dropped.line = st->line;
             r->dropped.col = 1;
+            r->zend = a->mod->zrecs.n - 1;
         }
     }
     for (j = 0; j < a->usings.n; j++) {
@@ -951,6 +952,8 @@ static void list_usings(Asm *a, Stmt *st) {
         r.reg = u->reg;
         r.dependent = u->dependent;
         r.id = u->id;
+        r.zbeg = a->mod->zrecs.n - 1;
+        r.zend = (size_t)-1;
         vec_push(&a->mod->usings, r);
         if (u->id > a->using_logged) a->using_logged = u->id;
     }

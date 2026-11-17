@@ -330,10 +330,123 @@ static void test_multi(void) {
     }
 }
 
+/* a DSECT becomes a structure type (abbrev 8: name, byte_size) with a member (abbrev 9: name, type, offset)
+ * for each data item; items of length 0 and code labels are left out */
+static void test_dsect(void) {
+    const char *src = "PB       CSECT\n"
+                      "         LR    1,1\n"
+                      "MYD      DSECT\n"
+                      "F1       DS    F\n"
+                      "C2       DS    CL6\n"
+                      "Z0       DS    0H\n"
+                      "H3       DS    2H\n"
+                      "PB       CSECT\n"
+                      "         END\n";
+    static const uint8_t st_hdr[] = {8, 'M', 'Y', 'D', 0, 0, 0, 0, 14};
+    uint8_t *obj = NULL;
+    size_t olen = 0;
+    Module *m = assemble(src, &obj, &olen);
+    DbgOptions o;
+    DbgResult r;
+    char err[256];
+    Elf e;
+    long s;
+    CHECK(m && obj);
+    if (!m || !obj) return;
+    memset(&o, 0, sizeof o);
+    o.cwd = "/w";
+    o.main_file = "t.asm";
+    o.dbg_path = "/w/t.dbg";
+    o.producer = "test";
+    CHECK(dbg_build(m, obj, olen, &o, &r, err, sizeof err));
+    CHECK(elf_parse(&e, r.elf, r.elf_len));
+    s = find_sec(&e, ".debug_info");
+    CHECK(s > 0);
+    if (s > 0) {
+        const uint8_t *d = r.elf + shf(&e, (size_t)s, 16);
+        size_t len = shf(&e, (size_t)s, 20), k;
+        long at = -1;
+        for (k = 0; k + sizeof st_hdr <= len; k++)
+            if (!memcmp(d + k, st_hdr, sizeof st_hdr)) at = (long)k;
+        CHECK(at > 0);
+        if (at > 0) {
+            const uint8_t *p = d + at + sizeof st_hdr;
+            CHECK(p[0] == 9 && !strcmp((const char *)p + 1, "F1"));
+            CHECK(be(p + 4 + 4, 4) == 0); /* F1 at 0 */
+            p += 12;
+            CHECK(p[0] == 9 && !strcmp((const char *)p + 1, "C2"));
+            CHECK(be(p + 4 + 4, 4) == 4);
+            p += 12;
+            CHECK(p[0] == 9 && !strcmp((const char *)p + 1, "H3"));
+            CHECK(be(p + 4 + 4, 4) == 10);
+            CHECK(p[12] == 0); /* the end of the children: no Z0 */
+        }
+    }
+}
+
+/* a USING of a DSECT with a base register: a lexical block over the range it holds (from the USING to
+ * the DROP), with a variable of the structure type at register - offset (abbrev 10, 7, DW_OP_breg3) */
+static void test_using(void) {
+    const char *src = "PB       CSECT\n"
+                      "         BALR  12,0\n"
+                      "         USING *,12\n"
+                      "         USING MYD,3\n"
+                      "         LR    1,1\n"
+                      "         DROP  3\n"
+                      "         LR    2,2\n"
+                      "OLD      USING MYD,4\n"
+                      "         LR    1,1\n"
+                      "MYD      DSECT\n"
+                      "F1       DS    F\n"
+                      "PB       CSECT\n"
+                      "         END\n";
+    /* block [2,4): MYD at r3; block [6,8): OLD at r4 */
+    static const uint8_t b1[] = {10, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 4, 7, 'M', 'Y', 'D', 0};
+    static const uint8_t b2[] = {10, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 8, 7, 'O', 'L', 'D', 0};
+    uint8_t *obj = NULL;
+    size_t olen = 0;
+    Module *m = assemble(src, &obj, &olen);
+    DbgOptions o;
+    DbgResult r;
+    char err[256];
+    Elf e;
+    long s;
+    CHECK(m && obj);
+    if (!m || !obj) return;
+    memset(&o, 0, sizeof o);
+    o.cwd = "/w";
+    o.main_file = "t.asm";
+    o.dbg_path = "/w/t.dbg";
+    o.producer = "test";
+    CHECK(dbg_build(m, obj, olen, &o, &r, err, sizeof err));
+    CHECK(elf_parse(&e, r.elf, r.elf_len));
+    s = find_sec(&e, ".debug_info");
+    CHECK(s > 0);
+    if (s > 0) {
+        const uint8_t *d = r.elf + shf(&e, (size_t)s, 16);
+        size_t len = shf(&e, (size_t)s, 20), k;
+        int f1 = 0, f2 = 0;
+        for (k = 0; k + sizeof b1 + 8 <= len; k++) {
+            if (!memcmp(d + k, b1, sizeof b1)) {
+                f1 = 1;
+                CHECK(d[k + sizeof b1 + 4] == 2 && d[k + sizeof b1 + 5] == 0x73 && d[k + sizeof b1 + 6] == 0);
+            }
+            if (!memcmp(d + k, b2, sizeof b2)) {
+                f2 = 1;
+                CHECK(d[k + sizeof b2 + 5] == 0x74); /* DW_OP_breg4 */
+            }
+        }
+        CHECK(f1 && f2);
+    }
+}
+
+
 int main(void) {
     test_md5();
     test_paths();
     test_build();
     test_multi();
+    test_dsect();
+    test_using();
     TEST_MAIN_END();
 }

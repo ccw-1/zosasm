@@ -221,6 +221,7 @@ typedef struct {
     int reg, dependent;
     int id;        /* Using.id, to follow DROP */
     Pos dropped;   /* line that ended it; file NULL while active */
+    size_t zbeg, zend; /* index in Module.zrecs of the USING and of the statement that ended it (-1: still active) */
 } UsingRec;
 
 typedef struct {
