@@ -6,7 +6,7 @@
 
 #include "dbg_int.h"
 
-enum { AB_CU = 1, AB_BASE, AB_ARRAY, AB_SUBRANGE, AB_SUBPROGRAM, AB_LABEL, AB_VARIABLE, AB_STRUCT, AB_MEMBER, AB_BLOCK };
+enum { AB_CU = 1, AB_BASE, AB_ARRAY, AB_SUBRANGE, AB_SUBPROGRAM, AB_LABEL, AB_VARIABLE, AB_STRUCT, AB_MEMBER, AB_BLOCK, AB_CONST };
 
 static void ab_start(Buf *b, unsigned code, unsigned tag, int children) {
     duleb(b, code);
@@ -26,11 +26,11 @@ static void ab_end(Buf *b) {
 enum {
     AT_NAME = 0x03, AT_LOCATION = 0x02, AT_STMT_LIST = 0x10, AT_LOW_PC = 0x11, AT_HIGH_PC = 0x12,
     AT_LANGUAGE = 0x13, AT_COMP_DIR = 0x1b, AT_PRODUCER = 0x25, AT_UPPER_BOUND = 0x2f, AT_ENCODING = 0x3e,
-    AT_BYTE_SIZE = 0x0b, AT_MEMBER_LOC = 0x38, AT_EXTERNAL = 0x3f, AT_TYPE = 0x49, AT_IBM_SRCFILE = 0x390f, AT_IBM_FILE_DIR = 0x3910,
+    AT_BYTE_SIZE = 0x0b, AT_CONST_VALUE = 0x1c, AT_MEMBER_LOC = 0x38, AT_EXTERNAL = 0x3f, AT_TYPE = 0x49, AT_IBM_SRCFILE = 0x390f, AT_IBM_FILE_DIR = 0x3910,
     AT_IBM_FILE_A = 0x3918, AT_IBM_FILE_B = 0x3915
 };
 enum { F_ADDR = 0x01, F_DATA2 = 0x05, F_DATA4 = 0x06, F_DATA1 = 0x0b, F_STRING = 0x08, F_REF4 = 0x13,
-       F_SEC_OFFSET = 0x17, F_EXPRLOC = 0x18, F_FLAG_PRESENT = 0x19 };
+       F_SEC_OFFSET = 0x17, F_EXPRLOC = 0x18, F_FLAG_PRESENT = 0x19, F_SDATA = 0x0d };
 
 #define TAG_IBM_DIR 0xde15
 #define TAG_IBM_FILE 0xde10
@@ -83,6 +83,11 @@ static void build_abbrev(Dbg *g) {
     ab_attr(b, AT_NAME, F_STRING);
     ab_attr(b, AT_TYPE, F_REF4);
     ab_attr(b, AT_MEMBER_LOC, F_DATA4);
+    ab_end(b);
+    ab_start(b, AB_CONST, 0x34, 0); /* an EQU */
+    ab_attr(b, AT_NAME, F_STRING);
+    ab_attr(b, AT_TYPE, F_REF4);
+    ab_attr(b, AT_CONST_VALUE, F_SDATA);
     ab_end(b);
     ab_start(b, AB_BLOCK, 0x0b, 1); /* where USINGs of DSECTs hold */
     ab_attr(b, AT_LOW_PC, F_ADDR);
@@ -201,7 +206,7 @@ static void build_uses(Dbg *g, size_t si, const DSect *d) {
                 dstr(b, dup ? xasprintf("%s_R%d", u->name, u->reg) : u->name);
                 d32(b, u->st->off);
                 d8(&ex, 0x70 + (unsigned)u->reg); /* DW_OP_breg<reg> */
-                dsleb(&ex, -u->off);
+                dsleb(&ex, u->off);
                 duleb(b, ex.len);
                 buf_write(b, ex.p, ex.len);
                 free(ex.p);
@@ -272,6 +277,12 @@ static void build_info(Dbg *g, uint32_t **sub_off) {
         d8(b, 0);
     }
 
+    for (i = 0; i < g->consts.n; i++) {
+        duleb(b, AB_CONST);
+        dstr(b, g->consts.v[i].name);
+        d32(b, g->types.v[g->consts.v[i].type].off);
+        dsleb(b, g->consts.v[i].off);
+    }
     *sub_off = xcalloc((g->sects.n + 1) * sizeof **sub_off);
     for (i = 0; i < g->sects.n; i++) {
         DSect *d = g->sects.v[i];

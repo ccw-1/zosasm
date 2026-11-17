@@ -441,6 +441,93 @@ static void test_using(void) {
 }
 
 
+/* an EQU with a value is a variable with DW_AT_const_value (abbrev 11: name, type, sleb) */
+static void test_equ(void) {
+    const char *src = "PB       CSECT\n"
+                      "         LR    1,1\n"
+                      "LEN      EQU   12\n"
+                      "NEG      EQU   -3\n"
+                      "         END\n";
+    static const uint8_t c1[] = {11, 'L', 'E', 'N', 0};
+    static const uint8_t c2[] = {11, 'N', 'E', 'G', 0};
+    uint8_t *obj = NULL;
+    size_t olen = 0;
+    Module *m = assemble(src, &obj, &olen);
+    DbgOptions o;
+    DbgResult r;
+    char err[256];
+    Elf e;
+    long s;
+    int f1 = 0, f2 = 0;
+    CHECK(m && obj);
+    if (!m || !obj) return;
+    memset(&o, 0, sizeof o);
+    o.cwd = "/w";
+    o.main_file = "t.asm";
+    o.dbg_path = "/w/t.dbg";
+    o.producer = "test";
+    CHECK(dbg_build(m, obj, olen, &o, &r, err, sizeof err));
+    CHECK(elf_parse(&e, r.elf, r.elf_len));
+    s = find_sec(&e, ".debug_info");
+    CHECK(s > 0);
+    if (s > 0) {
+        const uint8_t *d = r.elf + shf(&e, (size_t)s, 16);
+        size_t len = shf(&e, (size_t)s, 20), k;
+        for (k = 0; k + 10 <= len; k++) {
+            if (!memcmp(d + k, c1, sizeof c1) && d[k + 9] == 12) f1 = 1;
+            if (!memcmp(d + k, c2, sizeof c2) && d[k + 9] == 0x7d) f2 = 1; /* sleb -3 */
+        }
+        CHECK(f1 && f2);
+    }
+}
+
+/* a dependent USING is at the register of the USING it depends on, plus the distance */
+static void test_dependent(void) {
+    const char *src = "PB       CSECT\n"
+                      "         LR    1,1\n"
+                      "         USING OUT,3\n"
+                      "         USING INN,MID\n"
+                      "         LR    1,1\n"
+                      "OUT      DSECT\n"
+                      "A        DS    F\n"
+                      "MID      DS    F\n"
+                      "INN      DSECT\n"
+                      "B        DS    F\n"
+                      "PB       CSECT\n"
+                      "         END\n";
+    static const uint8_t v[] = {7, 'I', 'N', 'N', 0};
+    uint8_t *obj = NULL;
+    size_t olen = 0;
+    Module *m = assemble(src, &obj, &olen);
+    DbgOptions o;
+    DbgResult r;
+    char err[256];
+    Elf e;
+    long s;
+    int found = 0;
+    CHECK(m && obj);
+    if (!m || !obj) return;
+    memset(&o, 0, sizeof o);
+    o.cwd = "/w";
+    o.main_file = "t.asm";
+    o.dbg_path = "/w/t.dbg";
+    o.producer = "test";
+    CHECK(dbg_build(m, obj, olen, &o, &r, err, sizeof err));
+    CHECK(elf_parse(&e, r.elf, r.elf_len));
+    s = find_sec(&e, ".debug_info");
+    CHECK(s > 0);
+    if (s > 0) {
+        const uint8_t *d = r.elf + shf(&e, (size_t)s, 16);
+        size_t len = shf(&e, (size_t)s, 20), k;
+        for (k = 0; k + 12 <= len; k++)
+            if (!memcmp(d + k, v, sizeof v)) {
+                found = 1;
+                CHECK(d[k + 9] == 2 && d[k + 10] == 0x73 && d[k + 11] == 4); /* DW_OP_breg3 4 */
+            }
+        CHECK(found);
+    }
+}
+
 int main(void) {
     test_md5();
     test_paths();
@@ -448,5 +535,7 @@ int main(void) {
     test_multi();
     test_dsect();
     test_using();
+    test_equ();
+    test_dependent();
     TEST_MAIN_END();
 }

@@ -1330,8 +1330,14 @@ that CDA needs are kept.
   `DW_TAG_variable` of the structure type per active USING, location `DW_OP_breg<reg> -off`
   (`off` = the USING's base offset); the name is the USING label or the DSECT name, `NAME_R<n>`
   when two active USINGs have the same name. LLDB: `frame variable` shows `(RECD) OLD = (CNT =
-  99, ...)` inside the block only. Dependent USINGs, ranges (`lo`/`hi`, `end`) and absolute
-  USINGs are ignored.
-* **Not done**: `EQU` constants, ADATA. dbx 2.4 on pok56 shows no symbols for IBM's own HLASM modules either, so dbx is
+  99, ...)` inside the block only. A dependent USING keeps the register of its parent and a
+  `bias` (`UsingRec.bias`: the register holds the address of `off` minus `bias`), so the structure
+  is at `reg + bias - off` for every USING; ranges do not change the address and are ignored,
+  absolute USINGs give no variable.
+* **EQU constants**: `SYM_ABS` symbols defined by an `EQU` become CU level `DW_TAG_variable`s with
+  `DW_AT_const_value` (sleb), always type `int64`: LLDB on a big endian host reads the FIRST half
+  of the 8 byte buffer for a 4 byte `const_value` and shows 0 (found on pok56). Register
+  equates (`R3 EQU 3`) are included, they cannot be told apart.
+* **Not done**: ADATA. dbx 2.4 on pok56 shows no symbols for IBM's own HLASM modules either, so dbx is
   untested; `dwarfdump -i -l` and LLDB were used (tests `tests/test_dbg.c`, CLI tests, manual
   runs `up.sh`-style: assemble, z-scp, `ld`, `lldb -b`).

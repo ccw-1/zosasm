@@ -2412,8 +2412,13 @@ cannot show it.
   is in force, from the `USING` to the `DROP` or the end of the CSECT, the code has a
   lexical block with a variable of that structure type at the register, so
   `frame variable` shows the record, for example `(RECD) OLD = (CNT = 99, NAME = "WORLD   ")`.
-  The name is the USING label or the DSECT name. Dependent `USING`s, ranges and
-  absolute `USING`s give no variable.
+  The name is the USING label or the DSECT name. A dependent `USING` is placed
+  at the register of the `USING` it depends on, plus the distance; the limits of
+  a `USING` range do not matter, and an absolute `USING` gives no variable.
+* An `EQU` with a value is a `DW_TAG_variable` with `DW_AT_const_value`, typed
+  `int64` (`p LEN`, `target variable LEN` in LLDB). Register equates such as
+  `R3 EQU 3` are included: the debug information cannot tell them from other
+  constants.
 * In the object: a second GOFF module after the normal one, as `as -g` writes
   it: the classes `D_@@ADBG_DBG` (part `DBGNAME`: length, the signature, the
   EBCDIC path of the `.dbg`), `D_@@ADBG_MAP` (part `ENTRIES`, 32 bytes per CSECT)
@@ -2442,7 +2447,7 @@ Not the same as `as -g`:
 * The DWARF is zosasm's own. The producer string differs; the line program
   header is version 3 and has a file table, where IBM's has an empty one and
   names the file with a vendor opcode; data types are integers, bytes, hexadecimal
-  floats and arrays of them, and DSECT structures (no `EQU` constants).
+  floats and arrays of them, and DSECT structures.
 * The `.dbg` has no symbols for the `B_IDRL` and `B_PRV` classes (IBM's has
   them, with size 0).
 * `-g` and `-elf` exclude each other (ELF objects have no GOFF link module).

@@ -48,7 +48,7 @@ typedef struct {
     int64_t lo, hi; /* addresses in the CSECT */
     DStruct *st;
     int reg;
-    int64_t off;
+    int64_t off; /* the structure starts at register + off */
     char *name;
 } DUse;
 
@@ -88,6 +88,7 @@ typedef struct {
     char *comp_dir, *cu_name;
     Vec(DSect *) sects;
     Vec(DStruct *) structs;
+    Vec(DLab) consts; /* EQU constants: off = the value */
     Vec(DFile) files;
     StrMap filemap; /* file name -> index + 1 */
     Vec(DDir) dirs;

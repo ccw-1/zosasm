@@ -249,6 +249,18 @@ static void collect(Dbg *g) {
         const Stmt *def;
         DSect *d;
         DLab l;
+        if (s->kind == SYM_ABS && value_is_abs(&s->val) && s->def_idx < m->stmts.n) { /* an EQU constant */
+            const Stmt *eq = m->stmts.v[s->def_idx];
+            if (eq && eq->op && strcmp(eq->name, s->name) == 0 && za_streqi(eq->op, "EQU")) {
+                DLab c;
+                c.name = s->name;
+                c.off = s->val.abs;
+                c.var = 1;
+                c.type = type_add(g, 5, 8, 1); /* always 8 bytes: LLDB on a big endian host reads the first half of a 4 byte const_value */
+                vec_push(&g->consts, c);
+            }
+            continue;
+        }
         if (s->kind != SYM_LABEL || !s->piece) continue;
         d = dsect_of(g, s->piece->cls);
         def = s->def_idx < m->stmts.n ? m->stmts.v[s->def_idx] : NULL;
@@ -284,7 +296,7 @@ static void collect(Dbg *g) {
         DSect *d;
         DUse use;
         const ZRec *zb;
-        if (u->dependent || u->reg < 0 || u->reg > 15 || u->zbeg >= m->zrecs.n) continue;
+        if (u->reg < 0 || u->reg > 15 || u->zbeg >= m->zrecs.n) continue;
         kc = u->key.kind == B_PIECE ? ((Piece *)u->key.p)->cls : u->key.kind == B_CLASS ? (Class *)u->key.p : NULL;
         st = kc && kc->sect->kind == K_DSECT ? struct_of(g, kc->sect) : NULL;
         zb = &m->zrecs.v[u->zbeg];
@@ -292,7 +304,7 @@ static void collect(Dbg *g) {
         if (!st || !d) continue;
         use.st = st;
         use.reg = u->reg;
-        use.off = u->off;
+        use.off = u->bias - u->off;
         use.name = u->label ? u->label : st->sect->name;
         use.lo = zb->off;
         use.hi = d->len;

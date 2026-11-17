@@ -951,6 +951,7 @@ static void list_usings(Asm *a, Stmt *st) {
         r.end = u->end;
         r.reg = u->reg;
         r.dependent = u->dependent;
+        r.bias = u->bias;
         r.id = u->id;
         r.zbeg = a->mod->zrecs.n - 1;
         r.zend = (size_t)-1;
