@@ -10,7 +10,7 @@ SRC  := $(filter-out src/main.c src/hlasm2za.c src/mcp.c src/zafmt.c,$(wildcard 
 OBJ  := $(SRC:src/%.c=build/%.o)
 TESTS := $(patsubst tests/%.c,build/%,$(wildcard tests/test_*.c))
 
-.PHONY: all test test-maclib clean isa
+.PHONY: all test test-maclib clean isa pdf
 all: build/zosasm build/hlasm2za build/zafmt build/zosasm-mcp
 
 build:
@@ -62,6 +62,21 @@ isa: build/isagen
 
 build/isagen: tools/isagen.c src/util.c src/util.h | build
 	$(CC) $(CFLAGS_ALL) -o $@ tools/isagen.c src/util.c
+
+# User's Guide as PDF (pandoc + XeLaTeX); the version comes from src/version.h.
+# The hand written contents list is dropped, pandoc makes its own.
+ZASM_VERSION := $(shell sed -n 's/.*ZASM_VERSION_STR "\(.*\)".*/\1/p' src/version.h)
+pdf: docs/zosasm-users-guide.pdf
+docs/zosasm-users-guide.pdf: docs/GUIDE.md docs/guide-header.tex src/version.h
+	awk '/^# /&&!t{t=1;next} /^## Contents/{skip=1;next} /^### Feature index/{skip=0} !skip' docs/GUIDE.md | \
+	pandoc -f markdown -o $@ --pdf-engine=xelatex --toc --toc-depth=2 \
+	  --shift-heading-level-by=-1 -V documentclass=report \
+	  -M title="zosasm User's Guide" -M subtitle="Version $(ZASM_VERSION)" \
+	  -M author="zosasm" -M date="$(shell date +%Y-%m-%d)" \
+	  -V geometry:margin=2.2cm -V colorlinks=true -V linkcolor=blue \
+	  -V mainfont="DejaVu Serif" -V monofont="DejaVu Sans Mono" \
+	  -V monofontoptions="Scale=0.85" -V fontsize=10pt \
+	  -H docs/guide-header.tex --highlight-style=tango
 
 clean:
 	rm -rf build

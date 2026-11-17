@@ -69,8 +69,8 @@ registers as numbers or `EQU` names) to zosasm source, by default with
 `%r1` registers so that the result assembles with `-strict-registers`.
 `MACRO`..`MEND` definitions become zosasm macros with the control flow
 recovered (`-m` for a library member, `-macro-dir` for a library, `-flat`
-for `#goto`); open code conditional assembly is left and reported (guide
-section 16, DESIGN.md section 16).
+for `#goto`); open code conditional assembly becomes a synthetic macro
+`OPENCODE` (guide section 16, DESIGN.md section 16).
 
 `zosasm -elf FILE.za` writes a relocatable ELF64 object for Linux on Z (big
 endian, `EM_S390`) instead of GOFF, with ASCII character constants; `-ascii`
@@ -109,6 +109,17 @@ make test
 
 * `docs/GUIDE.md` - the **User's Guide**: the language, the tool and worked
   examples (`docs/examples/`, all assembled by `make test`).
+  `docs/zosasm-users-guide.pdf` is the same text as a PDF (`make pdf`; needs
+  pandoc and XeLaTeX; the PDF carries the version of `src/version.h`).
+* `CHANGELOG.md` - what each version contains.
 * `DESIGN.md` - design, source syntax, GOFF mapping, instruction table
   (section 5), diagnostics, tests.
 * `PLAN.md` - status and open work.
+
+## Versions
+
+The version is in `src/version.h` (`zosasm -version`, the listing header, the
+`__ZASM_VERSION__` preprocessor name, the guide PDF) and follows semantic
+versioning: 0.x until the output has been checked against IBM's tools for
+the whole language. Releases are git tags `vX.Y.Z`; `CHANGELOG.md` lists the
+changes.

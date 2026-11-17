@@ -9,12 +9,12 @@ the language and the tool; the *why* of each decision is in `DESIGN.md`.
 
 **What to expect.** The object files follow IBM's GOFF documentation, and the
 instruction table is generated from the *z/Architecture Principles of
-Operation*. At the time of writing, no object made by zosasm has been
-compared with one made by IBM's assembler or run through the z/OS binder
-(no z/OS system was available). Where this guide says that something is
-"not verified against IBM", treat the exact bytes as an interpretation of the
-documentation until a z/OS test has been done. Section 14 lists what is
-affected.
+Operation*. An oracle run on z/OS (HLASM 6.0 and the binder, 2026-11)
+compared instruction operand rules, DC/DS rules and the objects of 26 probe
+programs, and linked mixes of IBM and zosasm objects; section 14 says what
+was covered. Where this guide says that something is "not verified against
+IBM", treat the exact bytes as an interpretation of the documentation until a
+z/OS test has been done. Section 14 lists what is affected.
 
 **Conventions.** `monospace` is source text or a command. Square brackets
 mean "optional". Example programs are in `docs/examples/`; every program
