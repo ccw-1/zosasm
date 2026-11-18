@@ -184,6 +184,23 @@ static void reloc_bytes(Buf *out, const GoffReloc *r, const GoffReloc *prev) {
     }
 }
 
+int goff_reloc_is(const GoffReloc *r, const GoffRelocPat *p) {
+    if (r->reference != p->reference || r->store != p->store) return 0;
+    if (p->referent == GOFF_PAT_PART_OR_CLASS) {
+        if (r->referent != GOFF_REFERENT_CLASS && r->referent != GOFF_REFERENT_PART) return 0;
+    } else if (r->referent != p->referent) {
+        return 0;
+    }
+    if (p->length) {
+        if (r->length != p->length || r->bit_length != p->bit_length || r->bit_offset != p->bit_offset)
+            return 0;
+    } else if (r->bit_length || r->bit_offset) {
+        return 0;
+    }
+    if (p->lenset && (r->length > 15 || !(p->lenset & (1u << r->length)))) return 0;
+    return 1;
+}
+
 const char *goff_write_rld(GoffWriter *w, const GoffReloc *items, size_t n) {
     Buf data = {0};
     const GoffReloc *prev = NULL;

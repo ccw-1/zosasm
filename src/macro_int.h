@@ -129,4 +129,7 @@ typedef struct {
 } Fn;
 const Fn *fn_find(const char *name);
 
+/* the built-in names the macro language knows (macro.c) */
+int is_builtin_name(const char *n);
+
 #endif

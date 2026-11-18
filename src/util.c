@@ -61,6 +61,7 @@ char *xasprintf(const char *fmt, ...) {
 int za_isdigit(int c) { return c >= '0' && c <= '9'; }
 int za_isalpha(int c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
 int za_isalnum(int c) { return za_isdigit(c) || za_isalpha(c); }
+int za_is_idc(int c) { return za_isalnum(c) || c == '_'; }
 int za_isxdigit(int c) { return za_isdigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
 int za_isspace(int c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v'; }
 int za_toupper(int c) { return (c >= 'a' && c <= 'z') ? c - 32 : c; }

@@ -176,7 +176,7 @@ static size_t switch_chain(Lines *v, size_t i, Lines *out) {
     int ind = indent_of(v->v[i]);
     Vec(Arm) arms = {0};
     char *lhs = NULL;
-    size_t cur = i, k, j, nlit = 0, close;
+    size_t cur = i, k, j, close;
     for (;;) {
         Arm a;
         const char *h = v->v[cur] + ind;
@@ -192,7 +192,6 @@ static size_t switch_chain(Lines *v, size_t i, Lines *out) {
             if (hl < 5 || strcmp(h + hl - 3, ") {") != 0) return 0;
             cond = xstrndup(c, (size_t)(h + hl - 3 - c));
             if (!parse_eq_or(cond, &lhs, &a.lits)) return 0;
-            nlit += a.lits.n;
         } else if (!strcmp(h, "#} else {")) {
             a.is_else = 1;
         } else {
@@ -237,7 +236,6 @@ static size_t switch_chain(Lines *v, size_t i, Lines *out) {
         for (j = arms.v[k].head + 1; j < arms.v[k].end; j++) vec_push(out, v->v[j]);
     }
     vec_push(out, xasprintf("%*s#}", ind, ""));
-    (void)nlit;
     return close + 1;
 }
 

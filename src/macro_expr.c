@@ -32,7 +32,6 @@ void ps_init(Parser *ps, MacSys *ms, const char *file, int line, int col0, const
     ps_next(ps);
 }
 
-static int is_idc(int c) { return za_isalnum(c) || c == '_'; }
 
 static int hexv(int c) {
     if (c >= '0' && c <= '9') return c - '0';
@@ -61,7 +60,7 @@ void ps_next(Parser *ps) {
         int64_t v;
         if (c == '0' && (s[p + 1] == 'x' || s[p + 1] == 'X' || s[p + 1] == 'b' || s[p + 1] == 'B'))
             q = p + 2;
-        while (is_idc((unsigned char)s[q])) q++;
+        while (za_is_idc((unsigned char)s[q])) q++;
         t = xstrndup(s + p, q - p);
         if (!v_parse_int(t, &v)) {
             ps->tstart = p;
@@ -76,7 +75,7 @@ void ps_next(Parser *ps) {
     if (za_isalpha(c) || c == '_') {
         size_t q = p;
         int t0;
-        while (is_idc((unsigned char)s[q])) q++;
+        while (za_is_idc((unsigned char)s[q])) q++;
         t0 = za_toupper(c);
         if (q - p == 1 && (t0 == 'X' || t0 == 'B' || t0 == 'C') && s[q] == '\'') {
             size_t e = q + 1;
@@ -108,9 +107,9 @@ void ps_next(Parser *ps) {
             ps->p = e + 1;
             return;
         }
-        if (q - p == 3 && za_strncmpi(s + p, "sys", 3) == 0 && s[q] == '.' && is_idc((unsigned char)s[q + 1])) {
+        if (q - p == 3 && za_strncmpi(s + p, "sys", 3) == 0 && s[q] == '.' && za_is_idc((unsigned char)s[q + 1])) {
             q++;
-            while (is_idc((unsigned char)s[q])) q++;
+            while (za_is_idc((unsigned char)s[q])) q++;
         }
         ps->tk = TK_ID;
         ps->ts = za_strlower(xstrndup(s + p, q - p));
@@ -200,11 +199,6 @@ static MExpr *mk(XKind k) {
 }
 
 static MExpr *parse_cond(Parser *ps);
-
-static int is_builtin_name(const char *n) {
-    return !strcmp(n, "__file__") || !strcmp(n, "__line__") || !strcmp(n, "__goff__") ||
-           !strcmp(n, "__elf__") || !strcmp(n, "__ascii__") || !strcmp(n, "__ebcdic__");
-}
 
 static MExpr *parse_primary(Parser *ps) {
     MExpr *e;

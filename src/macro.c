@@ -102,7 +102,6 @@ Reporter *ms_rep(MacSys *ms) { return ms->rep; }
 
 /* ---- small helpers ---------------------------------------------------------------- */
 
-static int is_idc(int c) { return za_isalnum(c) || c == '_'; }
 
 static const char *skipb(const char *s) {
     while (is_blank((unsigned char)*s)) s++;
@@ -112,7 +111,7 @@ static const char *skipb(const char *s) {
 static size_t ident_len(const char *s) {
     size_t n = 0;
     if (!(za_isalpha((unsigned char)s[0]) || s[0] == '_')) return 0;
-    while (is_idc((unsigned char)s[n])) n++;
+    while (za_is_idc((unsigned char)s[n])) n++;
     return n;
 }
 
@@ -132,7 +131,7 @@ static long const_end(const char *s, size_t i) {
     size_t j;
     int c = za_toupper((unsigned char)s[i]);
     if (!(c == 'X' || c == 'B' || c == 'C') || s[i + 1] != '\'') return -1;
-    if (i > 0 && is_idc((unsigned char)s[i - 1])) return -1;
+    if (i > 0 && za_is_idc((unsigned char)s[i - 1])) return -1;
     for (j = i + 2; s[j]; j++) {
         if (s[j] == '\'') {
             if (s[j + 1] == '\'')
@@ -288,6 +287,11 @@ static int model_continues(const char *line, int is_cont) {
 
 /* ---- the collector -------------------------------------------------------------------- */
 
+int is_builtin_name(const char *n) {
+    return !strcmp(n, "__file__") || !strcmp(n, "__line__") || !strcmp(n, "__goff__") ||
+           !strcmp(n, "__elf__") || !strcmp(n, "__ascii__") || !strcmp(n, "__ebcdic__");
+}
+
 int mac_top_kind(const char *t) {
     const char *p;
     size_t n, i;
@@ -299,7 +303,7 @@ int mac_top_kind(const char *t) {
     p = skipb(t + 1);
     n = ident_len(p);
     if (n == 0) return 0;
-    if (n == 5 && !strncmp(p, "macro", 5) && !is_idc((unsigned char)p[n])) return 1;
+    if (n == 5 && !strncmp(p, "macro", 5) && !za_is_idc((unsigned char)p[n])) return 1;
     if (n == 2 && !strncmp(p, "if", 2)) return code_delta(t + 1) > 0 ? 2 : 0;
     for (i = 0; i < sizeof dirs / sizeof dirs[0]; i++)
         if (strlen(dirs[i]) == n && !strncmp(dirs[i], p, n)) return 0;
@@ -341,7 +345,7 @@ static MacLine make_line(int line, const char *text) {
 
 size_t mac_collect(MacSys *ms, const SrcLine *lines, size_t n, size_t i, int kind, MacText *out) {
     size_t k = i;
-    int depth = 0, first = 1;
+    int depth = 0;
     (void)ms;
     memset(out, 0, sizeof *out);
     out->file = lines[i].file;
@@ -370,7 +374,6 @@ size_t mac_collect(MacSys *ms, const SrcLine *lines, size_t n, size_t i, int kin
             }
             depth += code_delta(skipb(buf_cstr(&b)) + 1);
             vec_push(&out->lines, make_line(line, buf_cstr(&b)));
-            if (depth <= 0 && first) break;
             if (depth <= 0) break;
         } else if (*p == 0 || (p[0] == '/' && p[1] == '/')) {
             /* blank lines and macro comments are dropped */
@@ -385,7 +388,6 @@ size_t mac_collect(MacSys *ms, const SrcLine *lines, size_t n, size_t i, int kin
             }
             vec_push(&out->lines, make_line(line, buf_cstr(&b)));
         }
-        first = 0;
     }
     if (depth > 0 && out->lines.n > 0)
         diag_help(rep_errorf(ms->rep, "ZA4100", span_make(out->file, out->lines.v[0].line, 1, 1),
@@ -479,11 +481,6 @@ static int begin_stmt(Cmp *cp, const MacLine *ml, int col) {
 
 /* ---- template compilation (&name substitution) ---------------------------------------------- */
 
-static int is_builtin_name(const char *n) {
-    return !strcmp(n, "__file__") || !strcmp(n, "__line__") || !strcmp(n, "__goff__") ||
-           !strcmp(n, "__elf__") || !strcmp(n, "__ascii__") || !strcmp(n, "__ebcdic__");
-}
-
 typedef Vec(Part) PartVec;
 
 static void part_text(PartVec *v, Buf *lit) {
@@ -568,9 +565,9 @@ static Tmpl tmpl_compile(Cmp *cp, const MacLine *ml, const char *line, size_t fr
             }
             j = i + 1 + n;
             if (n == 3 && !za_strncmpi(line + i + 1, "sys", 3) && line[j] == '.' &&
-                is_idc((unsigned char)line[j + 1])) {
+                za_is_idc((unsigned char)line[j + 1])) {
                 j++;
-                while (j < to && is_idc((unsigned char)line[j])) j++;
+                while (j < to && za_is_idc((unsigned char)line[j])) j++;
             }
             name = za_strlower(xstrndup(line + i + 1, j - i - 1));
             x = xcalloc(sizeof *x);
@@ -850,7 +847,7 @@ static void cp_close(Cmp *cp, const MacLine *ml, const char *t, const char *p) {
         cerr(cp, ml, col, "ZA4100", "#} without an open block");
         return;
     }
-    if (!strncmp(q, "else", 4) && !is_idc((unsigned char)q[4])) {
+    if (!strncmp(q, "else", 4) && !za_is_idc((unsigned char)q[4])) {
         const char *r = skipb(q + 4);
         Parser ps;
         int jidx;
@@ -868,7 +865,7 @@ static void cp_close(Cmp *cp, const MacLine *ml, const char *t, const char *p) {
         patch(cp, b->pending, (int)cp->st.n);
         b->pending = -1;
         b->bid = new_bid(cp, cp->bpar.v[b->bid]);
-        if (!strncmp(r, "if", 2) && !is_idc((unsigned char)r[2])) {
+        if (!strncmp(r, "if", 2) && !za_is_idc((unsigned char)r[2])) {
             ps_init(&ps, cp->ms, cp->file, ml->line, (int)(r + 2 - t) + 1, r + 2);
             b->pending = cond_jfalse(cp, ml, t, p, &ps, b->hdepth);
             b = top(cp);

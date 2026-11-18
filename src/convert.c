@@ -278,7 +278,7 @@ static int has_cont_mark(const Conv *c, const char *ln) {
 static const char *const OPERANDLESS[] = {"CSECT", "DSECT", "RSECT", "COM", "LOCTR", "LTORG", "EJECT", "MEND", "MEXIT", "ANOP", NULL};
 static const char *const CASTMT[] = {"AIF",  "AGO",  "ANOP", "SETA", "SETB",  "SETC",    "LCLA",  "LCLB", "LCLC",
                                      "GBLA", "GBLB", "GBLC", "ACTR", "MNOTE", "MEXIT",   "AREAD", "AINSERT", "MHELP", NULL};
-static const char *const UNSUPPORTED[] = {"OPSYN", "ADATA", "REPRO", "ALIAS", NULL};
+static const char *const CONV_UNSUPPORTED[] = {"OPSYN", "ADATA", "REPRO", "ALIAS", NULL};
 
 static int in_list(const char *const *l, const char *s) {
     for (; *l; l++)
@@ -326,7 +326,7 @@ static void classify(Conv *c, const LS *l) {
         warnf(c, l->line, "conditional assembly (sequence symbol or variable symbol): not converted");
     } else if (in_list(CASTMT, op)) {
         warnf(c, l->line, "%s is conditional assembly: not converted (use #if and #define)", op);
-    } else if (in_list(UNSUPPORTED, op)) {
+    } else if (in_list(CONV_UNSUPPORTED, op)) {
         warnf(c, l->line, "%s is not supported by zosasm%s", op,
               strcmp(op, "ALIAS") ? "" : " (name the symbol with a quoted symbol \"name\" instead)");
     } else if (strmap_get(&c->macros, op) == (void *)2) {

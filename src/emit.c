@@ -205,31 +205,50 @@ static void init_ld(GoffESD *ld, Section *s, const char *name, const Class *c, i
 /* Q, CXD, J and R constants.  These encodings follow the reference and
  * referent types of the GOFF documentation but have not been checked against
  * an IBM assembler object (DESIGN.md section 5.4); keep them in this function. */
+const GoffRelocPat *reloc_pattern(RelocKind k) {
+    /* the flags of each x-con kind; Q accepts a field of 1 to 8 bytes, LEN of
+     * 2, 3, 4 or 8, R of 3, 4 or 8 (bit n of lenset = n bytes) */
+    static const GoffRelocPat pats[] = {
+        {GOFF_REF_OFFSET, GOFF_REFERENT_CLASS, 0, 0x1FE, 0, 0, 0},             /* REL_Q */
+        {GOFF_REF_LONGDISP, GOFF_REFERENT_CLASS, 0, 0, 2, 4, 4},               /* REL_QY: 20 bit long
+                                                                                displacement, bits 4..23 */
+        {GOFF_REF_LENGTH, GOFF_REFERENT_CLASS, 1, 1u << 4, 0, 0, 0},           /* REL_CXD */
+        {GOFF_REF_LENGTH, GOFF_PAT_PART_OR_CLASS, 1, (1u << 2) | (1u << 3) | (1u << 4) | (1u << 8),
+         0, 0, 0}, /* REL_LEN: PART or CLASS, the target decides */
+        {GOFF_REF_RTYPE, GOFF_REFERENT_LABEL, 1, (1u << 3) | (1u << 4) | (1u << 8), 0, 0, 0}, /* REL_R */
+    };
+    switch (k) {
+    case REL_Q: return &pats[0];
+    case REL_QY: return &pats[1];
+    case REL_CXD: return &pats[2];
+    case REL_LEN: return &pats[3];
+    case REL_R: return &pats[4];
+    default: return NULL; /* A/V/Y constants and relative immediates: no x-con pattern */
+    }
+}
+
 static int reloc_xd(const Class *c, const Reloc *r, GoffReloc *g, char *err, size_t errsz) {
     const Symbol *t = r->target;
+    const GoffRelocPat *p = reloc_pattern(r->kind);
+    if (p) { /* the fixed flags come from the table shared with the disassembler */
+        g->reference = p->reference;
+        g->store = p->store;
+        if (p->referent) g->referent = p->referent;
+        if (p->length) {
+            g->length = p->length;
+            g->bit_length = p->bit_length;
+            g->bit_offset = p->bit_offset;
+        }
+    }
     switch (r->kind) {
     case REL_CXD:
-        g->reference = GOFF_REF_LENGTH;
-        g->referent = GOFF_REFERENT_CLASS;
         g->rid = c->sect->prv_esd;
-        g->store = 1;
         return 1;
     case REL_Q:
-        g->reference = GOFF_REF_OFFSET;
-        g->referent = GOFF_REFERENT_CLASS;
+    case REL_QY:
         g->rid = t ? t->esd : r->cls->pr;
-        return 1;
-    case REL_QY: /* 20 bit long displacement field: bits 4 to 23 of 3 bytes */
-        g->reference = GOFF_REF_LONGDISP;
-        g->referent = GOFF_REFERENT_CLASS;
-        g->rid = t ? t->esd : r->cls->pr;
-        g->length = 2;
-        g->bit_length = 4;
-        g->bit_offset = 4;
         return 1;
     case REL_LEN:
-        g->reference = GOFF_REF_LENGTH;
-        g->store = 1;
         if (t) {
             g->referent = GOFF_REFERENT_PART;
             g->rid = t->esd;
@@ -242,9 +261,6 @@ static int reloc_xd(const Class *c, const Reloc *r, GoffReloc *g, char *err, siz
         }
         return 1;
     default: /* REL_R */
-        g->reference = GOFF_REF_RTYPE;
-        g->referent = GOFF_REFERENT_LABEL;
-        g->store = 1;
         g->rid = t->kind == SYM_EXT ? t->esd : t->ld_esd ? t->r_er : 0;
         if (!g->rid) {
             snprintf(err, errsz, "R-type constant: \"%s\" has no label definition", t->name);

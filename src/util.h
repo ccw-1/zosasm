@@ -22,6 +22,7 @@ char *xvasprintf(const char *fmt, va_list ap);
 int za_isdigit(int c);
 int za_isalpha(int c);
 int za_isalnum(int c);
+int za_is_idc(int c); /* an identifier character: alnum or _ */
 int za_isxdigit(int c);
 int za_isspace(int c);
 int za_toupper(int c);

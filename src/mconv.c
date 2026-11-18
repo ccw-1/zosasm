@@ -86,7 +86,6 @@ static void warn(MC *m, const char *fmt, ...) {
 
 /* ---- names ----------------------------------------------------------------- */
 
-static int is_idc(int c) { return za_isalnum(c) || c == '_'; }
 static int is_hlc(int c) { return za_isalnum(c) || c == '_' || c == '$' || c == '@' || c == '#'; }
 
 static const char *const RESERVED[] = {"let", "global", "if", "else", "while", "for", "switch", "case",
@@ -674,9 +673,7 @@ static E parse_prim(XP *p) {
         }
     }
     if (c == '&') {
-        E e = parse_ref(p);
-        if (p->s[p->i] == '\'') return e;
-        return e;
+        return parse_ref(p);
     }
     if (za_isdigit((unsigned char)c)) {
         int64_t v = 0;
@@ -952,11 +949,11 @@ static void parse_proto(MC *m, const MHStmt *p) {
 static int simple_ref(const char *t) {
     size_t i = 0;
     if (!(za_isalpha((unsigned char)t[0]) || t[0] == '_')) return 0;
-    while (is_idc((unsigned char)t[i])) i++;
+    while (za_is_idc((unsigned char)t[i])) i++;
     if (t[i] == '.') {
         i++;
-        if (!is_idc((unsigned char)t[i])) return 0;
-        while (is_idc((unsigned char)t[i])) i++;
+        if (!za_is_idc((unsigned char)t[i])) return 0;
+        while (za_is_idc((unsigned char)t[i])) i++;
     }
     if (t[i] == '[') {
         i++;
@@ -990,7 +987,7 @@ static char *model_text(MC *m, const char *s, int nofold) {
                 e = parse_ref(&p);
                 i = p.i;
                 c = (unsigned char)s[i];
-                if (simple_ref(e.txt) && !is_idc(c) && c != '.' && c != '[')
+                if (simple_ref(e.txt) && !za_is_idc(c) && c != '.' && c != '[')
                     vec_push(&reps, xasprintf("&%s", e.txt));
                 else
                     vec_push(&reps, xasprintf("&{%s}", e.txt));
@@ -1198,7 +1195,7 @@ static void conv_model(MC *m, const MHStmt *s) {
     node(m, N_CODE, buf_cstr(&b), NULL, NULL, NULL, NULL);
 }
 
-static const char *const UNSUPPORTED[] = {"COPY", "SETAF", "SETCF", "MACRO", "MEND", NULL};
+static const char *const MCONV_UNSUPPORTED[] = {"COPY", "SETAF", "SETCF", "MACRO", "MEND", NULL};
 
 /* AINSERT 'record'[,FRONT|BACK] */
 static void conv_ainsert(MC *m, const MHStmt *s) {
@@ -1245,9 +1242,9 @@ static void conv_stmt(MC *m, const MHStmt *s) {
             strmap_put(&m->seqdef, z, (void *)1);
             node(m, N_LABEL, NULL, NULL, NULL, z, NULL);
         }
-        for (k = 0; UNSUPPORTED[k]; k++)
-            if (is_op(op, UNSUPPORTED[k])) {
-                fail(m, "%s is not converted", UNSUPPORTED[k]);
+        for (k = 0; MCONV_UNSUPPORTED[k]; k++)
+            if (is_op(op, MCONV_UNSUPPORTED[k])) {
+                fail(m, "%s is not converted", MCONV_UNSUPPORTED[k]);
                 return;
             }
         if ((!za_strncmpi(op, "LCL", 3) || !za_strncmpi(op, "GBL", 3)) && strlen(op) == 4) return;

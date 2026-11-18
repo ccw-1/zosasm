@@ -89,6 +89,22 @@ typedef struct {
     int cond_seq, amode_sens;
 } GoffReloc;
 
+/* the flag pattern of a relocation record: what the assembler writes per
+ * relocation kind, and what the disassembler recognizes in a foreign object.
+ * referent GOFF_PAT_PART_OR_CLASS: the kind decides between them; lenset bit
+ * n set: the field is n bytes (0 = any); length != 0: a fixed field shape
+ * (QY) that also carries bit_length and bit_offset. */
+#define GOFF_PAT_PART_OR_CLASS 0xFF /* not a GOFF_REFERENT_* value */
+
+typedef struct {
+    uint8_t reference, referent;
+    int store;
+    uint16_t lenset;
+    uint8_t length, bit_length, bit_offset;
+} GoffRelocPat;
+
+int goff_reloc_is(const GoffReloc *r, const GoffRelocPat *p);
+
 typedef struct {
     uint32_t esdid, length;
 } GoffDeferredLen;

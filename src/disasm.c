@@ -414,10 +414,9 @@ static int xcon_reloc(Ctx *x, const GoffReloc *r, DRel *d) {
     char *name = NULL;
     DEr *er = NULL;
     if (!t || r->reference == GOFF_REF_ADDRESS || r->reference == GOFF_REF_RELIMM) return 0;
-    if ((r->reference == GOFF_REF_OFFSET && r->referent == GOFF_REFERENT_CLASS && !r->store &&
-         n >= 1 && n <= 8) ||
-        (r->reference == GOFF_REF_LONGDISP && r->referent == GOFF_REFERENT_CLASS && !r->store &&
-         n == 2 && r->bit_length == 4 && r->bit_offset == 4)) {
+    /* the flag patterns come from the table the writer uses (emit.c), so the
+     * two cannot drift apart; which ESD the rid points at is decided here */
+    if (goff_reloc_is(r, reloc_pattern(REL_Q)) || goff_reloc_is(r, reloc_pattern(REL_QY))) {
         char kind = r->reference == GOFF_REF_LONGDISP ? 'q' : 'Q'; /* q = QY, 3 bytes */
         if (r->reference == GOFF_REF_LONGDISP) n = 3;
         if (t->kind == 'P') {
@@ -427,7 +426,7 @@ static int xcon_reloc(Ctx *x, const GoffReloc *r, DRel *d) {
             k = kind;
             name = ((DClass *)t->p)->part;
         }
-    } else if (r->reference == GOFF_REF_LENGTH && r->store && (n == 2 || n == 3 || n == 4 || n == 8)) {
+    } else if (goff_reloc_is(r, reloc_pattern(REL_LEN))) {
         if (r->referent == GOFF_REFERENT_PART && t->kind == 'P') {
             k = 'J';
             name = ((DPr *)t->p)->name;
@@ -442,8 +441,7 @@ static int xcon_reloc(Ctx *x, const GoffReloc *r, DRel *d) {
                    r->offset % 4 == 0) {
             k = 'X';
         }
-    } else if (r->reference == GOFF_REF_RTYPE && r->referent == GOFF_REFERENT_LABEL && r->store &&
-               (n == 3 || n == 4 || n == 8)) {
+    } else if (goff_reloc_is(r, reloc_pattern(REL_R))) {
         if (t->kind == 'E') {
             size_t q;
             k = 'R';

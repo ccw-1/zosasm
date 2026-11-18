@@ -11,6 +11,7 @@
 #include "diag.h"
 #include "isa.h"
 #include "util.h"
+#include "goff.h"
 
 /* ---- object model ---------------------------------------------------- */
 
@@ -45,6 +46,10 @@ typedef struct {
 } ClassAttr;
 
 typedef enum { REL_ADDR, REL_V, REL_Q, REL_CXD, REL_RI, REL_LEN, REL_R, REL_QY } RelocKind;
+
+/* the GOFF flag pattern each relocation kind writes (emit.c defines them);
+ * the disassembler recognizes foreign records with the same table */
+const GoffRelocPat *reloc_pattern(RelocKind k);
 
 typedef struct {
     int64_t off; /* offset in the class */
