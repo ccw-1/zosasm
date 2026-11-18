@@ -39,6 +39,46 @@ static void apply_xattr(GoffBehavior *b, const XAttr *x) {
 /* the ESD item that carries the text of the class */
 static uint32_t class_target(const Class *c) { return c->part ? c->pr : c->esd; }
 
+/* defense in depth before anything is written: the assembler caps a class at
+ * ZA_MAX_LOC, but the GOFF records carry lengths and offsets in 32 bits and
+ * trust the assembler otherwise. A violation here is a bug in the assembler;
+ * it must be an error, not a silently truncated object. */
+int module_validate(const Module *m, char *err, size_t errsz) {
+    size_t si, ci, i;
+    for (si = 0; si < m->sections.n; si++) {
+        Section *s = m->sections.v[si];
+        for (ci = 0; ci < s->classes.n; ci++) {
+            Class *c = s->classes.v[ci];
+            if (s->kind != K_DSECT &&
+                (c->len < 0 || c->len > (int64_t)0xFFFFFFFF)) {
+                snprintf(err, errsz, "the class %s of section \"%s\" is %lld bytes long; GOFF "
+                                     "cannot hold more than 4294967295",
+                         c->name ? c->name : "", s->name, (long long)c->len);
+                return 0;
+            }
+            for (i = 0; i < c->relocs.n; i++) {
+                const Reloc *r = &c->relocs.v[i];
+                if (r->off < 0 || r->off + r->len > c->len) {
+                    snprintf(err, errsz, "a relocation of the class %s lies outside its text",
+                             c->name ? c->name : "");
+                    return 0;
+                }
+            }
+        }
+    }
+    if (m->entry) {
+        Symbol *e = module_symbol(m, m->entry);
+        if (e && e->piece && (e->piece->start < 0 || e->piece->start > (int64_t)0xFFFFFFFF ||
+                              (e->kind == SYM_LABEL &&
+                               e->piece->start + e->off > (int64_t)0xFFFFFFFF))) {
+            snprintf(err, errsz, "the entry point \"%s\" is beyond 4294967295; GOFF cannot hold it",
+                     m->entry);
+            return 0;
+        }
+    }
+    return 1;
+}
+
 #define TRY(call)                                                  \
     do {                                                           \
         const char *e_ = (call);                                   \
@@ -316,6 +356,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
         snprintf(err, errsz, "no control section to emit");
         return NULL;
     }
+    if (!module_validate(m, err, errsz)) return NULL;
 
     /* external references: one ER per symbol, below the first section using it */
 #define NOTE(SYM, SECT) NOTE_IF(SYM, SECT, sym_->kind == SYM_EXT)
@@ -500,6 +541,11 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
             if (e->kind == SYM_LABEL) off += e->off;
             end.kind = GOFF_ENTRY_BYID;
             end.esdid = class_target(c);
+            if (!end.esdid) {
+                snprintf(err, errsz, "the entry point \"%s\" is not in a section that was emitted "
+                                     "(a DSECT?)", m->entry);
+                return NULL;
+            }
             end.offset = (uint32_t)off;
             end.amode = c->sect->amode;
         }

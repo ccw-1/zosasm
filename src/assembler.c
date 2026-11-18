@@ -1053,6 +1053,12 @@ static void finish(Asm *a) {
         if (!s || (s->kind != SYM_LABEL && s->kind != SYM_SECT && s->kind != SYM_EXT)) {
             rep_errorf(a->rep, "ZA3011", a->end_span,
                        "END entry point \"%s\" is not a label or external symbol", a->end_entry);
+        } else if (s->sect && s->sect->kind == K_DSECT) {
+            diag_help(rep_errorf(a->rep, "ZA3012", a->end_span,
+                                 "END entry point \"%s\" belongs to the DSECT \"%s\"; the entry "
+                                 "point must be in a control section",
+                                 a->end_entry, s->sect->name),
+                      "a DSECT has no text of its own; name a label of a CSECT or RSECT");
         } else {
             a->mod->entry = a->end_entry;
             a->mod->entry_def = a->end_span;

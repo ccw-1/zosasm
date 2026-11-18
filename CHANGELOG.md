@@ -6,6 +6,13 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 
 ## Unreleased
 
+* An `END` entry point that belongs to a DSECT is an error (`ZA3012`); it
+  used to assemble into an END record with ESDID 0 that the binder cannot
+  resolve. Before emission, both object writers validate what the format can
+  hold (class lengths and the entry offset in 32 bits, relocations inside
+  their class, the entry resolvable to an ESD; the ELF writer also bounds
+  checks the relocation field before writing it), so an assembler bug is an
+  error, not a silently truncated object.
 * MCP server: per-request memory is given back (the server is a long lived
   process; verified leak-free with an ASan/LSan build over hundreds of
   requests), a request line longer than 16 MB is rejected with a JSON-RPC

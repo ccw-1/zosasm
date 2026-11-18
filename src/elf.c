@@ -242,6 +242,8 @@ static int do_relocs(Ctx *x, ElfSec *e) {
         if (e->type == SHT_NOBITS_) return fail(x, "a class without load text has relocations", sn);
         if (k > 0 && keys[k - 1].off == r->off)
             return fail(x, "an address constant with several relocatable terms has no ELF form", sn);
+        if (!e->data || r->off < 0 || r->off + r->len > e->cls->len)
+            return fail(x, "a relocation lies outside the class text", sn);
         switch (r->kind) {
         case REL_ADDR:
         case REL_V:
@@ -333,6 +335,7 @@ uint8_t *module_emit_elf(Module *m, size_t *len, char *err, size_t errsz) {
         snprintf(err, errsz, "no control section to emit");
         return NULL;
     }
+    if (!module_validate(m, err, errsz)) return NULL;
 
     /* clear a mark left by an earlier use of the class esdids */
     for (si = 0; si < secs.n; si++)

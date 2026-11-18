@@ -163,6 +163,19 @@ bytes + relocations. External symbols are ESD items of the module.
 | `L ...,=A(X)` literals | collected by `LTORG` / `END` into a pool in the current class |
 | `END entry` | END record, entry point by name or by ESDID+offset |
 
+An `END` entry point that belongs to a DSECT (a label of it, or the DSECT
+name) is an error (`ZA3012`): a DSECT has no text and no ESD, so the END
+record could not name it (HLASM rejects it too).
+
+Before anything is written, `module_validate` (in `emit.c`, also called by
+the ELF writer) checks what GOFF can hold: every class length and the entry
+offset must fit in 32 bits, every relocation must lie inside its class, and
+the END entry must resolve to a class that got an ESD. The assembler's
+`ZA_MAX_LOC` cap keeps these from firing for real source; they are defense
+in depth, so an assembler bug is an emission error, not a silently
+truncated object. The ELF writer additionally checks the relocation field
+against the section data before writing into it.
+
 Relocations to labels of the same module use the class origin: an A-con
 to a local label gets an RLD with *referent = class (ED)*, R-ID = the ED
 (or the PR when the class has a PART), and the offset of the label as the

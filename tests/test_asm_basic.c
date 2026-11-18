@@ -358,6 +358,8 @@ static void test_diag_codes(void) {
         {"DC bit storage beyond the limit", "T CSECT\n DC 2000000000BL256'1'\n", "ZA2087"},
         {"ORG beyond the section limit", "T CSECT\n ORG 2000000000+2000000000\n", "ZA3053"},
         {"section grown past the limit", "T CSECT\n DS 2000000000C\n DS 2000000000C\n", "ZA3054"},
+        {"END into a DSECT label", "MYD DSECT\nL1 DS F\nT CSECT\n BR 14\n END L1\n", "ZA3012"},
+        {"END names a DSECT", "MYD DSECT\nT CSECT\n BR 14\n END MYD\n", "ZA3012"},
         {"ok", "T CSECT\n BR 14\n", ""},
     };
     size_t c;
