@@ -418,6 +418,12 @@ const char *diag_closest(const char *word, const char *const *cands, size_t n) {
     const char *best = NULL;
     int best_d = 1 << 30, limit = 1;
     size_t i, wl = strlen(w);
+    /* a long token (hostile input) is not worth an edit distance against short
+     * mnemonics and symbol names: the O(la*lb) scan would dominate the assembly */
+    if (wl > 64) {
+        free(w);
+        return NULL;
+    }
     for (i = 0; i < n; i++) {
         char *c = za_strlower(cands[i]);
         int d = edit_distance(w, c);

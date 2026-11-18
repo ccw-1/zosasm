@@ -6,6 +6,26 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 
 ## Unreleased
 
+* MCP server: file names are limited to a **workspace**, the directory of the
+  server binary. Every file name a tool call gives (`path`, `output`,
+  `dwarf_output`, `output_dir`, `macro_dir`, `copy_dir`, `include_dirs`,
+  `macro_dirs`) must resolve to inside it; relative names are relative to the
+  workspace root, `..` and symlinks cannot lead out. Setting the environment
+  variable `ZOSASM_UNRESTRICTED` lifts the limit (any file name, relative
+  names relative to the working directory, as before). Closes an
+  arbitrary-file read (the diagnostics quote source lines) and an
+  arbitrary-file write through the tool arguments.
+* Robustness against hostile source (a diagnostic, never a crash, hang or out
+  of memory): a section is limited to 2 GB - 1 bytes because GOFF class lengths
+  and text offsets are 32 bit (`ZA2087` for `DS`/`DC`, `ZA3053` for `ORG`,
+  `ZA3054` when several statements grow a section past the limit); macro and
+  `#if` expressions nest at most 200 levels (`ZA4100`, `ZA4030` - deeply nested
+  parentheses used to overflow the C stack); macro numbers that do not fit in
+  64 bits and `substr`/`repeat` counts that overflow are errors instead of
+  wrapped values; "did you mean" suggestions skip tokens longer than 64
+  characters; `hlasm2za` rejects an `ICTL` whose continuation column lies
+  outside begin..end (it used to make the continuation padding loop run near
+  2^64 iterations).
 * `-g`, `-gdwarf`, `-gdir`, `-gmap`, `-gdbgpath`: debug information as z/OS `as -g`
   writes it (a `.dbg` file with DWARF 4 plus the `D_@@ADBG_*` link module appended to
   the object); MCP `zosasm_assemble` parameters `dwarf*`; guide chapter 21, DESIGN 21.

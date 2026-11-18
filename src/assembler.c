@@ -855,8 +855,18 @@ static void layout(Asm *a) {
             }
             c->len = off;
             if (s->kind != K_DSECT) {
-                c->data = xcalloc((size_t)c->len + 1);
-                if (c->attr.fill >= 0) memset(c->data, c->attr.fill, (size_t)c->len);
+                if (c->len > ZA_MAX_LOC) {
+                    diag_help(rep_errorf(a->rep, "ZA3054", span_make(a->mod->name, 0, 0, 0),
+                                         "the class %s of section \"%s\" is %lld bytes long; the "
+                                         "limit for one section is %lld bytes",
+                                         c->name ? c->name : "", s->name, (long long)c->len,
+                                         (long long)ZA_MAX_LOC),
+                              "GOFF stores class lengths and text offsets in 32 bits");
+                    c->len = 0; /* do not allocate; the module is not emitted after an error */
+                } else {
+                    c->data = xcalloc((size_t)c->len + 1);
+                    if (c->attr.fill >= 0) memset(c->data, c->attr.fill, (size_t)c->len);
+                }
             }
             for (pi = 0; pi < c->pieces.n; pi++) {
                 c->pieces.v[pi]->loc = 0;

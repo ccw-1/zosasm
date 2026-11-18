@@ -1431,6 +1431,13 @@ macro statements).
 constants with real DBCS text (hexadecimal only); `CU` code page options
 (UTF-16LE/UTF-8); other code pages for `CA`/`CE`.
 
+**Limits.** A section cannot hold more than 2147483647 bytes (2 GB - 1):
+GOFF stores class lengths and text offsets in 32 bits. A `DS`/`DC` that
+would need more storage is an error (`ZA2087`), an `ORG` beyond the limit is
+an error (`ZA3053`), and a section grown past the limit by several
+statements is an error too (`ZA3054`) - the assembly says so instead of
+running out of memory.
+
 **Verified against IBM.** An oracle run (2026-11) on z/OS with HLASM 6.0 and
 the binder compared: the operand rules of all 483 instructions that have
 register pairs, length, immediate or mask limits (`isa/oracle_rules.json`),
@@ -1696,7 +1703,7 @@ a bad command line.
 | HLASM | zosasm |
 |---|---|
 | columns: names in column 1, continuation mark in column 72, sequence numbers in 73-80 | free form: the columns are cut, continued statements are joined and written again with a trailing comma where they are long |
-| `ICTL begin,end,continue` | honoured for the rest of the file, then dropped |
+| `ICTL begin,end,continue` | honoured for the rest of the file, then dropped (the continuation column must lie between `begin` and `end`, otherwise the `ICTL` is ignored with a warning) |
 | lower case source | names, operations and operands in upper case; quoted strings stay as written; the digits of `X'..'` are upper cased |
 | `* comment`, `.* comment` | `* comment` |
 | remark after an operation without operands (`CSECT`, `LTORG`, `PR`...) | a `* remark` comment line before the statement (zosasm would read it as operands) |
@@ -2056,7 +2063,21 @@ elsewhere, say where they are:
 |---|---|
 | `--bin-dir DIR` or `ZOSASM_BIN_DIR` | directory of `zosasm` and `hlasm2za` |
 | `--guide FILE` or `ZOSASM_GUIDE` | the user's guide (and `examples/` next to it) |
+| `ZOSASM_UNRESTRICTED` | set to a non-empty value to lift the file name limit below |
 | `--version`, `--help` | print and exit |
+
+**File names are limited to the server directory (the *workspace*).** Every
+file name a tool call gives — `path`, `output`, `dwarf_output`,
+`output_dir`, `macro_dir`, `copy_dir`, the entries of `include_dirs` and
+`macro_dirs` — must resolve to inside the directory of the server binary.
+Relative names are taken relative to that directory (not the working
+directory of the server), absolute names must already be inside it, and
+`..` or a symlink cannot lead out of it; a name outside is an error that
+says so. An operator who wants the tools to reach the whole machine can
+start the server with `ZOSASM_UNRESTRICTED` set: the limit is lifted and
+relative names are relative to the working directory again. Inline
+`source` with `files` needs no workspace at all: the files are written to
+a temporary directory the server manages itself.
 
 When the client sends `initialize`, the reply carries *instructions* for the
 agent: what the server is for, the usual order of calls, and the **absolute
@@ -2298,7 +2319,9 @@ BUF      DS    CL600
   (`hlasm2za -macro-dir`, section 16.4).
 * A macro calls others and itself; the depth is limited to 64 (ZA4120) and an
   expansion to `-macro-steps N` statements, default 1,000,000 (ZA4121; the
-  HLASM `ACTR`).
+  HLASM `ACTR`). Macro expressions nest at most 200 levels (ZA4100), and so do
+  preprocessor `#if` expressions (ZA4030); a number that does not fit in 64
+  bits is an error, not a wrapped value.
 * `#error`, `#warning`, `#note` give ZA4050, ZA4051, ZA4052 and name the
   macro and the call. Other macro diagnostics are ZA4100 to ZA4130
   (`MACRO.md` section 11).

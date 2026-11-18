@@ -368,6 +368,14 @@ error[ZA2001]: unknown instruction "LGRR"
 
 * Recoverable errors skip the statement and continue; the object file is
   not written if any error was reported. `-max-errors N` stops early.
+* Hostile source produces a diagnostic, never a crash, a hang or an out of
+  memory exit: a section holds at most 2 GB - 1 bytes (GOFF class lengths
+  and text offsets are 32 bit; `ZA2087` for a `DS`/`DC`, `ZA3053` for `ORG`,
+  `ZA3054` from `layout()` when several statements grow past the limit),
+  macro and `#if` expressions nest at most 200 levels (`ZA4100`, `ZA4030`),
+  macro numbers that do not fit in 64 bits are errors, and `diag_closest`
+  skips tokens longer than 64 characters (an edit distance against them
+  would dominate the assembly).
 * Suggestions use edit distance against mnemonics, directive names, symbols
   and operand keywords (`CATTR` attributes etc.).
 * `-W` flags select warnings (`-Werror` makes them fatal), `-color`.
@@ -938,7 +946,9 @@ as `zosasm` (the instruction table, `split_operands`, the directive list).
 1. *Physical lines to statements* (`join_statement`). Tabs are expanded, CR
    removed. The source columns are `ICTL begin,end,continue` (default
    1,71,16; a leading `ICTL` changes them, `end` = 80 means no
-   continuation). A non blank character after the end column is a
+   continuation; the continue column must lie between `begin` and `end`,
+   else the `ICTL` is ignored with a warning - HLASM rejects it too). A
+   non blank character after the end column is a
    continuation mark; the next line's text starts at the continue column.
    How the pieces are joined depends on where the first one ends: inside a
    quoted string (the piece is padded with blanks to the end column and the next
@@ -1186,12 +1196,29 @@ directory (`mkdtemp` below `$TMPDIR`, removed after each call). Source passed
 inline is written to `input.za` (or `name`) and `files` next to it, which is
 also added with `-I` and `-M` (so a `NAME.zmac` in `files` is a library macro; `macro_dirs`, `sysparm` and
 `macro_steps` map to `-M`, `-sysparm` and `-macro-steps`). `zosasm_convert_hlasm` passes `macros`, `flat`,
-`keep_goto`, `comment_macros`, `copy_dir` and, for a whole library, `macro_dir` + `output_dir` (the one tool
-that writes files outside the temporary directory; it is therefore not marked read only). The temporary directory name is removed from the
+`keep_goto`, `comment_macros`, `copy_dir` and, for a whole library, `macro_dir` + `output_dir`. The temporary directory name is removed from the
 diagnostics and the listing so that results are reproducible. Standard error
 is redirected to a file and read back, so a failing program cannot block the
 pipe. A tool failure is a result with `isError` true, not a JSON-RPC error,
 so that the agent sees the diagnostics.
+
+**The workspace.** Every file name a tool call gives (`path`, `output`,
+`dwarf_output`, `output_dir`, `macro_dir`, `copy_dir`, `include_dirs`,
+`macro_dirs`) is resolved by `ws_resolve` and must land inside the
+workspace, the directory of the server binary. Relative names are relative
+to the workspace root, absolute names must already be inside, and
+`realpath` (of the file, or of the directory for an output that does not
+exist yet) defeats `..` and symlinks; a name outside is a tool error
+naming the workspace. `ZOSASM_UNRESTRICTED` (any non-empty value) lifts
+the limit for operators who want it: any file name is allowed, relative
+names relative to the working directory, as before the sandbox. This
+closes the two channels an injected instruction could otherwise use
+through an agent: reading any file of the machine (the diagnostics quote
+source lines, so `path` was an arbitrary-file reader) and overwriting any
+file (`output`, `output_dir`). `files` and inline `source` need no
+workspace (the temporary directory is the server's own). `-gdir`,
+`-gmap` and `-gdbgpath` are not sandboxed: they only rewrite path strings
+in the DWARF, no file of this machine is read or written through them.
 
 **Self describing.** Each tool has a description (input, output, where in the
 guide to read more) and a JSON schema of its arguments with a description of
@@ -1204,11 +1231,14 @@ is `zosasm://guide`. Examples are listed from `docs/examples`.
 **Tests.** `tests/run_cli_tests.sh` feeds JSON lines to the server and checks
 the replies (initialize, tool list, assemble ok/error/ELF/`files`, preprocess,
 guide section and search, resources, unknown method, parse error, and the
-object round trip through `object_base64`, `zosasm_dump`, `zosasm_disasm`).
+object round trip through `object_base64`, `zosasm_dump`, `zosasm_disasm`;
+workspace: `path`/`output` outside rejected, inside accepted, `..` out
+rejected, `ZOSASM_UNRESTRICTED` lifts the limit).
 
 **Not done.** Prompts, progress notifications, cancellation, the HTTP
-transport, JSON-RPC batches, restricting `path`/`output` to a directory, a
-`zosasm_link`-style tool (there is nothing to link with here).
+transport, JSON-RPC batches, freeing per-request memory (the server is a
+long lived process), a request size cap, a `zosasm_link`-style tool (there
+is nothing to link with here).
 
 ## 19. Macro language (M1 implemented)
 

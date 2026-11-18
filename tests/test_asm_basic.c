@@ -354,6 +354,10 @@ static void test_diag_codes(void) {
         {"quoted ENTRY", "T CSECT\n ENTRY \"a.b\"\n\"a.b\" DS 0H\n", ""},
         {"quoted EXTRN", "T CSECT\n EXTRN \"a.b\",\"c d\"\n DC A(\"a.b\"),V(\"c d\")\n", ""},
         {"unquoted odd name", "T CSECT\na.b DS F\n", "ZA1021"},
+        {"DS beyond the section limit", "T CSECT\n DS 2147483647CL65535\n", "ZA2087"},
+        {"DC bit storage beyond the limit", "T CSECT\n DC 2000000000BL256'1'\n", "ZA2087"},
+        {"ORG beyond the section limit", "T CSECT\n ORG 2000000000+2000000000\n", "ZA3053"},
+        {"section grown past the limit", "T CSECT\n DS 2000000000C\n DS 2000000000C\n", "ZA3054"},
         {"ok", "T CSECT\n BR 14\n", ""},
     };
     size_t c;

@@ -223,6 +223,38 @@ static void test_open_code(void) {
 static void test_limits(void) {
     Out o = run("#macro L() {\n    #while (1) {\n    #}\n#}\n    L\n", NULL, 1000);
     CHECK_MSG(!strcmp(o.codes, "ZA4121"), "step limit: codes \"%s\"", o.codes);
+    /* parentheses and brackets do not pass an operator, so they must count
+     * towards the nesting limit on their own (a crash was here once) */
+    {
+        Buf b = {0};
+        int i;
+        buf_puts(&b, "#macro L() {\n    #let x = ");
+        for (i = 0; i < 300; i++) buf_putc(&b, '(');
+        buf_puts(&b, "1");
+        for (i = 0; i < 300; i++) buf_putc(&b, ')');
+        buf_puts(&b, "\n#}\n    L\n");
+        o = run(buf_cstr(&b), NULL, 0);
+        CHECK_MSG(!strcmp(o.codes, "ZA4100"), "paren depth: codes \"%s\"", o.codes);
+    }
+    {
+        Buf b = {0};
+        int i;
+        buf_puts(&b, "#macro L() {\n    #let x = a");
+        for (i = 0; i < 300; i++) buf_puts(&b, "[a");
+        buf_puts(&b, "1");
+        for (i = 0; i < 301; i++) buf_putc(&b, ']');
+        buf_puts(&b, "\n#}\n    L\n");
+        o = run(buf_cstr(&b), NULL, 0);
+        CHECK_MSG(!strcmp(o.codes, "ZA4100"), "index depth: codes \"%s\"", o.codes);
+    }
+    /* built-ins must reject counts that overflow, not wrap them */
+    o = run("#macro L() {\n    #let s = substr(\"abc\", 1, 9223372036854775807)\n#}\n    L\n", NULL, 0);
+    CHECK_MSG(!strcmp(o.codes, "ZA4112"), "substr range: codes \"%s\"", o.codes);
+    o = run("#macro L() {\n    #let s = repeat(\"x\", 1152921504606846976)\n#}\n    L\n", NULL, 0);
+    CHECK_MSG(!strcmp(o.codes, "ZA4112"), "repeat range: codes \"%s\"", o.codes);
+    /* a number with more digits than a 64-bit integer holds is not a number */
+    o = run("#macro L() {\n    #let x = 99999999999999999999999\n#}\n    L\n", NULL, 0);
+    CHECK_MSG(!strcmp(o.codes, "ZA4100"), "int overflow: codes \"%s\"", o.codes);
 }
 
 static void test_library(void) {

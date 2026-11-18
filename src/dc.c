@@ -1251,11 +1251,33 @@ void dir_dc(Asm *a, Stmt *st) {
                           "use a byte length, for example `AL4`");
                 continue;
             }
+            if (sp.dup > 0 && vals.n > 0 &&
+                (uint64_t)sp.dup * (uint64_t)vals.n * (uint64_t)sp.bits / 8 >
+                    (uint64_t)ZA_MAX_LOC) {
+                diag_help(dc_err(a, st, "ZA2087", sp.off, sp.n,
+                                 "DC would need %llu bytes of bit storage; the limit for one "
+                                 "section is %lld bytes",
+                                 (unsigned long long)((uint64_t)sp.dup * (uint64_t)vals.n *
+                                                      (uint64_t)sp.bits / 8),
+                                 (long long)ZA_MAX_LOC),
+                          "GOFF stores class lengths and text offsets in 32 bits");
+                continue;
+            }
             for (r = 0; r < sp.dup; r++)
                 for (j = 0; j < vals.n; j++) bits_add(&acc, &vals.v[j], sp.bits, left);
             continue;
         }
         for (j = 0; j < vals.n; j++) total += (int64_t)vals.v[j].n;
+        if (sp.dup > 0 && total > 0 && total > ZA_MAX_LOC / sp.dup) {
+            diag_help(dc_err(a, st, "ZA2087", sp.off, sp.n,
+                             "%s would need %llu bytes of storage; the limit for one section is "
+                             "%lld bytes",
+                             is_ds ? "DS" : "DC",
+                             (unsigned long long)total * (unsigned long long)sp.dup,
+                             (long long)ZA_MAX_LOC),
+                      "GOFF stores class lengths and text offsets in 32 bits");
+            continue;
+        }
         if (is_ds) {
             asm_advance(a, total * sp.dup);
             continue;

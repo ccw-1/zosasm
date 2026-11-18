@@ -409,8 +409,13 @@ static char *join_statement(Conv *c, size_t *i) {
         }
         (*i)++;
         ln = c->lines.v[*i];
-        piece = columns(c, ln, c->o.cont - 1);
-        pw = (size_t)(c->o.end - (c->o.cont - 1));
+        { /* defense: a continuation column outside begin..end cannot happen
+           * after the ICTL check; clamp so the padding below stays bounded */
+            int cc = c->o.cont;
+            if (cc < c->o.begin || cc > c->o.end) cc = c->o.begin;
+            piece = columns(c, ln, cc - 1);
+            pw = (size_t)(c->o.end - (cc - 1));
+        }
         last = u8len(piece);
         if (mode == 1) {
             char *p = piece;
@@ -691,7 +696,9 @@ static void parse(Conv *c) {
         remark = f.remark;
         if (!seen && !strcmp(fp, "ICTL")) {
             int b = 1, e = 71, kk = 16, nn = sscanf(fo, "%d,%d,%d", &b, &e, &kk);
-            if (nn >= 2 && b >= 1 && e > b && e <= 80) {
+            /* the continuation column must lie between begin and end, and the
+             * default 16 must too (HLASM rejects an ICTL outside the range) */
+            if (nn >= 2 && b >= 1 && e > b && e <= 80 && (nn == 3 ? (kk >= b && kk <= e) : b <= 16)) {
                 c->o.begin = b;
                 c->o.end = e;
                 c->o.cont = e == 80 ? 0 : (nn >= 3 ? kk : 16);

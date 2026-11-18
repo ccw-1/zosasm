@@ -101,6 +101,7 @@ int v_parse_int(const char *s, int64_t *out) {
             for (i = 2; i < n - 1; i++) {
                 int d = digit_val((unsigned char)s[i]);
                 if (d >= base) return 0;
+                if (v > (UINT64_MAX - (uint64_t)d) / (uint64_t)base) return 0;
                 v = v * (uint64_t)base + (uint64_t)d;
             }
             *out = (int64_t)v;
@@ -132,16 +133,19 @@ int v_parse_int(const char *s, int64_t *out) {
         for (i += 2; i < n; i++) {
             int d = digit_val((unsigned char)s[i]);
             if (d >= 16) return 0;
+            if (v > (UINT64_MAX - (uint64_t)d) / 16) return 0;
             v = v * 16 + (uint64_t)d;
         }
     } else if (i + 2 < n + 0 && s[i] == '0' && (s[i + 1] == 'b' || s[i + 1] == 'B')) {
         for (i += 2; i < n; i++) {
             if (s[i] != '0' && s[i] != '1') return 0;
+            if (v > (UINT64_MAX - (uint64_t)(s[i] - '0')) / 2) return 0;
             v = v * 2 + (uint64_t)(s[i] - '0');
         }
     } else {
         for (; i < n; i++) {
             if (!za_isdigit((unsigned char)s[i])) return 0;
+            if (v > (UINT64_MAX - (uint64_t)(s[i] - '0')) / 10) return 0;
             v = v * 10 + (uint64_t)(s[i] - '0');
         }
     }
@@ -229,7 +233,7 @@ static MVal f_substr(Ctx *c, MVal *a, int n) {
         return empty_str();
     }
     cnt = n > 2 ? arg_int(c, a[2]) : len - st;
-    if (cnt < 0 || st + cnt > len) {
+    if (cnt < 0 || cnt > len - st) {
         ma_err(c, "ZA4112", "substr: %lld characters from %lld run past the end (length %lld)",
                (long long)cnt, (long long)st, (long long)len);
         return empty_str();
@@ -272,9 +276,10 @@ static MVal f_trim(Ctx *c, MVal *a, int n) {
 static MVal f_repeat(Ctx *c, MVal *a, int n) {
     const char *s = arg_text(a[0]);
     int64_t k = arg_int(c, a[1]);
+    size_t sl = strlen(s);
     Buf b = {0};
     (void)n;
-    if (k < 0 || (size_t)k * strlen(s) > MAX_STR) {
+    if (k < 0 || (sl > 0 && (uint64_t)k > MAX_STR / sl)) {
         ma_err(c, "ZA4112", "repeat: count %lld is out of range", (long long)k);
         return empty_str();
     }

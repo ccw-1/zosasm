@@ -77,6 +77,11 @@ static void test_columns(void) {
     CHECK_STR(conv(" ICTL 10,60,20\n          lr 1,2\n"), "         LR    %r1,%r2\n");
     CHECK_STR(conv(" ICTL 10,80\n          lr 1,2   remark\n"), "         LR    %r1,%r2             remark\n");
     CHECK_STR(conv("* a comment\n         ICTL 1,71,16\n lr 1,2\n"), "* a comment\n         LR    %r1,%r2\n");
+    /* the continuation column must lie between begin and end: a continuation
+     * mark outside the range used to send the padding loop near 2^64 (a hang) */
+    CHECK(warns(" ICTL 1,71,80\n lr 1,2\n") == 1);
+    CHECK(warns(" ICTL 40,71\n lr 1,2\n") == 1); /* default continuation 16 < 40 */
+    CHECK(warns(" ICTL 1,71,16\n lr 1,2\n") == 0);
 }
 
 static void test_remarks(void) {

@@ -134,6 +134,22 @@ static void test_conditionals(void) {
     expect("elif after else", "#if 1\n#else\n#elif 1\n#endif\n", "", "ZA4032");
     expect("double else", "#if 1\n#else\n#else\n#endif\n", "", "ZA4032");
     expect("unterminated if", "#if 1\n a\n", " a", "ZA4033");
+    /* deeply nested parentheses must hit the depth limit, not the C stack
+     * (a crash was here once) */
+    {
+        Buf b = {0};
+        int i;
+        Out o;
+        buf_puts(&b, "#if ");
+        for (i = 0; i < 300; i++) buf_putc(&b, '(');
+        buf_puts(&b, "1");
+        for (i = 0; i < 300; i++) buf_putc(&b, ')');
+        buf_puts(&b, "\n a\n#endif\n");
+        o = run_pp(buf_cstr(&b), NULL, NULL);
+        CHECK_MSG(!strcmp(o.codes, "ZA4030"), "if depth: codes \"%s\"", o.codes);
+    }
+    /* a number that does not fit in 64 bits is an error, not a wrapped value */
+    expect("number too large", "#if 99999999999999999999999\n#endif\n", "", "ZA4030");
     expect("defines in skipped code are ignored", "#if 0\n#define A\n#endif\n#ifdef A\n x\n#endif\n",
            "", "");
 }

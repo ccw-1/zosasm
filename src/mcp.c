@@ -609,6 +609,7 @@ static void scrub(Buf *b, const Tmp *t) {
 static char *g_bindir;  /* directory of zosasm and hlasm2za */
 static char *g_guide;   /* path of GUIDE.md */
 static char *g_docdir;  /* its directory (examples/ is below it) */
+static char *g_server_dir; /* the directory of the server binary (the workspace) */
 
 static int file_exists(const char *p) {
     struct stat st;
@@ -633,6 +634,9 @@ static void locate(const char *argv0) {
     } else if (strchr(argv0, '/')) {
         exe = xstrdup(argv0);
     }
+    /* the workspace is the server's own directory, before ZOSASM_BIN_DIR
+     * moves the programs elsewhere */
+    g_server_dir = exe ? dir_of(exe) : xstrdup(".");
     env = getenv("ZOSASM_BIN_DIR");
     if (env && *env)
         g_bindir = xstrdup(env);
@@ -662,6 +666,93 @@ static void locate(const char *argv0) {
         if (rb) g_bindir = rb;
     }
     g_docdir = dir_of(g_guide);
+}
+
+/* ---- the workspace --------------------------------------------------------
+ * By default every file name a tool call gives (path, output, output_dir,
+ * macro_dir, include_dirs, macro_dirs, copy_dir) must resolve to below the
+ * directory of the server binary: relative names are taken relative to it,
+ * absolute names must be inside it, and symlinks or ".." cannot escape it.
+ * ZOSASM_UNRESTRICTED (set to a non-empty value) lifts the limit: any file
+ * name is allowed, relative to the working directory, as before. */
+
+static char *g_workspace;
+static int g_unrestricted;
+
+static int inside_workspace(const char *real) {
+    size_t wl = strlen(g_workspace);
+    return !strcmp(real, g_workspace) ||
+           (!strncmp(real, g_workspace, wl) && real[wl] == '/');
+}
+
+/* Resolve p against the workspace. Returns a canonical path, or NULL with
+ * *msg set to an error message for the caller. A path that does not exist
+ * yet (an output, an output directory) is resolved through its deepest
+ * existing directory, and the rest is joined on textually with "." and ".."
+ * resolved; the result must still be inside the workspace. */
+static char *ws_resolve(const char *p, const char *what, const char **msg) {
+    char *full, *real = NULL;
+    struct stat st;
+    *msg = NULL;
+    if (!p || !*p) {
+        *msg = xasprintf("%s: the file name is empty", what);
+        return NULL;
+    }
+    if (g_unrestricted) return xstrdup(p);
+    full = p[0] == '/' ? xstrdup(p) : xasprintf("%s/%s", g_workspace, p);
+    if (stat(full, &st) == 0) {
+        real = realpath(full, NULL);
+        if (!real) *msg = xasprintf("%s \"%s\": %s", what, p, strerror(errno));
+    } else {
+        char *dir = xstrdup(full), *rd = NULL, *slash;
+        Buf b = {0};
+        size_t pl, i;
+        pl = strlen(dir);
+        while (pl > 1 && dir[pl - 1] == '/') dir[--pl] = 0; /* trailing slashes */
+        while ((slash = strrchr(dir + 1, '/')) != NULL) {
+            *slash = 0;
+            if (stat(dir, &st) == 0) {
+                rd = realpath(dir, NULL);
+                break;
+            }
+        }
+        if (!rd && stat(dir, &st) == 0) rd = realpath(dir, NULL);
+        if (!rd) {
+            *msg = xasprintf("%s \"%s\": the directory does not exist", what, p);
+        } else {
+            buf_puts(&b, rd);
+            free(rd);
+            for (i = slash ? (size_t)(slash - dir) : strlen(dir); full[i]; ) {
+                size_t j = i;
+                while (full[j] && full[j] != '/') j++;
+                if (j > i + 1 || (j == i + 1 && full[i] != '.')) { /* not "." or empty */
+                    if (j - i == 2 && full[i] == '.' && full[i + 1] == '.') {
+                        char *last = strrchr(buf_cstr(&b), '/'); /* b starts with '/' */
+                        if (last && last != b.p) {
+                            b.len = (size_t)(last - b.p);
+                            b.p[b.len] = 0;
+                        }
+                    } else {
+                        buf_putc(&b, '/');
+                        buf_write(&b, full + i, j - i);
+                    }
+                }
+                i = j;
+                if (full[i] == '/') i++; /* skip the separator, not the end of the string */
+            }
+            real = xstrdup(buf_cstr(&b));
+        }
+        free(dir);
+    }
+    if (real && !inside_workspace(real)) {
+        *msg = xasprintf("%s \"%s\" is outside the workspace %s (relative names are relative to the "
+                         "workspace; the operator can lift the limit with ZOSASM_UNRESTRICTED)",
+                         what, p, g_workspace);
+        free(real);
+        real = NULL;
+    }
+    free(full);
+    return real;
 }
 
 /* ====================================================================
@@ -869,11 +960,18 @@ static char *input_file(Tmp *t, const J *args, const char *defname, const char *
         return NULL;
     }
     if (path) {
+        char *rp;
+        const char *wm = NULL;
         if (!*path) {
             *msg = "'path' is empty";
             return NULL;
         }
-        return xstrdup(path);
+        rp = ws_resolve(path, "'path'", &wm);
+        if (!rp) {
+            *msg = wm;
+            return NULL;
+        }
+        return rp;
     }
     if (!name) name = defname;
     if (!plain_name(name) || !strcmp(name, ".stderr")) {
@@ -921,11 +1019,21 @@ static const char *common_options(ArgVec *a, const J *args, Tmp *t, int *is_elf)
     }
     n = str_array(args, "include_dirs", &list, &bad);
     if (bad) return "'include_dirs' must be an array of directory names";
-    for (i = 0; i < n; i++) vec_push(a, xasprintf("-I%s", list[i]));
+    for (i = 0; i < n; i++) {
+        const char *wm = NULL;
+        char *rp = ws_resolve(list[i], "'include_dirs'", &wm);
+        if (!rp) return wm;
+        vec_push(a, xasprintf("-I%s", rp));
+    }
     if (jget(args, "files")) vec_push(a, xasprintf("-I%s", t->dir));
     n = str_array(args, "macro_dirs", &list, &bad);
     if (bad) return "'macro_dirs' must be an array of directory names";
-    for (i = 0; i < n; i++) vec_push(a, xasprintf("-M%s", list[i]));
+    for (i = 0; i < n; i++) {
+        const char *wm = NULL;
+        char *rp = ws_resolve(list[i], "'macro_dirs'", &wm);
+        if (!rp) return wm;
+        vec_push(a, xasprintf("-M%s", rp));
+    }
     if (jget(args, "files")) vec_push(a, xasprintf("-M%s", t->dir));
     if (jstr(args, "sysparm")) {
         add_arg(a, "-sysparm");
@@ -974,6 +1082,20 @@ static void tool_assemble(const J *args, Buf *out) {
     if (!in) {
         tmp_close(&t);
         { tool_fail(out, msg); return; }
+    }
+    { /* outputs go inside the workspace */
+        char *rp;
+        const char *wm = NULL;
+        if (output && *output) {
+            rp = ws_resolve(output, "'output'", &wm);
+            if (!rp) { tmp_close(&t); tool_fail(out, wm); return; }
+            output = rp;
+        }
+        if (dwarf_out && *dwarf_out) {
+            rp = ws_resolve(dwarf_out, "'dwarf_output'", &wm);
+            if (!rp) { tmp_close(&t); tool_fail(out, wm); return; }
+            dwarf_out = rp;
+        }
     }
     objfile = tmp_path(&t, ".object");
     add_arg(&a, "-o");
@@ -1190,7 +1312,20 @@ static char *object_file(Tmp *t, const J *args, const char **msg) {
         *msg = "give exactly one of 'path' (an object file) or 'object_base64' (its bytes, base64 encoded)";
         return NULL;
     }
-    if (path) return xstrdup(path);
+    if (path) {
+        char *rp;
+        const char *wm = NULL;
+        if (!*path) {
+            *msg = "'path' is empty";
+            return NULL;
+        }
+        rp = ws_resolve(path, "'path'", &wm);
+        if (!rp) {
+            *msg = wm;
+            return NULL;
+        }
+        return rp;
+    }
     {
         size_t n;
         unsigned char *d = b64_decode(b64, strlen(b64), &n);
@@ -1284,6 +1419,8 @@ static void tool_convert(const J *args, Buf *out) {
     long w;
     if (!tmp_open(&t)) { tool_fail(out, "cannot create a temporary directory"); return; }
     if (mdir) {
+        char *rm, *ro;
+        const char *wm = NULL;
         /* a whole library: every member of macro_dir (.mac) becomes a .zmac file in output_dir */
         if (!*mdir || !odir || !*odir) {
             tmp_close(&t);
@@ -1295,10 +1432,14 @@ static void tool_convert(const J *args, Buf *out) {
             tool_fail(out, "give 'macro_dir' or one of 'source' / 'path', not both");
             return;
         }
+        rm = ws_resolve(mdir, "'macro_dir'", &wm);
+        if (!rm) { tmp_close(&t); tool_fail(out, wm); return; }
+        ro = ws_resolve(odir, "'output_dir'", &wm);
+        if (!ro) { tmp_close(&t); tool_fail(out, wm); return; }
         add_arg(&a, "-macro-dir");
-        add_arg(&a, mdir);
+        add_arg(&a, rm);
         add_arg(&a, "-o");
-        add_arg(&a, odir);
+        add_arg(&a, ro);
     } else {
         in = input_file(&t, args, jbool(args, "macros", 0) ? "input.mac" : "input.asm", &msg);
         if (!in) {
@@ -1314,8 +1455,11 @@ static void tool_convert(const J *args, Buf *out) {
     if (jbool(args, "keep_goto", 0)) add_arg(&a, "-keep-goto");
     if (jbool(args, "comment_macros", 0)) add_arg(&a, "-comment-macros");
     if (cdir) {
+        const char *wm = NULL;
+        char *rc = ws_resolve(cdir, "'copy_dir'", &wm);
+        if (!rc) { tmp_close(&t); tool_fail(out, wm); return; }
         add_arg(&a, "-copy-dir");
-        add_arg(&a, cdir);
+        add_arg(&a, rc);
     }
     w = jint(args, "width", -1);
     if (w >= 0) {
@@ -1418,8 +1562,9 @@ static void tool_guide(const J *args, Buf *out) {
     "\"source\":{\"type\":\"string\",\"description\":\"The program text, passed inline. Give " \
     "either 'source' or 'path', not both.\"},"                                                    \
     "\"path\":{\"type\":\"string\",\"description\":\"Name of a file on the machine that runs this " \
-    "server (relative names are relative to the server's working directory). Give either 'path' or " \
-    "'source'.\"},"                                                                               \
+    "server. File names are limited to the workspace, the directory of the server binary " \
+    "(relative names are relative to it); the operator can lift the limit with the " \
+    "ZOSASM_UNRESTRICTED environment variable. Give either 'path' or 'source'.\"},"       \
     "\"name\":{\"type\":\"string\",\"description\":\"With 'source': the file name shown in " \
     "diagnostics and listings (default input.za; a plain name, no directory).\"}"
 
@@ -1427,7 +1572,7 @@ static void tool_guide(const J *args, Buf *out) {
     "\"defines\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Preprocessor " \
     "macros as for -D: \\\"NAME\\\" (value 1) or \\\"NAME=value\\\". Example: [\\\"DEBUG\\\",\\\"LEVEL=3\\\"].\"},"  \
     "\"include_dirs\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Directories " \
-    "searched by #include (-I).\"},"                                                               \
+    "searched by #include (-I), inside the workspace.\"},"                                        \
     "\"files\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"string\"},\"description\":" \
     "\"Extra files for #include and macro calls, as {\\\"regs.inc\\\":\\\"text...\\\"}. Written to a temporary " \
     "directory that is searched by #include and by macro calls (NAME.zmac); use plain file names.\"},"                            \
@@ -1441,7 +1586,7 @@ static void tool_guide(const J *args, Buf *out) {
     "(or names made with NAME EQU %r1) in register positions; numbers are errors. Default false.\"}," \
     "\"macro_dirs\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Macro " \
     "libraries (-M): directories searched for NAME.zmac or NAME.mac when a macro is called but not " \
-    "defined. Macros given in 'files' are found too. Guide chapter 19.\"}," \
+    "defined, inside the workspace. Macros given in 'files' are found too. Guide chapter 19.\"}," \
     "\"sysparm\":{\"type\":\"string\",\"description\":\"The text that sys.parm (HLASM &SYSPARM) has in " \
     "macros (-sysparm).\"}," \
     "\"macro_steps\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"Stop a macro expansion " \
@@ -1470,8 +1615,8 @@ static const char *tools_json(void) {
         "used; objects are not run or linked here.\","
         "\"inputSchema\":{\"type\":\"object\",\"properties\":{" P_SRC "," P_PP ",");
     buf_puts(&b,
-        "\"output\":{\"type\":\"string\",\"description\":\"File name to write the object to (default: the "
-        "object is not kept; the call only checks the program).\"},"
+        "\"output\":{\"type\":\"string\",\"description\":\"File name to write the object to, inside "
+        "the workspace (default: the object is not kept; the call only checks the program).\"},"
         "\"object_base64\":{\"type\":\"boolean\",\"description\":\"Also return the object, base64 encoded, "
         "in the 'object_base64' field (default false).\"},"
         "\"listing\":{\"type\":\"boolean\",\"description\":\"Return the assembly listing in the 'listing' "
@@ -1487,7 +1632,8 @@ static const char *tools_json(void) {
         "`as -g`: DWARF for dbx and LLDB in a separate .dbg file, plus a small link module appended to the "
         "object (-g). Give 'dwarf_output' or 'dwarf_base64' to get the .dbg. Use 'dwarf_dir' to say where the "
         "source and the .dbg will be ON Z/OS. Not with format elf. Guide chapter 21.\"},"
-        "\"dwarf_output\":{\"type\":\"string\",\"description\":\"File name to write the .dbg to.\"},"
+        "\"dwarf_output\":{\"type\":\"string\",\"description\":\"File name to write the .dbg to, "
+        "inside the workspace.\"},"
         "\"dwarf_base64\":{\"type\":\"boolean\",\"description\":\"Also return the .dbg base64 encoded in "
         "'dwarf_base64'.\"},"
         "\"dwarf_dir\":{\"type\":\"string\",\"description\":\"The z/OS directory that corresponds to the "
@@ -1580,7 +1726,7 @@ static const char *tools_json(void) {
         "library (-macro-dir) and write the .zmac files to 'output_dir'. Use instead of 'source'/'path'. "
         "The result lists the counts and what was not converted in 'diagnostics'.\"},"
         "\"output_dir\":{\"type\":\"string\",\"description\":\"With macro_dir: the directory that "
-        "receives the converted files.\"}}},"
+        "receives the converted files, inside the workspace.\"}}},"
         "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":true,"
         "\"openWorldHint\":false}},");
     /* zosasm_guide */
@@ -1783,7 +1929,9 @@ static int resource_read(const char *uri, Buf *out) {
     "every message has a code ZAnnnn, the source line and usually a help line. Fix and repeat until "       \
     "success is true. (3) zosasm_preprocess shows macro expansion, zosasm_dump and zosasm_disasm inspect "  \
     "a GOFF object (path or object_base64), zosasm_convert_hlasm converts IBM HLASM source (then assemble "  \
-    "the result). Inputs are either text in the arguments or file names on the server's machine; outputs "   \
+    "the result). Inputs are either text in the arguments or file names; file names are limited "     \
+    "to the workspace (the directory of this server binary; relative names are relative to it; "     \
+    "the operator can lift the limit with ZOSASM_UNRESTRICTED). Outputs "   \
     "are in the result fields and, for objects, the 'output' file. Nothing is executed: objects are not "    \
     "linked or run, and no z/OS system is involved."
 
@@ -1907,6 +2055,8 @@ static void usage(void) {
             "                  or environment ZOSASM_GUIDE)\n"
             "  --bin-dir DIR   where zosasm and hlasm2za are (default: the program's directory,\n"
             "                  or environment ZOSASM_BIN_DIR)\n"
+            "File names are limited to the program's directory (the workspace), unless\n"
+            "  the environment variable ZOSASM_UNRESTRICTED is set to a non-empty value.\n"
             "Register it in an MCP client as the command build/zosasm-mcp (see README.md).\n");
 }
 
@@ -1929,6 +2079,13 @@ int main(int argc, char **argv) {
         }
     }
     locate(argv[0]);
+    {
+        const char *env = getenv("ZOSASM_UNRESTRICTED");
+        if (env && *env)
+            g_unrestricted = 1; /* the operator lifted the file name limit */
+        else
+            g_workspace = xstrdup(g_server_dir); /* the directory of the server binary */
+    }
     while ((n = getline(&line, &cap, stdin)) != -1) {
         const char *err = NULL;
         J *msg;

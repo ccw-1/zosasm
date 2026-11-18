@@ -83,6 +83,12 @@ static void test_closest(void) {
         CHECK_MSG((got == NULL) == (want[i] == NULL) && (!got || !strcmp(got, want[i])), "Closest(%s) = %s", in[i],
                   got ? got : "(none)");
     }
+    /* a long token (hostile input) is skipped instead of an O(n*len) scan */
+    {
+        static char big[1000];
+        memset(big, 'A', sizeof big - 1);
+        CHECK(diag_closest(big, c, 6) == NULL);
+    }
 }
 
 int main(void) {

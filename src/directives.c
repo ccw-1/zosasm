@@ -813,6 +813,14 @@ void dir_org(Asm *a, Stmt *st) {
         st->bad = 1;
         return;
     }
+    if (off > ZA_MAX_LOC) {
+        rep_errorf(a->rep, "ZA3053", e->sp,
+                   "ORG would move the location counter to %lld; the limit for a section is "
+                   "%lld bytes",
+                   (long long)off, (long long)ZA_MAX_LOC);
+        st->bad = 1;
+        return;
+    }
     a->cur->loc = off;
     if (off > a->cur->max) a->cur->max = off;
 }

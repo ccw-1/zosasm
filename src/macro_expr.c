@@ -221,10 +221,15 @@ static MExpr *parse_primary(Parser *ps) {
         return e;
     case '(':
         ps_next(ps);
+        if (++ps->depth > MAX_PARSE_DEPTH) {
+            if (!ps->err) ps_error(ps, "ZA4100", "expression nested too deeply");
+            return mk(X_INT);
+        }
         e = parse_cond(ps);
-        if (ps->tk != ')')
-            ps_error(ps, "ZA4100", "missing ')'");
-        else
+        ps->depth--;
+        if (ps->tk != ')') {
+            if (!ps->err) ps_error(ps, "ZA4100", "missing ')'");
+        } else
             ps_next(ps);
         return e;
     case TK_ID: {
@@ -292,10 +297,15 @@ static MExpr *parse_postfix(Parser *ps) {
         MExpr *x = mk(X_INDEX);
         ps_next(ps);
         x->a = e;
+        if (++ps->depth > MAX_PARSE_DEPTH) {
+            if (!ps->err) ps_error(ps, "ZA4100", "expression nested too deeply");
+            return e;
+        }
         x->b = parse_cond(ps);
-        if (ps->tk != ']')
-            ps_error(ps, "ZA4100", "missing ']'");
-        else
+        ps->depth--;
+        if (ps->tk != ']') {
+            if (!ps->err) ps_error(ps, "ZA4100", "missing ']'");
+        } else
             ps_next(ps);
         e = x;
         if (ps->err) break;

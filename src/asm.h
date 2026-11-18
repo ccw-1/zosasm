@@ -26,6 +26,11 @@ typedef enum { K_CSECT, K_RSECT, K_DSECT, K_COM } SectKind;
 const char *sectkind_name(SectKind k);
 
 #define CLASS_RMODE_NONE 0xFF /* CATTR RMODE(NONE): the class ED carries no RMODE */
+
+/* GOFF stores class lengths and text offsets in 32 bits (DESIGN.md 3), so the
+ * location counter is capped below that: a DS/DC/ORG beyond the limit is a
+ * diagnostic (ZA2087/ZA3053/ZA3054), not an out-of-memory exit. */
+#define ZA_MAX_LOC INT64_C(0x7fffffff)
 typedef struct {
     int align; /* log2, -1 = unset */
     uint8_t rmode;

@@ -535,6 +535,7 @@ typedef struct {
     const char *s;
     size_t i;
     int bad, quiet;
+    int depth; /* nesting of the expression being evaluated */
 } Ev;
 
 static void ev_fail(Ev *e, const char *code, const char *msg) {
@@ -549,6 +550,15 @@ static void ev_ws(Ev *e) {
     while (is_blank((unsigned char)e->s[e->i])) e->i++;
 }
 
+/* enters one nesting level; 0 = ok, 1 = too deep (already reported) */
+static int ev_deep(Ev *e) {
+    if (++e->depth > 200) {
+        ev_fail(e, "ZA4030", "the #if expression is nested too deeply");
+        return 1;
+    }
+    return 0;
+}
+
 static int64_t ev_bin(Ev *e, int level);
 
 static int64_t ev_unary(Ev *e) {
@@ -557,19 +567,33 @@ static int64_t ev_unary(Ev *e) {
     switch (e->s[e->i]) {
     case '!':
         e->i++;
-        return !ev_unary(e);
+        if (ev_deep(e)) return 0;
+        v = !ev_unary(e);
+        e->depth--;
+        return v;
     case '-':
         e->i++;
-        return -ev_unary(e);
+        if (ev_deep(e)) return 0;
+        v = -ev_unary(e);
+        e->depth--;
+        return v;
     case '+':
         e->i++;
-        return ev_unary(e);
+        if (ev_deep(e)) return 0;
+        v = ev_unary(e);
+        e->depth--;
+        return v;
     case '~':
         e->i++;
-        return ~ev_unary(e);
+        if (ev_deep(e)) return 0;
+        v = ~ev_unary(e);
+        e->depth--;
+        return v;
     case '(':
         e->i++;
+        if (ev_deep(e)) return 0;
         v = ev_bin(e, 1);
+        e->depth--;
         ev_ws(e);
         if (e->s[e->i] != ')') {
             ev_fail(e, "ZA4030", "missing ')' in the #if expression");
@@ -590,10 +614,21 @@ static int64_t ev_unary(Ev *e) {
             for (; za_isxdigit((unsigned char)e->s[j]); j++) {
                 int d = za_isdigit((unsigned char)e->s[j]) ? e->s[j] - '0'
                                                             : za_toupper(e->s[j]) - 'A' + 10;
+                if (n > (INT64_MAX - d) / 16) {
+                    ev_fail(e, "ZA4030", "the number in the #if expression is too large");
+                    return 0;
+                }
                 n = n * 16 + d;
             }
         } else {
-            for (; za_isdigit((unsigned char)e->s[j]); j++) n = n * 10 + (e->s[j] - '0');
+            for (; za_isdigit((unsigned char)e->s[j]); j++) {
+                int d = e->s[j] - '0';
+                if (n > (INT64_MAX - d) / 10) {
+                    ev_fail(e, "ZA4030", "the number in the #if expression is too large");
+                    return 0;
+                }
+                n = n * 10 + d;
+            }
         }
         if (is_sym_char((unsigned char)e->s[j])) {
             ev_fail(e, "ZA4030", "invalid number in the #if expression");

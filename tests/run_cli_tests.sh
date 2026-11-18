@@ -324,10 +324,11 @@ grep -q '"success":true' $T/m.out; check "mcp convert macros: success" $? 0
 grep -q '#macro M1(a)' $T/m.out; check "mcp convert macros: #macro" $? 0
 mcp '{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"zosasm_convert_hlasm","arguments":{"macros":true,"flat":true,"source":"         MACRO\n         M1    &A\n         AIF   (\u0027&A\u0027 EQ \u0027\u0027).E\n         DC    C\u0027&A\u0027\n         MEXIT\n.E       DC    C\u0027-\u0027\n         MEND\n"}}}' > $T/m.out
 grep -q '#goto e' $T/m.out; check "mcp convert macros: flat" $? 0
-mcp '{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"zosasm_convert_hlasm","arguments":{"macro_dir":"testdata/hlasm/lib2","output_dir":"'$T'/mz","keep_goto":true}}}' > $T/m.out
+cp -r testdata/hlasm/lib2 $T/lib2
+mcp '{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"zosasm_convert_hlasm","arguments":{"macro_dir":"cli_tmp/lib2","output_dir":"'$T'/mz","keep_goto":true}}}' > $T/m.out
 grep -q '"success":true' $T/m.out; check "mcp convert macro_dir: success" $? 0
 [ -s $T/mz/SW.zmac ] && [ -s $T/mz/DSP.zmac ]; check "mcp convert macro_dir: files written" $? 0
-mcp '{"jsonrpc":"2.0","id":17,"method":"tools/call","params":{"name":"zosasm_convert_hlasm","arguments":{"macro_dir":"testdata/hlasm/lib2"}}}' > $T/m.out
+mcp '{"jsonrpc":"2.0","id":17,"method":"tools/call","params":{"name":"zosasm_convert_hlasm","arguments":{"macro_dir":"cli_tmp/lib2"}}}' > $T/m.out
 grep -q '"isError":true' $T/m.out; check "mcp convert macro_dir needs output_dir" $? 0
 mcp '{"jsonrpc":"2.0","id":18,"method":"tools/call","params":{"name":"zosasm_preprocess","arguments":{"source":"T CSECT\n DSP 1\n","macro_dirs":["'$T'/mz"],"sysparm":"X","macro_steps":5000}}}' > $T/m.out
 grep -q 'A(4)' $T/m.out; check "mcp preprocess with macro_dirs" $? 0
@@ -373,6 +374,22 @@ mcp '{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"zosasm_ass
 grep -q '"dwarf_size":' $T/m.out && grep -q '"dwarf_base64":"f0VMR' $T/m.out; check "mcp assemble: dwarf" $? 0
 mcp '{"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n","dwarf":true,"format":"elf"}}}' > $T/m.out
 grep -q '"isError":true' $T/m.out; check "mcp assemble: dwarf with elf" $? 0
+
+# the workspace: with no ZOSASM_UNRESTRICTED, file names are limited to the
+# directory of the server binary (build/)
+printf 'T CSECT\n LR 1,2\n' > $T/ws.za
+mcp '{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"path":"/etc/passwd"}}}' > $T/m.out
+grep -q '"isError":true' $T/m.out && grep -q 'outside the workspace' $T/m.out; check "mcp path outside the workspace" $? 0
+mcp '{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"path":"cli_tmp/ws.za"}}}' > $T/m.out
+grep -q '"success":true' $T/m.out; check "mcp path inside the workspace" $? 0
+mcp '{"jsonrpc":"2.0","id":25,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n","output":"/tmp/zosasm-mcp-evil.o"}}}' > $T/m.out
+grep -q 'outside the workspace' $T/m.out; check "mcp output outside the workspace" $? 0
+[ ! -e /tmp/zosasm-mcp-evil.o ]; check "mcp output outside the workspace: nothing written" $? 0
+mcp '{"jsonrpc":"2.0","id":26,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"path":"../docs/GUIDE.md"}}}' > $T/m.out
+grep -q 'outside the workspace' $T/m.out; check "mcp .. out of the workspace is rejected" $? 0
+# ZOSASM_UNRESTRICTED lifts the limit
+printf '%s\n' '{"jsonrpc":"2.0","id":27,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"path":"'$P'/testdata/hello.za"}}}' | ZOSASM_UNRESTRICTED=1 $M 2>/dev/null > $T/m.out
+grep -q '"success":true' $T/m.out; check "mcp ZOSASM_UNRESTRICTED lifts the limit" $? 0
 
 rm -rf $T
 [ $fail = 0 ] && echo "tests/run_cli_tests.sh: ok"
