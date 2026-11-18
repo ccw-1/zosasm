@@ -1,14 +1,19 @@
 # zosasm - cross assembler for an HLASM-like language producing z/OS GOFF.
 # Portable C99; the only requirement to build is a C compiler and make.
+#
+# build/libzosasm.a holds the assembler core; the four programs and the test
+# binaries link it. Dependencies are tracked per object with -MMD -MP (the
+# .d files in build/), so touching a header rebuilds only what includes it.
 CC      ?= cc
+AR      ?= ar
 CFLAGS  ?= -O2
 WARN    ?= -Wall -Wextra -pedantic
 STD     ?= -std=c99
-CFLAGS_ALL = $(STD) $(WARN) $(CFLAGS)
+CFLAGS_ALL = $(STD) $(WARN) $(CFLAGS) -MMD -MP
 
-SRC  := $(filter-out src/main.c src/hlasm2za.c src/mcp.c src/zafmt.c,$(wildcard src/*.c))
-OBJ  := $(SRC:src/%.c=build/%.o)
-TESTS := $(patsubst tests/%.c,build/%,$(wildcard tests/test_*.c))
+LIBSRC := $(filter-out src/main.c src/hlasm2za.c src/mcp.c src/zafmt.c,$(wildcard src/*.c))
+OBJ    := $(LIBSRC:src/%.c=build/%.o)
+TESTS  := $(patsubst tests/%.c,build/%,$(wildcard tests/test_*.c))
 
 .PHONY: all test test-maclib clean isa pdf
 all: build/zosasm build/hlasm2za build/zafmt build/zosasm-mcp
@@ -16,35 +21,28 @@ all: build/zosasm build/hlasm2za build/zafmt build/zosasm-mcp
 build:
 	mkdir -p build
 
-build/%.o: src/%.c $(wildcard src/*.h) | build
+build/%.o: src/%.c | build
 	$(CC) $(CFLAGS_ALL) -c $< -o $@
 
-build/zosasm: $(OBJ) build/main.o
+build/libzosasm.a: $(OBJ)
+	$(AR) rcs $@ $^
+
+build/zosasm: build/main.o build/libzosasm.a
 	$(CC) $(CFLAGS_ALL) -o $@ $^ -lm
 
-build/main.o: src/main.c $(wildcard src/*.h) | build
-	$(CC) $(CFLAGS_ALL) -c $< -o $@
-
-build/hlasm2za: $(OBJ) build/hlasm2za.o
+build/hlasm2za: build/hlasm2za.o build/libzosasm.a
 	$(CC) $(CFLAGS_ALL) -o $@ $^ -lm
 
-build/zafmt: $(OBJ) build/zafmt.o
+build/zafmt: build/zafmt.o build/libzosasm.a
 	$(CC) $(CFLAGS_ALL) -o $@ $^ -lm
 
-build/zafmt.o: src/zafmt.c $(wildcard src/*.h) | build
-	$(CC) $(CFLAGS_ALL) -c $< -o $@
-
+# the MCP server keeps its own minimal core (mcp.c + util.c): it must never
+# grow assembler state
 build/zosasm-mcp: build/mcp.o build/util.o
 	$(CC) $(CFLAGS_ALL) -o $@ $^ -lm
 
-build/mcp.o: src/mcp.c $(wildcard src/*.h) | build
-	$(CC) $(CFLAGS_ALL) -c $< -o $@
-
-build/hlasm2za.o: src/hlasm2za.c $(wildcard src/*.h) | build
-	$(CC) $(CFLAGS_ALL) -c $< -o $@
-
-build/test_%: tests/test_%.c $(OBJ) $(wildcard tests/*.h src/*.h) | build
-	$(CC) $(CFLAGS_ALL) -Isrc -o $@ $< $(OBJ) -lm
+build/test_%: tests/test_%.c build/libzosasm.a
+	$(CC) $(CFLAGS_ALL) -Isrc -MF $(@:%=%.d) -o $@ $< build/libzosasm.a -lm
 
 test: build/zosasm build/hlasm2za build/zafmt build/zosasm-mcp $(TESTS)
 	@fail=0; for t in $(TESTS); do ./$$t || fail=1; done; \
@@ -80,3 +78,5 @@ docs/zosasm-users-guide.pdf: docs/GUIDE.md docs/guide-header.tex src/version.h
 
 clean:
 	rm -rf build
+
+-include $(wildcard build/*.d)
