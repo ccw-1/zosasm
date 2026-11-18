@@ -1,0 +1,35 @@
+# CI: build and test zosasm with both compilers and the sanitizers.
+# The whole suite is behind `make test` (unit tests + command line tests);
+# the macro-library acceptance run needs a local HLASM library and stays out.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cc: gcc
+          - cc: clang
+          - cc: gcc
+            sanitizers: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: build and test
+        run: |
+          make clean
+          if [ -n "${{ matrix.sanitizers }}" ]; then
+            # the code is allocate-and-never-free by design for the one shot
+            # tools, so leak detection is off; the test binaries and the MCP
+            # server are also run by make test
+            ASAN_OPTIONS=detect_leaks=0 make \
+              CFLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -g" \
+              test
+          else
+            make CC=${{ matrix.cc }} test
+          fi
