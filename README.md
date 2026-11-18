@@ -29,8 +29,8 @@ build/zafmt -i prog.za                      # format the source (guide chapter 2
 build/zosasm -g -gdir /u/me -o prog.o prog.za  # also prog.dbg: debug info for dbx/LLDB (chapter 21)
 ```
 
-Options: `-o FILE`, `-DNAME[=VAL]`, `-Idir`, `-E`, `-dump FILE`,
-`-disasm FILE`, `-unpack FILE`, `-generic`, `-elf`, `-ascii`, `-charset NAME`, `-gz0`, `-gz1`, `-gz2`, `-g`, `-gdwarf`, `-gdir`, `-gmap`, `-gdbgpath`, `-reproducible`, `-strict-registers`,
+Options: `-o FILE`, `-DNAME[=VAL]`, `-Idir`, `-Mdir`, `-sysparm STR`, `-macro-steps N`, `-E`, `-dump FILE`,
+`-disasm FILE`, `-unpack FILE`, `-generic`, `-elf`, `-ascii`, `-charset NAME`, `-gz0`, `-gz1`, `-gz2`, `-g`, `-gdwarf`, `-gdir`, `-gmap`, `-gdbgpath`, `-reproducible`, `-strict-registers`, `-diag text|json`,
 `-l FILE`, `-ldata`, `-lpage N`, `-lbrief`, `-version`, `-color`, `-max-errors N`, `-Werror`. Source files use the extension `.za`.
 
 Assembly time helpers (DESIGN.md sections 8 and 12): `sizeof(x)`,

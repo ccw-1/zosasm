@@ -212,16 +212,30 @@ static int cmp_span(const Diag *x, const Diag *y) {
     return 0;
 }
 
+/* sort key: the span, then the report order (so the sort is stable) */
+typedef struct {
+    const Diag *d;
+    size_t idx;
+} SortItem;
+
+static int cmp_item(const void *a, const void *b) {
+    const SortItem *x = a, *y = b;
+    int c = cmp_span(x->d, y->d);
+    if (c) return c;
+    return x->idx < y->idx ? -1 : x->idx > y->idx;
+}
+
 const Diag **rep_sorted(const Reporter *r, size_t *n) {
-    size_t i, j;
+    size_t i;
+    SortItem *items = xmalloc(r->diags.n * sizeof *items);
     const Diag **out = xmalloc((r->diags.n + 1) * sizeof *out);
-    for (i = 0; i < r->diags.n; i++) out[i] = r->diags.v[i];
-    /* insertion sort is stable */
-    for (i = 1; i < r->diags.n; i++) {
-        const Diag *x = out[i];
-        for (j = i; j > 0 && cmp_span(out[j - 1], x) > 0; j--) out[j] = out[j - 1];
-        out[j] = x;
+    for (i = 0; i < r->diags.n; i++) {
+        items[i].d = r->diags.v[i];
+        items[i].idx = i;
     }
+    if (r->diags.n) qsort(items, r->diags.n, sizeof *items, cmp_item);
+    for (i = 0; i < r->diags.n; i++) out[i] = items[i].d;
+    free(items);
     *n = r->diags.n;
     return out;
 }
@@ -362,7 +376,9 @@ static void json_str(FILE *w, const char *s) {
             fputs("\\n", w);
         else if (c == '\t')
             fputs("\\t", w);
-        else if (c < 0x20)
+        else if (c < 0x20 || c >= 0x80)
+            /* bytes >= 0x80 (EBCDIC text in a message) become \u00xx, so the
+             * document is valid JSON whatever the message holds */
             fprintf(w, "\\u%04x", c);
         else
             fputc(c, w);

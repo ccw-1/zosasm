@@ -6,6 +6,13 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 
 ## Unreleased
 
+* `zosasm -` reads the program from standard input, as `hlasm2za` and
+  `zafmt` already do. `-diag json` escapes bytes >= 0x80 in messages (as
+  `\u00xx`), so the document is valid JSON even when a message quotes
+  non-ASCII source text. The diagnostics are sorted with `qsort` (stable
+  through the original order as the tie break) instead of an insertion
+  sort whose cost grew quadratically with the number of messages.
+
 * `hlasm2za` fixes: `-macro-dir` returns a failure exit code when a member
   cannot be read or its `.zmac` cannot be written (it used to print a warning
   and succeed); open code conditional assembly that cannot be converted no

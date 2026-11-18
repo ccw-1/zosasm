@@ -1384,6 +1384,7 @@ zafmt [options] [file ...]          (chapter 20)
 | `-reproducible` | fail on anything that makes the object differ between runs |
 | `-strict-registers` | registers only as `%r1` or an `EQU %r1` name (section 6.1); with `-disasm` the source is written that way |
 | `-l FILE` | write a listing to FILE (`-` = standard output), also after errors (section 11.2) |
+| `-` (as the source) | read the program from standard input (as `hlasm2za` and `zafmt` do) |
 | `-ldata` | listing: all object bytes of a statement |
 | `-lpage N` | listing: N lines per page (default 0: one page) |
 | `-lbrief` | listing: no tables |

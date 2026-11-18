@@ -18,7 +18,7 @@
 #include "zsym.h"
 
 static void usage(FILE *f) {
-    fprintf(f, "usage: zosasm [-o out.o] [-elf] [-ascii|-charset ascii|ebcdic] [-gz0|-gz1|-gz2] [-g [-gdwarf FILE] [-gdir DIR] [-gmap FROM=TO] [-gdbgpath PATH]] [-DNAME[=val]] [-Idir] [-Mdir] [-sysparm STR] [-macro-steps N] [-E] [-reproducible] [-strict-registers] [-l FILE [-ldata] [-lpage N] [-lbrief]] [-diag text|json] [-color] [-Werror] [-max-errors N] source.za\n"
+    fprintf(f, "usage: zosasm [-o out.o] [-elf] [-ascii|-charset ascii|ebcdic] [-gz0|-gz1|-gz2] [-g [-gdwarf FILE] [-gdir DIR] [-gmap FROM=TO] [-gdbgpath PATH]] [-DNAME[=val]] [-Idir] [-Mdir] [-sysparm STR] [-macro-steps N] [-E] [-reproducible] [-strict-registers] [-l FILE [-ldata] [-lpage N] [-lbrief]] [-diag text|json] [-color] [-Werror] [-max-errors N] source.za (or - for standard input)\n"
                "       zosasm -dump file.o\n"
                "       zosasm [-o out.za] -disasm file.o\n"
                "       zosasm [-o dir] -unpack file.o\n"
@@ -396,10 +396,21 @@ int main(int argc, char **argv) {
         usage(stderr);
         return 2;
     }
-    text = read_file(in, &n);
-    if (!text) {
-        fprintf(stderr, "zosasm: %s: %s\n", in, strerror(errno));
-        return 1;
+    if (!strcmp(in, "-")) {
+        Buf b = {0};
+        char tmp[8192];
+        size_t k;
+        in = "(stdin)";
+        while ((k = fread(tmp, 1, sizeof tmp, stdin)) > 0) buf_write(&b, tmp, k);
+        text = xstrdup(buf_cstr(&b));
+        n = b.len;
+        free(b.p);
+    } else {
+        text = read_file(in, &n);
+        if (!text) {
+            fprintf(stderr, "zosasm: %s: %s\n", in, strerror(errno));
+            return 1;
+        }
     }
     rep = rep_new(max_err);
     rep_set_warn_error(rep, werror);
