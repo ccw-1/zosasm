@@ -206,6 +206,16 @@ static void test_unconverted(void) {
     CHECK(warns("         LCLA  &I\n&I       SETA  1\n") == 0);
     CHECK(warns("         AIF (&X).A\n") == 2); /* &X is not declared, .A is not defined */
     CHECK(warns("         SETAF 'X'\n") >= 1);
+    /* open code that cannot be converted is commented out, but a MACRO..MEND
+     * inside it was already emitted and must not appear a second time */
+    {
+        char *r = conv("         LCLA  &A\n&A       SETA  1\n         SETAF 'X'\n         AGO   .D\n"
+                       ".D       ANOP\n         MACRO\n         M1    &P\n         DC    C'&P'\n"
+                       "         MEND\n         END\n");
+        const char *m = strstr(r, "#macro M1(p) {");
+        CHECK_MSG(m != NULL, "macro in open code: converted:\n%s", r);
+        CHECK_MSG(m == NULL || strstr(m + 1, "#macro M1") == NULL, "macro in open code: not repeated:\n%s", r);
+    }
     CHECK(warns(" OPSYN X\n") == 1);
     /* an unknown operation (a macro call) */
     CHECK_STR(conv(" WTO 'x'\n"), "         WTO   'x'\n");

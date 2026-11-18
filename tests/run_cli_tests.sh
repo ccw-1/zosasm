@@ -236,6 +236,9 @@ $X -E -I$T -o /dev/null $T/cnt.za 2>&1 | grep -c "DC *F'" | grep -q '^3$'; check
 mkdir -p $T/zm; $H -macro-dir testdata/hlasm/lib -o $T/zm > $T/sum 2>&1; check "hlasm2za -macro-dir exit" $? 0
 [ -s $T/zm/COUNT.zmac ] && [ -s $T/zm/FIND.zmac ]; check "hlasm2za -macro-dir writes every member" $? 0
 grep -q '2 members' $T/sum; check "hlasm2za -macro-dir summary" $? 0
+# a member that cannot be written fails the batch (a directory in the way)
+mkdir -p $T/zm2/COUNT.zmac; $H -macro-dir testdata/hlasm/lib -o $T/zm2 >/dev/null 2>&1
+check "hlasm2za -macro-dir write failure is an error" $? 1
 printf 'T CSECT\n#include "FIND.zmac"\n FIND 2\n END\n' > $T/fnd.za
 $X -E -I$T/zm -o /dev/null $T/fnd.za 2>&1 | grep -q "DC *F'2'"; check "the converted search loop expands" $? 0
 printf 'T CSECT\n FIND 2\n END\n' > $T/fnd2.za

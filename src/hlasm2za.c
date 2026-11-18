@@ -63,6 +63,7 @@ static int macro_dir(const char *dir, const char *outdir, const ConvOptions *o, 
     struct dirent *de;
     Vec(char *) names = {0};
     size_t k, nmem = 0, nmac = 0, nfail = 0, nwarn = 0;
+    int bad = 0; /* a member could not be read or its .zmac not written */
     if (!d) {
         fprintf(stderr, "hlasm2za: %s: %s\n", dir, strerror(errno));
         return 1;
@@ -83,7 +84,16 @@ static int macro_dir(const char *dir, const char *outdir, const ConvOptions *o, 
         int nw = 0;
         long wl;
         char *wbuf;
-        if (!text || !w) continue;
+        if (!text) {
+            fprintf(stderr, "hlasm2za: %s: %s\n", path, strerror(errno));
+            bad = 1;
+            continue;
+        }
+        if (!w) {
+            fprintf(stderr, "hlasm2za: cannot create a temporary file\n");
+            bad = 1;
+            continue;
+        }
         res = hlasm_convert(text, len, path, o, w, &nw);
         nmem++;
         wl = ftell(w);
@@ -112,13 +122,15 @@ static int macro_dir(const char *dir, const char *outdir, const ConvOptions *o, 
             size_t n = strlen(names.v[k]) - 4;
             char *op = xasprintf("%s/%.*s.zmac", outdir ? outdir : dir, (int)n, names.v[k]);
             FILE *f = fopen(op, "wb");
-            if (!f || fwrite(res, 1, strlen(res), f) != strlen(res) || fclose(f) != 0)
+            if (!f || fwrite(res, 1, strlen(res), f) != strlen(res) || fclose(f) != 0) {
                 fprintf(stderr, "hlasm2za: %s: write error\n", op);
+                bad = 1;
+            }
         }
     }
     fprintf(stderr, "hlasm2za: %lu members, %lu macros converted, %lu not converted, %lu warnings\n",
             (unsigned long)nmem, (unsigned long)nmac, (unsigned long)nfail, (unsigned long)nwarn);
-    return 0;
+    return bad;
 }
 
 int main(int argc, char **argv) {

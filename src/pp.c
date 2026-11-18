@@ -28,6 +28,7 @@ typedef struct {
 
 typedef struct {
     int parent_active, taking, taken, seen_else;
+    int mshape; /* the condition was written "(...)", the shape of a macro #if */
     Span sp;
 } Cond;
 
@@ -810,6 +811,17 @@ static int64_t eval_if(Pp *pp, const char *text, Span sp, int *ok) {
 static const char *const directive_names[] = {"define", "elif",    "else",  "endif", "error",  "if",
                                               "ifdef",  "ifndef",  "include", "pragma", "undef", "warning"};
 
+/* a line that is nothing but the macro block closer "#}" */
+static int is_block_close(const char *t) {
+    size_t i = 1;
+    if (t[0] != '#') return 0;
+    while (is_blank((unsigned char)t[i])) i++;
+    if (t[i] != '}') return 0;
+    for (i++; is_blank((unsigned char)t[i]); i++) {
+    }
+    return t[i] == 0;
+}
+
 /* Recognise "#name"; only these names are directives, so a label such as
  * #COUNT is not affected. */
 static const char *directive_of(const char *t, const char **rest) {
@@ -835,6 +847,7 @@ static void push_cond(Pp *pp, int taking, Span sp) {
     c.taking = pa && taking;
     c.taken = c.taking;
     c.seen_else = 0;
+    c.mshape = 0;
     c.sp = sp;
     vec_push(&pp->conds, c);
 }
@@ -962,6 +975,9 @@ static void do_directive(Pp *pp, const char *dir, const char *rest, const char *
         int ok = 1, v = 0;
         if (active(pp)) v = eval_if(pp, rest, sp, &ok) != 0;
         push_cond(pp, ok && v, sp);
+        /* "(cond)" is how a macro #if writes its condition: remember it so the
+         * unterminated-#if error can say what probably happened */
+        pp->conds.v[pp->conds.n - 1].mshape = *skip_blanks(rest) == '(';
     } else if (!strcmp(dir, "ifdef") || !strcmp(dir, "ifndef")) {
         const char *p = skip_blanks(rest);
         size_t j = is_sym_start((unsigned char)*p) ? ident_end(p, 0) : 0;
@@ -1441,15 +1457,27 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
             nxt = k + 1;
             if (dir)
                 do_directive(pp, dir, rest, t);
-            else if (active(pp))
-                emit_line(pp, t);
+            else if (active(pp)) {
+                if (is_block_close(t))
+                    diag_help(rep_errorf(pp->rep, "ZA4035", span_make(pp->file, pp->line, 1, 2),
+                                         "this \"#}\" closes nothing: no block of a macro "
+                                         "statement is open"),
+                              "a macro #if/#while/#for/#switch needs its \"{\" on the same "
+                              "line; the block ends with #}");
+                else
+                    emit_line(pp, t);
+            }
             if (rec && ev.kind == PE_LINE) pp->opt->events->v[ei].n = pp->out->n - ev.first;
         }
         i = nxt;
     }
     while (pp->conds.n > base) {
         Cond *c = &pp->conds.v[--pp->conds.n];
-        rep_errorf(pp->rep, "ZA4033", c->sp, "unterminated #if (no #endif before the end of the file)");
+        Diag *d = rep_errorf(pp->rep, "ZA4033", c->sp,
+                             "unterminated #if (no #endif before the end of the file)");
+        if (c->mshape)
+            diag_help(d, "if this was a macro #if block, its \"{\" must be on the same line as "
+                         "the #if, and the block ends with \"#}\"");
     }
     pp->file = save_file;
     pp->line = save_line;

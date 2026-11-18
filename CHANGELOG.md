@@ -6,6 +6,17 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 
 ## Unreleased
 
+* `hlasm2za` fixes: `-macro-dir` returns a failure exit code when a member
+  cannot be read or its `.zmac` cannot be written (it used to print a warning
+  and succeed); open code conditional assembly that cannot be converted no
+  longer emits a `MACRO`..`MEND` definition inside it twice (once converted,
+  once as a comment); a stray `#}` where no macro block is open is an error
+  (`ZA4035`) instead of a line passed to the assembler, and the unterminated
+  `#if` error says when the condition was written like a macro `#if` whose
+  `{` belongs on the same line.
+* CI: GitHub Actions builds and tests every push with gcc, clang and the
+  sanitizers.
+
 * An `END` entry point that belongs to a DSECT is an error (`ZA3012`); it
   used to assemble into an END record with ESDID 0 that the binder cannot
   resolve. Before emission, both object writers validate what the format can

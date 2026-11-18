@@ -1128,12 +1128,17 @@ dispatch loop, not as a labelled `#break`.
 all statements and comments are collected in `Conv.open` and handed to
 `mconv_macro` as the macro `OPENCODE` (prototype, statements, MEND); the
 result is emitted as the `#macro` text and the call line. On failure the
-original lines are commented out with a warning. `model_text` folds the
+original lines are commented out with a warning — except the ranges of
+`MACRO`..`MEND` definitions inside the region (`Conv.open_macros`), which
+were already converted and emitted during the parse, so they must not appear
+a second time. `model_text` folds the
 verdict of `conv_fold`: a string variable outside quotes becomes
 `&{upper(expr)}` (placeholder `_\x01x<k>\x02`, lower case `x` = `conv_fold`
 left it unchanged, so it was outside quotes) except in the fields of a
 statement whose operation is not an instruction or directive (`asm_is_op`):
-a macro call passes its operands on as written.
+a macro call passes its operands on as written. `hlasm2za -macro-dir` fails
+(exit 1) when a member cannot be read or its `.zmac` cannot be written, not
+only when the directory cannot be made.
 
 ## 17. ELF output and the ASCII character set (`src/elf.c`, `src/ebcdic.c`)
 

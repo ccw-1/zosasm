@@ -61,6 +61,10 @@ typedef struct {
 } Warn;
 
 typedef struct {
+    size_t lo, hi; /* line indexes (inclusive) consumed by a MACRO..MEND */
+} MacRange;
+
+typedef struct {
     ConvOptions o;
     Vec(char *) lines;
     Vec(LS) ls;
@@ -72,6 +76,7 @@ typedef struct {
     StrMap noted;  /* keys already warned about */
     MHStmtVec open; /* open code from the first conditional assembly statement on */
     size_t open_first; /* its first line index */
+    Vec(MacRange) open_macros; /* MACRO..MEND ranges inside it, already emitted */
     int wrapping;
     Buf out;
 } Conv;
@@ -647,7 +652,14 @@ static void open_finish(Conv *c) {
         push_comment(c, line, xstrdup("         OPENCODE"));
     } else {
         push_comment(c, line, xstrdup("* ---- open code conditional assembly, not converted (see the warning) ----"));
-        for (j = c->open_first; j < c->lines.n; j++) push_comment(c, (int)j + 1, raw_comment(c, c->lines.v[j]));
+        for (j = c->open_first; j < c->lines.n; j++) {
+            size_t r;
+            int in_macro = 0;
+            for (r = 0; r < c->open_macros.n; r++)
+                if (j >= c->open_macros.v[r].lo && j <= c->open_macros.v[r].hi) in_macro = 1;
+            if (in_macro) continue; /* the macro was already emitted above */
+            push_comment(c, (int)j + 1, raw_comment(c, c->lines.v[j]));
+        }
         warnf(c, line, "open code conditional assembly commented out: %s", why ? why : "not converted");
     }
 }
@@ -711,6 +723,13 @@ static void parse(Conv *c) {
         seen = 1;
         if (!strcmp(fp, "MACRO") && !*fn) {
             macro_def(c, first, &i);
+            if (c->wrapping) {
+                /* emitted above; the open_finish failure path must not repeat it */
+                MacRange r;
+                r.lo = first;
+                r.hi = i;
+                vec_push(&c->open_macros, r);
+            }
             continue;
         }
         if (c->o.member) continue; /* a macro library member: only the definitions */
