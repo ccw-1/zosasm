@@ -28,15 +28,16 @@ grep -q '^{"diagnostics":\[' $T/err; check "-diag json header" $? 0
 grep -q '"code":"ZA1011","message":"undefined symbol' $T/err; check "-diag json code" $? 0
 grep -q '"errors":1,"warnings":0}' $T/err; check "-diag json counts" $? 0
 $X -diag json -o $T/hello.o testdata/hello.za 2>$T/err; check "-diag json ok exit" $? 0
+grep -q '"diagnostics":\[\],"errors":0' $T/err; check "-diag json empty" $? 0
 # a message with a byte >= 0x80 must not produce invalid JSON
 printf 'T CSECT\n BADOP\303\251 1\n' > $T/hi.za
 $X -diag json -o /dev/null $T/hi.za 2>$T/err; check "-diag json: high byte exit" $? 1
 grep -q '\\u00c3\\u00a9' $T/err; check "-diag json: high byte is escaped" $? 0
-grep -q '[^\\]"[^"]*[\200-\377]' $T/err; [ $? = 1 ]; check "-diag json: no raw high byte" $? 0
+# GNU grep does not read octal escapes inside brackets: printf makes the bytes
+LC_ALL=C grep -q "$(printf '[\200-\377]')" $T/err; [ $? = 1 ]; check "-diag json: no raw high byte" $? 0
 # the source can come from standard input
 printf 'T CSECT\n LR 1,2\n END\n' | $X -E - > $T/stdin.out; check "standard input: exit" $? 0
 grep -q 'LR *1,2' $T/stdin.out; check "standard input: preprocessed" $? 0
-grep -q '"diagnostics":\[\],"errors":0' $T/err; check "-diag json empty" $? 0
 $X -diag xml testdata/hello.za 2>/dev/null; check "-diag bad value" $? 2
 $X -l - -lbrief -o $T/bad.o $T/bad.za 2>/dev/null | grep -q '^ *\^\^\^\^\^$'; check "listing carets" $? 0
 
