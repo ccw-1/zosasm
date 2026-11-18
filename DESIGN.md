@@ -1202,6 +1202,20 @@ is redirected to a file and read back, so a failing program cannot block the
 pipe. A tool failure is a result with `isError` true, not a JSON-RPC error,
 so that the agent sees the diagnostics.
 
+**Per-request memory.** The server is a long lived process, so unlike the
+rest of zosasm it gives memory back: the request line is capped at 16 MB
+(`MAX_REQUEST`, a longer line is a `-32600` reply), the `J` parse tree is
+freed with `jfree` after `handle` (also the partial tree of a failed parse,
+and the scratch buffers of a failed string or number), the reply buffers of
+`reply_result`/`reply_error`/`handle` and of every tool (`run_prog` output
+and error, `text`/`st`, the object and .dbg read back, the argument vector,
+the resolved paths) are freed through a `done:` label per tool, `tmp_close`
+frees the temporary file names it holds, and `input_file`/`object_file`
+always return a string the caller owns (the copy registered in `Tmp` is
+freed by `tmp_close`). What remains for the process lifetime is
+configuration (`locate`) and the caches (`tools_json`, the guide). Verified
+with an ASan/LSan build fed hundreds of mixed requests: no leaks.
+
 **The workspace.** Every file name a tool call gives (`path`, `output`,
 `dwarf_output`, `output_dir`, `macro_dir`, `copy_dir`, `include_dirs`,
 `macro_dirs`) is resolved by `ws_resolve` and must land inside the
@@ -1233,12 +1247,17 @@ the replies (initialize, tool list, assemble ok/error/ELF/`files`, preprocess,
 guide section and search, resources, unknown method, parse error, and the
 object round trip through `object_base64`, `zosasm_dump`, `zosasm_disasm`;
 workspace: `path`/`output` outside rejected, inside accepted, `..` out
-rejected, `ZOSASM_UNRESTRICTED` lifts the limit).
+rejected, `ZOSASM_UNRESTRICTED` lifts the limit). `tests/test_mcp.c`
+includes `src/mcp.c` (with `ZA_MCP_NO_MAIN`) and tests the parts below the
+protocol directly: the JSON parser (valid documents, escapes and surrogate
+pairs, 19 malformed inputs, the nesting limit), `b64_decode`, `ws_resolve`
+(inside, new outputs, `.`/`..`, symlinks, `ZOSASM_UNRESTRICTED`) and whole
+requests with the output captured (`initialize`, `tools/list`, wrong-typed
+arguments, notifications).
 
 **Not done.** Prompts, progress notifications, cancellation, the HTTP
-transport, JSON-RPC batches, freeing per-request memory (the server is a
-long lived process), a request size cap, a `zosasm_link`-style tool (there
-is nothing to link with here).
+transport, JSON-RPC batches, a `zosasm_link`-style tool (there is nothing
+to link with here).
 
 ## 19. Macro language (M1 implemented)
 

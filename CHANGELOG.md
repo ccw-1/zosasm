@@ -6,6 +6,12 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 
 ## Unreleased
 
+* MCP server: per-request memory is given back (the server is a long lived
+  process; verified leak-free with an ASan/LSan build over hundreds of
+  requests), a request line longer than 16 MB is rejected with a JSON-RPC
+  error instead of being buffered, and a failed parse no longer leaks its
+  partial tree. New `tests/test_mcp.c` (77 checks: JSON parser, base64, the
+  workspace resolver, whole requests).
 * MCP server: file names are limited to a **workspace**, the directory of the
   server binary. Every file name a tool call gives (`path`, `output`,
   `dwarf_output`, `output_dir`, `macro_dir`, `copy_dir`, `include_dirs`,

@@ -23,6 +23,7 @@
 
 #define PROTOCOL_LATEST "2025-06-18"
 #define MAX_TEXT (1024 * 1024) /* longest text returned in one result */
+#define MAX_REQUEST (16 * 1024 * 1024) /* longest JSON-RPC line read */
 
 /* ====================================================================
  * JSON
@@ -96,11 +97,15 @@ static char *jp_string(JP *p, size_t *len) {
     while (p->p < p->end) {
         unsigned char c = (unsigned char)*p->p++;
         if (c == '"') {
+            char *r;
             if (len) *len = b.len;
-            return xstrdup(buf_cstr(&b));
+            r = xstrdup(buf_cstr(&b));
+            free(b.p);
+            return r;
         }
         if (c < 0x20) {
             p->err = "control character in string";
+            free(b.p);
             return NULL;
         }
         if (c != '\\') {
@@ -122,6 +127,7 @@ static char *jp_string(JP *p, size_t *len) {
             unsigned u, lo;
             if (!hex4(p, &u)) {
                 p->err = "bad \\u escape";
+                free(b.p);
                 return NULL;
             }
             if (u >= 0xD800 && u < 0xDC00 && p->end - p->p >= 6 && p->p[0] == '\\' && p->p[1] == 'u') {
@@ -139,10 +145,12 @@ static char *jp_string(JP *p, size_t *len) {
         }
         default:
             p->err = "bad escape in string";
+            free(b.p);
             return NULL;
         }
     }
     p->err = "unterminated string";
+    free(b.p);
     return NULL;
 }
 
@@ -153,6 +161,7 @@ static J *jnew(JType t) {
 }
 
 static J *jp_value(JP *p);
+static void jfree(J *j);
 
 static J *jp_value(JP *p) {
     J *j;
@@ -187,20 +196,20 @@ static J *jp_value(JP *p) {
             if (obj) {
                 if (p->p >= p->end || *p->p != '"') {
                     p->err = "object key expected";
-                    return NULL;
+                    goto fail;
                 }
                 p->p++;
                 key = jp_string(p, NULL);
-                if (!key) return NULL;
+                if (!key) goto fail;
                 jp_ws(p);
                 if (p->p >= p->end || *p->p != ':') {
                     p->err = "':' expected";
-                    return NULL;
+                    goto fail;
                 }
                 p->p++;
             }
             v = jp_value(p);
-            if (!v) return NULL;
+            if (!v) goto fail;
             if (j->n == cap) {
                 cap = cap ? cap * 2 : 8;
                 j->v = xrealloc(j->v, cap * sizeof *j->v);
@@ -208,6 +217,7 @@ static J *jp_value(JP *p) {
             }
             j->v[j->n] = v;
             if (obj) j->k[j->n] = key;
+            key = NULL; /* now owned by j */
             j->n++;
             jp_ws(p);
             if (p->p < p->end && *p->p == ',') {
@@ -220,6 +230,9 @@ static J *jp_value(JP *p) {
                 return j;
             }
             p->err = "',' or closing bracket expected";
+        fail:
+            free(key);
+            jfree(j);
             return NULL;
         }
     }
@@ -257,16 +270,35 @@ static J *jp_value(JP *p) {
             tmp = xstrndup(p->p, (size_t)(q - p->p));
             j = jnew(J_NUM);
             j->num = strtod(tmp, &e);
-            if (*e) {
+            if (*e) { /* e points into tmp: read it before the free */
                 p->err = "bad number";
+                free(tmp);
+                jfree(j);
                 return NULL;
             }
+            free(tmp);
             p->p = q;
             return j;
         }
     }
     p->err = "unexpected character";
     return NULL;
+}
+
+/* frees a parse tree (a whole request, or a partial one of a failed parse) */
+static void jfree(J *j) {
+    size_t i;
+    if (!j) return;
+    if (j->t == J_ARR || j->t == J_OBJ) { /* only these have children in v */
+        for (i = 0; i < j->n; i++) {
+            jfree(j->v[i]);
+            if (j->k) free(j->k[i]);
+        }
+    }
+    free(j->v);
+    free(j->k);
+    free(j->s);
+    free(j);
 }
 
 static J *json_parse(const char *s, size_t n, const char **err) {
@@ -431,7 +463,11 @@ static char *read_whole(const char *path, size_t *len) {
     while ((n = fread(tmp, 1, sizeof tmp, f)) > 0) buf_write(&b, tmp, n);
     fclose(f);
     if (len) *len = b.len;
-    return xstrdup(buf_cstr(&b)); /* NUL terminated, may hold NULs inside (len tells) */
+    {
+        char *r = xstrdup(buf_cstr(&b)); /* NUL terminated, may hold NULs inside (len tells) */
+        free(b.p);
+        return r;
+    }
 }
 
 /* like read_whole but exact binary: copies b.len bytes */
@@ -447,6 +483,7 @@ static unsigned char *read_binary(const char *path, size_t *len) {
     r = xmalloc(b.len + 1);
     if (b.len) memcpy(r, b.p, b.len);
     *len = b.len;
+    free(b.p);
     return r;
 }
 
@@ -523,8 +560,16 @@ static char *tmp_path(Tmp *t, const char *name) {
 static void tmp_close(Tmp *t) {
     size_t i;
     if (!t->dir) return;
-    for (i = 0; i < t->files.n; i++) remove(t->files.v[i]);
+    for (i = 0; i < t->files.n; i++) {
+        remove(t->files.v[i]);
+        free(t->files.v[i]);
+    }
+    free(t->files.v);
     rmdir(t->dir);
+    free(t->dir);
+    t->dir = NULL;
+    t->files.v = NULL;
+    t->files.n = 0;
 }
 
 /* a file name without a directory part (for names the caller chooses) */
@@ -573,6 +618,7 @@ static void run_prog(Tmp *t, const char *prog, char *const *args, size_t nargs, 
     if (!p) {
         buf_printf(&r->err, "cannot start %s: %s\n", prog, strerror(errno));
         r->status = 127;
+        free(cmd.p);
         return;
     }
     while ((n = fread(tmp, 1, sizeof tmp, p)) > 0) buf_write(&r->out, tmp, n);
@@ -581,8 +627,12 @@ static void run_prog(Tmp *t, const char *prog, char *const *args, size_t nargs, 
     {
         size_t el = 0;
         char *e = read_whole(errfile, &el);
-        if (e) buf_write(&r->err, e, el);
+        if (e) {
+            buf_write(&r->err, e, el);
+            free(e);
+        }
     }
+    free(cmd.p);
 }
 
 /* replace every occurrence of the temporary directory in b */
@@ -591,6 +641,7 @@ static void scrub(Buf *b, const Tmp *t) {
     char *pat = xasprintf("%s/", t->dir);
     size_t pl = strlen(pat), i = 0;
     const char *s = buf_cstr(b);
+    (void)pl; /* used in the loop below */
     while (i < b->len) {
         if (i + pl <= b->len && !memcmp(s + i, pat, pl)) {
             i += pl;
@@ -600,6 +651,7 @@ static void scrub(Buf *b, const Tmp *t) {
     }
     free(b->p);
     *b = o;
+    free(pat);
 }
 
 /* ====================================================================
@@ -644,6 +696,7 @@ static void locate(const char *argv0) {
         g_bindir = dir_of(exe);
     else
         g_bindir = xstrdup(".");
+    free(exe);
     env = getenv("ZOSASM_GUIDE");
     if (env && *env) {
         g_guide = xstrdup(env);
@@ -653,17 +706,27 @@ static void locate(const char *argv0) {
         cand[0] = xasprintf("%s/../docs/GUIDE.md", g_bindir);
         cand[1] = xasprintf("%s/docs/GUIDE.md", g_bindir);
         cand[2] = xasprintf("%s/../share/zosasm/GUIDE.md", g_bindir);
-        for (i = 0; i < 3 && !g_guide; i++)
-            if (file_exists(cand[i])) g_guide = cand[i];
-        if (!g_guide) g_guide = cand[0];
+        for (i = 0; i < 3; i++) {
+            if (!g_guide && file_exists(cand[i]))
+                g_guide = cand[i];
+            else
+                free(cand[i]);
+        }
+        if (!g_guide) g_guide = xstrdup("docs/GUIDE.md");
     }
     {
         char *real = realpath(g_guide, NULL);
-        if (real) g_guide = real;
+        if (real) {
+            free(g_guide);
+            g_guide = real;
+        }
     }
     {
         char *rb = realpath(g_bindir, NULL);
-        if (rb) g_bindir = rb;
+        if (rb) {
+            free(g_bindir);
+            g_bindir = rb;
+        }
     }
     g_docdir = dir_of(g_guide);
 }
@@ -678,6 +741,8 @@ static void locate(const char *argv0) {
 
 static char *g_workspace;
 static int g_unrestricted;
+static char g_ws_err[512]; /* the error of the last ws_resolve failure; the
+                            * server is serial, tool_fail copies it at once */
 
 static int inside_workspace(const char *real) {
     size_t wl = strlen(g_workspace);
@@ -695,14 +760,18 @@ static char *ws_resolve(const char *p, const char *what, const char **msg) {
     struct stat st;
     *msg = NULL;
     if (!p || !*p) {
-        *msg = xasprintf("%s: the file name is empty", what);
+        snprintf(g_ws_err, sizeof g_ws_err, "%s: the file name is empty", what);
+        *msg = g_ws_err;
         return NULL;
     }
     if (g_unrestricted) return xstrdup(p);
     full = p[0] == '/' ? xstrdup(p) : xasprintf("%s/%s", g_workspace, p);
     if (stat(full, &st) == 0) {
         real = realpath(full, NULL);
-        if (!real) *msg = xasprintf("%s \"%s\": %s", what, p, strerror(errno));
+        if (!real) {
+            snprintf(g_ws_err, sizeof g_ws_err, "%s \"%s\": %s", what, p, strerror(errno));
+            *msg = g_ws_err;
+        }
     } else {
         char *dir = xstrdup(full), *rd = NULL, *slash;
         Buf b = {0};
@@ -718,7 +787,8 @@ static char *ws_resolve(const char *p, const char *what, const char **msg) {
         }
         if (!rd && stat(dir, &st) == 0) rd = realpath(dir, NULL);
         if (!rd) {
-            *msg = xasprintf("%s \"%s\": the directory does not exist", what, p);
+            snprintf(g_ws_err, sizeof g_ws_err, "%s \"%s\": the directory does not exist", what, p);
+            *msg = g_ws_err;
         } else {
             buf_puts(&b, rd);
             free(rd);
@@ -745,9 +815,11 @@ static char *ws_resolve(const char *p, const char *what, const char **msg) {
         free(dir);
     }
     if (real && !inside_workspace(real)) {
-        *msg = xasprintf("%s \"%s\" is outside the workspace %s (relative names are relative to the "
-                         "workspace; the operator can lift the limit with ZOSASM_UNRESTRICTED)",
-                         what, p, g_workspace);
+        snprintf(g_ws_err, sizeof g_ws_err,
+                 "%s \"%s\" is outside the workspace %s (relative names are relative to the "
+                 "workspace; the operator can lift the limit with ZOSASM_UNRESTRICTED)",
+                 what, p, g_workspace);
+        *msg = g_ws_err;
         free(real);
         real = NULL;
     }
@@ -984,12 +1056,17 @@ static char *input_file(Tmp *t, const J *args, const char *defname, const char *
             *msg = "cannot write the temporary source file";
             return NULL;
         }
-        return p;
+        return xstrdup(p); /* the caller frees; the Tmp copy is freed by tmp_close */
     }
 }
 
 typedef Vec(char *) ArgVec;
 static void add_arg(ArgVec *v, const char *s) { vec_push(v, xstrdup(s)); }
+static void free_args(ArgVec *v) {
+    size_t i;
+    for (i = 0; i < v->n; i++) free(v->v[i]);
+    free(v->v);
+}
 
 /* common to assemble and preprocess: -D -I -elf -charset -strict-registers */
 static const char *common_options(ArgVec *a, const J *args, Tmp *t, int *is_elf) {
@@ -1059,7 +1136,7 @@ static void tool_assemble(const J *args, Buf *out) {
     Tmp t;
     ArgVec a = {0};
     const char *msg = NULL, *output = jstr(args, "output");
-    char *in, *objfile, *lstfile = NULL;
+    char *in = NULL, *out_path = NULL, *dw_path = NULL, *objfile, *lstfile = NULL;
     Buf lbuf = {0};
     Run r;
     int is_elf = 0, listing = jbool(args, "listing", 0), want_b64 = jbool(args, "object_base64", 0), gz;
@@ -1072,43 +1149,44 @@ static void tool_assemble(const J *args, Buf *out) {
     const char *dwarf_out = jstr(args, "dwarf_output");
     char *dbgfile = NULL;
     int want_dwarf = jbool(args, "dwarf", 0);
+    memset(&r, 0, sizeof r);
 
     if (!tmp_open(&t)) { tool_fail(out, "cannot create a temporary directory"); return; }
     if ((e = write_files(&t, args)) != NULL) {
-        tmp_close(&t);
-        { tool_fail(out, e); return; }
+        tool_fail(out, e);
+        goto done;
     }
     in = input_file(&t, args, "input.za", &msg);
     if (!in) {
-        tmp_close(&t);
-        { tool_fail(out, msg); return; }
+        tool_fail(out, msg);
+        goto done;
     }
     { /* outputs go inside the workspace */
         char *rp;
         const char *wm = NULL;
         if (output && *output) {
             rp = ws_resolve(output, "'output'", &wm);
-            if (!rp) { tmp_close(&t); tool_fail(out, wm); return; }
-            output = rp;
+            if (!rp) { tool_fail(out, wm); goto done; }
+            output = out_path = rp;
         }
         if (dwarf_out && *dwarf_out) {
             rp = ws_resolve(dwarf_out, "'dwarf_output'", &wm);
-            if (!rp) { tmp_close(&t); tool_fail(out, wm); return; }
-            dwarf_out = rp;
+            if (!rp) { tool_fail(out, wm); goto done; }
+            dwarf_out = dw_path = rp;
         }
     }
     objfile = tmp_path(&t, ".object");
     add_arg(&a, "-o");
     add_arg(&a, objfile);
     if ((msg = common_options(&a, args, &t, &is_elf)) != NULL) {
-        tmp_close(&t);
-        { tool_fail(out, msg); return; }
+        tool_fail(out, msg);
+        goto done;
     }
     gz = (int)jint(args, "debug_info", 1);
     if (jget(args, "debug_info")) {
         if (gz < 0 || gz > 2) {
-            tmp_close(&t);
-            { tool_fail(out, "'debug_info' must be 0, 1 or 2"); return; }
+            tool_fail(out, "'debug_info' must be 0, 1 or 2");
+            goto done;
         }
         vec_push(&a, xasprintf("-gz%d", gz));
     }
@@ -1117,8 +1195,8 @@ static void tool_assemble(const J *args, Buf *out) {
         size_t nm, k;
         int bad = 0;
         if (is_elf) {
-            tmp_close(&t);
-            { tool_fail(out, "'dwarf' (z/OS debug information) cannot be combined with format \"elf\""); return; }
+            tool_fail(out, "'dwarf' (z/OS debug information) cannot be combined with format \"elf\"");
+            goto done;
         }
         dbgfile = tmp_path(&t, ".dbg");
         add_arg(&a, "-g");
@@ -1134,8 +1212,8 @@ static void tool_assemble(const J *args, Buf *out) {
         }
         nm = str_array(args, "dwarf_map", &maps, &bad);
         if (bad) {
-            tmp_close(&t);
-            { tool_fail(out, "'dwarf_map' must be an array of \"FROM=TO\" strings"); return; }
+            tool_fail(out, "'dwarf_map' must be an array of \"FROM=TO\" strings");
+            goto done;
         }
         for (k = 0; k < nm; k++) {
             add_arg(&a, "-gmap");
@@ -1160,6 +1238,7 @@ static void tool_assemble(const J *args, Buf *out) {
     {
         char *prog = tool_path("zosasm");
         run_prog(&t, prog, a.v, a.n, &r);
+        free(prog);
     }
     scrub(&r.err, &t);
     scrub(&r.out, &t);
@@ -1203,6 +1282,7 @@ static void tool_assemble(const J *args, Buf *out) {
         char *lst = read_whole(lstfile, &ll);
         if (lst) {
             buf_write(&lbuf, lst, ll);
+            free(lst);
             scrub(&lbuf, &t);
             buf_puts(&text, "--- listing ---\n");
             text_cap(&text, lbuf.p ? lbuf.p : "", lbuf.len);
@@ -1230,6 +1310,7 @@ static void tool_assemble(const J *args, Buf *out) {
             b64_encode(&b64, obj, objlen);
             w_key(&st, &first, "object_base64");
             w_str(&st, b64.p ? b64.p : "", b64.len);
+            free(b64.p);
         }
     }
     if (dbg) {
@@ -1244,6 +1325,7 @@ static void tool_assemble(const J *args, Buf *out) {
             b64_encode(&b64, dbg, dbglen);
             w_key(&st, &first, "dwarf_base64");
             w_str(&st, b64.p ? b64.p : "", b64.len);
+            free(b64.p);
         }
     }
     if (listing) {
@@ -1254,6 +1336,18 @@ static void tool_assemble(const J *args, Buf *out) {
     }
     buf_putc(&st, '}');
     tool_result(out, buf_cstr(&text), text.len, buf_cstr(&st), r.status != 0);
+done:
+    free(in);
+    free(out_path);
+    free(dw_path);
+    free_args(&a);
+    free(text.p);
+    free(st.p);
+    free(lbuf.p);
+    free(r.out.p);
+    free(r.err.p);
+    free(obj);
+    free(dbg);
     tmp_close(&t);
 }
 
@@ -1261,30 +1355,32 @@ static void tool_preprocess(const J *args, Buf *out) {
     Tmp t;
     ArgVec a = {0};
     const char *msg = NULL, *e;
-    char *in;
+    char *in = NULL;
     Run r;
     int is_elf;
     Buf text = {0}, st = {0};
     int first = 1;
+    memset(&r, 0, sizeof r);
     if (!tmp_open(&t)) { tool_fail(out, "cannot create a temporary directory"); return; }
     if ((e = write_files(&t, args)) != NULL) {
-        tmp_close(&t);
-        { tool_fail(out, e); return; }
+        tool_fail(out, e);
+        goto done;
     }
     in = input_file(&t, args, "input.za", &msg);
     if (!in) {
-        tmp_close(&t);
-        { tool_fail(out, msg); return; }
+        tool_fail(out, msg);
+        goto done;
     }
     add_arg(&a, "-E");
     if ((msg = common_options(&a, args, &t, &is_elf)) != NULL) {
-        tmp_close(&t);
-        { tool_fail(out, msg); return; }
+        tool_fail(out, msg);
+        goto done;
     }
     add_arg(&a, in);
     {
         char *prog = tool_path("zosasm");
         run_prog(&t, prog, a.v, a.n, &r);
+        free(prog);
     }
     scrub(&r.err, &t);
     buf_printf(&text, "zosasm -E %s (exit status %d)\n", r.status == 0 ? "succeeded" : "failed", r.status);
@@ -1302,6 +1398,13 @@ static void tool_preprocess(const J *args, Buf *out) {
     w_str(&st, r.err.p ? r.err.p : "", r.err.len);
     buf_putc(&st, '}');
     tool_result(out, buf_cstr(&text), text.len, buf_cstr(&st), r.status != 0);
+done:
+    free(in);
+    free_args(&a);
+    free(text.p);
+    free(st.p);
+    free(r.out.p);
+    free(r.err.p);
     tmp_close(&t);
 }
 
@@ -1339,7 +1442,8 @@ static char *object_file(Tmp *t, const J *args, const char **msg) {
             *msg = "cannot write the temporary object file";
             return NULL;
         }
-        return p;
+        free(d);
+        return xstrdup(p); /* the caller frees; the Tmp copy is freed by tmp_close */
     }
 }
 
@@ -1362,40 +1466,49 @@ static void simple_result(Buf *out, const char *what, Run *r, const char *key, T
     w_str(&st, r->err.p ? r->err.p : "", r->err.len);
     buf_putc(&st, '}');
     tool_result(out, buf_cstr(&text), text.len, buf_cstr(&st), r->status != 0);
+    free(text.p);
+    free(st.p);
 }
 
 static void tool_dump(const J *args, Buf *out) {
     Tmp t;
     const char *msg = NULL;
-    char *f, *av[2];
+    char *f = NULL, *av[2];
     Run r;
+    memset(&r, 0, sizeof r);
     if (!tmp_open(&t)) { tool_fail(out, "cannot create a temporary directory"); return; }
     f = object_file(&t, args, &msg);
     if (!f) {
-        tmp_close(&t);
-        { tool_fail(out, msg); return; }
+        tool_fail(out, msg);
+        goto done;
     }
     av[0] = (char *)"-dump";
     av[1] = f;
     {
         char *prog = tool_path("zosasm");
         run_prog(&t, prog, av, 2, &r);
+        free(prog);
     }
     simple_result(out, "zosasm -dump", &r, "dump", &t);
+done:
+    free(f);
+    free(r.out.p);
+    free(r.err.p);
     tmp_close(&t);
 }
 
 static void tool_disasm(const J *args, Buf *out) {
     Tmp t;
     const char *msg = NULL;
-    char *f;
+    char *f = NULL;
     ArgVec a = {0};
     Run r;
+    memset(&r, 0, sizeof r);
     if (!tmp_open(&t)) { tool_fail(out, "cannot create a temporary directory"); return; }
     f = object_file(&t, args, &msg);
     if (!f) {
-        tmp_close(&t);
-        { tool_fail(out, msg); return; }
+        tool_fail(out, msg);
+        goto done;
     }
     if (jbool(args, "generic", 0)) add_arg(&a, "-generic");
     if (jbool(args, "strict_registers", 0)) add_arg(&a, "-strict-registers");
@@ -1404,8 +1517,14 @@ static void tool_disasm(const J *args, Buf *out) {
     {
         char *prog = tool_path("zosasm");
         run_prog(&t, prog, a.v, a.n, &r);
+        free(prog);
     }
     simple_result(out, "zosasm -disasm", &r, "source", &t);
+done:
+    free(f);
+    free_args(&a);
+    free(r.out.p);
+    free(r.err.p);
     tmp_close(&t);
 }
 
@@ -1413,29 +1532,27 @@ static void tool_convert(const J *args, Buf *out) {
     Tmp t;
     const char *msg = NULL, *ictl = jstr(args, "ictl"), *incext = jstr(args, "include_extension");
     const char *mdir = jstr(args, "macro_dir"), *odir = jstr(args, "output_dir"), *cdir = jstr(args, "copy_dir");
-    char *in = NULL;
+    char *in = NULL, *rm = NULL, *ro = NULL, *rc = NULL;
     ArgVec a = {0};
     Run r;
     long w;
+    memset(&r, 0, sizeof r);
     if (!tmp_open(&t)) { tool_fail(out, "cannot create a temporary directory"); return; }
     if (mdir) {
-        char *rm, *ro;
         const char *wm = NULL;
         /* a whole library: every member of macro_dir (.mac) becomes a .zmac file in output_dir */
         if (!*mdir || !odir || !*odir) {
-            tmp_close(&t);
             tool_fail(out, "'macro_dir' needs 'output_dir', the directory that receives the converted .zmac files");
-            return;
+            goto done;
         }
         if (jstr(args, "source") || jstr(args, "path")) {
-            tmp_close(&t);
             tool_fail(out, "give 'macro_dir' or one of 'source' / 'path', not both");
-            return;
+            goto done;
         }
         rm = ws_resolve(mdir, "'macro_dir'", &wm);
-        if (!rm) { tmp_close(&t); tool_fail(out, wm); return; }
+        if (!rm) { tool_fail(out, wm); goto done; }
         ro = ws_resolve(odir, "'output_dir'", &wm);
-        if (!ro) { tmp_close(&t); tool_fail(out, wm); return; }
+        if (!ro) { tool_fail(out, wm); goto done; }
         add_arg(&a, "-macro-dir");
         add_arg(&a, rm);
         add_arg(&a, "-o");
@@ -1443,8 +1560,8 @@ static void tool_convert(const J *args, Buf *out) {
     } else {
         in = input_file(&t, args, jbool(args, "macros", 0) ? "input.mac" : "input.asm", &msg);
         if (!in) {
-            tmp_close(&t);
-            { tool_fail(out, msg); return; }
+            tool_fail(out, msg);
+            goto done;
         }
         add_arg(&a, "-o");
         add_arg(&a, "-");
@@ -1456,8 +1573,8 @@ static void tool_convert(const J *args, Buf *out) {
     if (jbool(args, "comment_macros", 0)) add_arg(&a, "-comment-macros");
     if (cdir) {
         const char *wm = NULL;
-        char *rc = ws_resolve(cdir, "'copy_dir'", &wm);
-        if (!rc) { tmp_close(&t); tool_fail(out, wm); return; }
+        rc = ws_resolve(cdir, "'copy_dir'", &wm);
+        if (!rc) { tool_fail(out, wm); goto done; }
         add_arg(&a, "-copy-dir");
         add_arg(&a, rc);
     }
@@ -1478,8 +1595,17 @@ static void tool_convert(const J *args, Buf *out) {
     {
         char *prog = tool_path("hlasm2za");
         run_prog(&t, prog, a.v, a.n, &r);
+        free(prog);
     }
     simple_result(out, "hlasm2za", &r, mdir ? "output" : "source", &t);
+done:
+    free(in);
+    free(rm);
+    free(ro);
+    free(rc);
+    free_args(&a);
+    free(r.out.p);
+    free(r.err.p);
     tmp_close(&t);
 }
 
@@ -1491,6 +1617,7 @@ static void tool_guide(const J *args, Buf *out) {
     if (!g) {
         char *m = xasprintf("the user's guide %s cannot be read (set ZOSASM_GUIDE or start zosasm-mcp from the build directory of a zosasm checkout)", g_guide);
         tool_fail(out, m);
+        free(m);
         return;
     }
     if (q && *q) {
@@ -1553,7 +1680,10 @@ static void tool_guide(const J *args, Buf *out) {
         Buf shown = {0};
         text_cap(&shown, text.p ? text.p : "", text.len);
         tool_result(out, buf_cstr(&shown), shown.len, buf_cstr(&st), 0);
+        free(shown.p);
     }
+    free(text.p);
+    free(st.p);
 }
 
 /* ---- tool list ---- */
@@ -1949,6 +2079,7 @@ static void reply_result(const J *id, const char *result) {
     buf_puts(&b, result);
     buf_putc(&b, '}');
     send_msg(b.p, b.len);
+    free(b.p);
 }
 
 static void reply_error(const J *id, int code, const char *msg) {
@@ -1962,13 +2093,14 @@ static void reply_error(const J *id, int code, const char *msg) {
     w_cstr(&b, msg);
     buf_puts(&b, "}}");
     send_msg(b.p, b.len);
+    free(b.p);
 }
 
-static void handle(const J *msg) {
+/* one request: the reply is written and the result buffer freed */
+static void dispatch(const J *msg, Buf *r) {
     const char *method = jstr(msg, "method");
     J *id = jget(msg, "id");
     J *params = jget(msg, "params");
-    Buf r = {0};
     if (!method) {
         if (id) reply_error(id, -32600, "invalid request: no method");
         return; /* a response or garbage: ignore */
@@ -1981,7 +2113,7 @@ static void handle(const J *msg) {
         size_t i;
         for (i = 0; want && known[i]; i++)
             if (!strcmp(want, known[i])) use = known[i];
-        buf_printf(&r, "{\"protocolVersion\":\"%s\",\"capabilities\":{\"tools\":{\"listChanged\":false},"
+        buf_printf(r, "{\"protocolVersion\":\"%s\",\"capabilities\":{\"tools\":{\"listChanged\":false},"
                        "\"resources\":{\"subscribe\":false,\"listChanged\":false}},"
                        "\"serverInfo\":{\"name\":\"zosasm-mcp\",\"title\":\"zosasm assembler\",\"version\":\"%s\"},"
                        "\"instructions\":",
@@ -1998,15 +2130,16 @@ static void handle(const J *msg) {
                     buf_putc(&ins, *p++);
                 }
             }
-            w_str(&r, ins.p, ins.len);
+            w_str(r, ins.p, ins.len);
+            free(ins.p);
         }
-        buf_putc(&r, '}');
-        reply_result(id, buf_cstr(&r));
+        buf_putc(r, '}');
+        reply_result(id, buf_cstr(r));
     } else if (!strcmp(method, "ping")) {
         reply_result(id, "{}");
     } else if (!strcmp(method, "tools/list")) {
-        buf_printf(&r, "{\"tools\":%s}", tools_json());
-        reply_result(id, buf_cstr(&r));
+        buf_printf(r, "{\"tools\":%s}", tools_json());
+        reply_result(id, buf_cstr(r));
     } else if (!strcmp(method, "tools/call")) {
         const char *name = params ? jstr(params, "name") : NULL;
         J *args = params ? jget(params, "arguments") : NULL;
@@ -2022,22 +2155,22 @@ static void handle(const J *msg) {
             reply_error(id, -32602, "'arguments' must be an object");
             return;
         }
-        tool_call(name, args, &r);
-        reply_result(id, buf_cstr(&r));
+        tool_call(name, args, r);
+        reply_result(id, buf_cstr(r));
     } else if (!strcmp(method, "resources/list")) {
-        resources_list(&r);
-        reply_result(id, buf_cstr(&r));
+        resources_list(r);
+        reply_result(id, buf_cstr(r));
     } else if (!strcmp(method, "resources/templates/list")) {
-        resources_templates(&r);
-        reply_result(id, buf_cstr(&r));
+        resources_templates(r);
+        reply_result(id, buf_cstr(r));
     } else if (!strcmp(method, "resources/read")) {
         const char *uri = params ? jstr(params, "uri") : NULL;
         if (!uri) {
             reply_error(id, -32602, "resources/read needs a uri");
-        } else if (!resource_read(uri, &r)) {
+        } else if (!resource_read(uri, r)) {
             reply_error(id, -32002, "resource not found");
         } else {
-            reply_result(id, buf_cstr(&r));
+            reply_result(id, buf_cstr(r));
         }
     } else if (!strcmp(method, "prompts/list")) {
         reply_result(id, "{\"prompts\":[]}");
@@ -2046,6 +2179,15 @@ static void handle(const J *msg) {
     }
 }
 
+/* one request: dispatch it and free the reply buffer (the server is a long
+ * lived process, so per-request memory is given back) */
+static void handle(const J *msg) {
+    Buf r = {0};
+    dispatch(msg, &r);
+    free(r.p);
+}
+
+#ifndef ZA_MCP_NO_MAIN
 static void usage(void) {
     fprintf(stderr,
             "usage: zosasm-mcp [--guide FILE] [--bin-dir DIR]\n"
@@ -2091,6 +2233,10 @@ int main(int argc, char **argv) {
         J *msg;
         while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) n--;
         if (n == 0) continue;
+        if ((size_t)n > MAX_REQUEST) {
+            reply_error(NULL, -32600, "request too large");
+            continue;
+        }
         msg = json_parse(line, (size_t)n, &err);
         if (!msg) {
             reply_error(NULL, -32700, err);
@@ -2098,9 +2244,13 @@ int main(int argc, char **argv) {
         }
         if (msg->t != J_OBJ) {
             reply_error(NULL, -32600, "invalid request: not an object");
+            jfree(msg);
             continue;
         }
         handle(msg);
+        jfree(msg);
     }
+    free(line);
     return 0;
 }
+#endif /* ZA_MCP_NO_MAIN */
