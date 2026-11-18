@@ -65,6 +65,7 @@ typedef struct {
     int exp_done;     /* the expansion note of the outermost call is registered */
     const char *exp_macro;
     Span exp_def;
+    int amode, rmode;     /* __AMODE__, __RMODE__: 0 until an AMODE/RMODE statement gives 24, 31 or 64 */
     char *sect, *sectype; /* the last section statement (sys.sect, sys.sectype) */
     char *loc;            /* the last LOCTR name (sys.loc), NULL after a section statement */
     /* aread() reads the lines after the call, #insert queues records */
@@ -115,7 +116,8 @@ static int in_active(const Active *a, const Macro *m) {
 static const char *const builtin_names[] = {"__FILE__",          "__LINE__",
                                             "__BASE_FILE__",     "__INCLUDE_LEVEL__",
                                             "__COUNTER__",       "__ZASM_VERSION__",
-                                            "__DATE__",          "__TIME__"};
+                                            "__DATE__",          "__TIME__",
+                                            "__AMODE__",         "__RMODE__"};
 
 static int is_builtin(const char *id) {
     size_t i;
@@ -173,6 +175,10 @@ static int builtin_text(Pp *pp, const char *id, Buf *out) {
         buf_printf(out, "%ld", pp->counter++);
     } else if (!strcmp(id, "__ZASM_VERSION__")) {
         buf_printf(out, "%d", ZASM_VERSION_NUM);
+    } else if (!strcmp(id, "__AMODE__")) {
+        buf_printf(out, "%d", pp->amode);
+    } else if (!strcmp(id, "__RMODE__")) {
+        buf_printf(out, "%d", pp->rmode);
     } else if (!strcmp(id, "__DATE__") || !strcmp(id, "__TIME__")) {
         struct tm *t;
         if (!pp_now(pp)) {
@@ -1246,6 +1252,19 @@ static void emit_part(Pp *pp, const char *part) {
                     pp->loc = NULL;
                 }
             if (!strcmp(up, "LOCTR")) pp->loc = f.name;
+            if (!strcmp(up, "AMODE") || !strcmp(up, "RMODE")) {
+                char *t = str_trim(f.operands), *v = za_strupper(t);
+                int n = !strcmp(v, "24") ? 24 : !strcmp(v, "31") ? 31 : !strcmp(v, "64") ? 64 : 0;
+                if (n == 0 && up[0] == 'R' && !strcmp(v, "ANY")) n = 31; /* as the assembler reads it */
+                if (n) {
+                    if (up[0] == 'A')
+                        pp->amode = n;
+                    else
+                        pp->rmode = n;
+                }
+                free(v);
+                free(t);
+            }
         }
     }
     l.file = pp->file;
@@ -1512,6 +1531,11 @@ static const char *host_loc_cb(void *user) {
     return pp->loc ? pp->loc : pp->sect;
 }
 
+static int host_mode_cb(void *user, int is_amode) {
+    Pp *pp = user;
+    return is_amode ? pp->amode : pp->rmode;
+}
+
 static int host_now_cb(void *user, time_t *t) {
     Pp *pp = user;
     pp->use = span_make(pp->file, pp->line, 1, 1);
@@ -1582,6 +1606,7 @@ void pp_run(const char *file, const char *text, size_t len, const PpOptions *opt
         h.loc = host_loc_cb;
         h.parm = host_parm_cb;
         h.now = host_now_cb;
+        h.mode = host_mode_cb;
         h.aread = host_aread_cb;
         h.insert = host_insert_cb;
         pp->mac = mac_new(rep, &h, opt->macro_steps, opt->elf);

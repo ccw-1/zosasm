@@ -366,7 +366,8 @@ and `++`/`--` are statements, not expressions.
   kind; `&SYSECT`, `&SYSSTYP`), `sys.macro`, `sys.level` (`&SYSMAC`,
   nesting), `sys.args` (all positional arguments as a list; `&SYSLIST`),
   `sys.argc`; `__FILE__`, `__LINE__` (the call), `__GOFF__`/`__ELF__`,
-  `__ASCII__`/`__EBCDIC__` as in the preprocessor.
+  `__ASCII__`/`__EBCDIC__`, `__AMODE__`/`__RMODE__` (0, 24, 31 or 64: the
+  last `AMODE`/`RMODE` statement read so far) as in the preprocessor.
 * **Library macros.** An unknown operation code `FOO` is looked up in the
   macro directories (`-M DIR`, repeatable; the `-I` directories last) as
   `foo.zmac`, then `foo.mac`. The file may hold several `#macro`s; those

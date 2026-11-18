@@ -4,8 +4,22 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 `vX.Y.Z`. Things not compared with IBM's tools are marked in the User's Guide
 (section 14).
 
-## Unreleased
+## 0.2.0 - 2026-11-18
 
+Hardening and tooling after a full review of the sources: hostile source
+gets a diagnostic instead of a crash, hang or out-of-memory exit; the MCP
+server restricts file access to a workspace, frees its memory per request
+and caps the request size; the object writers validate what the format can
+hold before writing; CI runs the whole suite on every push (gcc, clang,
+sanitizers); `zosasm -` reads the program from standard input. New
+built-in names `__AMODE__` and `__RMODE__` (preprocessor and `#macro`).
+
+* New built-in names `__AMODE__` and `__RMODE__`, in the preprocessor and in
+  `#macro` code (`&__amode__`): 0 until an `AMODE` or `RMODE` statement with
+  24, 31 or 64 is read, then that number (the last one read; macro generated
+  statements count). `RMODE ANY` gives 31 (as the assembler reads it),
+  `AMODE ANY` and `MIN` change nothing. Guide 15.5 shows one program built
+  for both modes (`docs/examples/showargs.za`, run on z/OS in both builds).
 * `zosasm -` reads the program from standard input, as `hlasm2za` and
   `zafmt` already do. `-diag json` escapes bytes >= 0x80 in messages (as
   `\u00xx`), so the document is valid JSON even when a message quotes

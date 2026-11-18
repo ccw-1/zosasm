@@ -36,7 +36,7 @@ printed here is that file, and the test suite assembles each of them.
 12. Looking inside an object: `-dump`, ZSYM, `-disasm`, `-unpack`
 13. Command reference
 14. Differences from HLASM and known limits
-15. Recipes: a subroutine, a table, build variants, source round trip
+15. Recipes: a subroutine, a table, build variants, source round trip, AMODE 31 and 64
 16. Converting HLASM source: `hlasm2za`
 17. Linux on Z: ELF output (`-elf`) and the ASCII character set
 18. For AI agents: the MCP server `zosasm-mcp`
@@ -65,6 +65,7 @@ printed here is that file, and the test suite assembles each of them.
 | every command line option | 13 | |
 | know what differs from HLASM, what is unverified | 14 | |
 | a subroutine, a table search, build variants | 15 | `linkage.za`, `table.za`, `config.za` |
+| one program for AMODE 64 and AMODE 31 (`__AMODE__`) | 15.5, 3 | `showargs.za` |
 | convert existing HLASM source (columns, registers, `COPY`) | 16 | `hlasm-demo.asm`, `hlasm-demo.za` |
 | format `.za` source (columns, indentation of macros) | 20 | `linkage.za`, `cmacros.za` |
 | debug on z/OS with dbx or LLDB (`-g`, the `.dbg` file) | 21 | |
@@ -304,9 +305,10 @@ Rules that differ from C:
 | `__FILE__`, `__LINE__` | file name (as opened) and line number |
 | `__BASE_FILE__`, `__INCLUDE_LEVEL__` | the file named on the command line; 0 in it, 1 in its includes... |
 | `__COUNTER__` | 0, 1, 2 ... one step per use |
-| `__ZASM_VERSION__` | `major*10000 + minor*100 + patch` (0.1.0 is `100`) |
+| `__ZASM_VERSION__` | `major*10000 + minor*100 + patch` (0.2.0 is `200`) |
 | `__GOFF__` or `__ELF__` | defined (as 1) by the object format: `__ELF__` with `-elf`, else `__GOFF__` |
 | `__EBCDIC__` or `__ASCII__` | defined (as 1) by the character set (section 17): `__ASCII__` with `-ascii`, `-charset ascii` or `-elf` |
+| `__AMODE__`, `__RMODE__` | 0 until an `AMODE` or `RMODE` statement with 24, 31 or 64 is read, then that number (the last one read; `RMODE ANY` counts as 31, `AMODE ANY` and `MIN` change nothing) |
 | `__DATE__`, `__TIME__` | `2026-11-15` and `20:21:05` in UTC; see `SOURCE_DATE_EPOCH` below |
 
 `__DATE__` and `__TIME__` use the environment variable `SOURCE_DATE_EPOCH` when
@@ -1118,7 +1120,7 @@ the same source gives the same listing.
 
 <!-- listing: hello -->
 ```
-zosasm 0.1.0  docs/examples/hello.za
+zosasm 0.2.0  docs/examples/hello.za
 
 Loc     Object               Line   Source
                                 1   * A small routine with standard linkage: it saves the caller's registers,
@@ -1662,6 +1664,272 @@ The object records the file name as it was given, so assemble the unpacked
 file under the same relative name (here: from inside `src`); then the object
 is byte for byte the same. Add `-reproducible` when the source uses
 `__DATE__` or `__TIME__`.
+
+### 15.5 One program for AMODE 64 and AMODE 31
+
+`__AMODE__` and `__RMODE__` (section 3) hold the value of the last `AMODE` or
+`RMODE` statement read: 0 before any, then 24, 31 or 64. The `AMODE` statement
+itself can be chosen with `-D`, and the code that depends on the mode follows
+`__AMODE__`, so the two cannot disagree. This z/OS program prints its
+arguments, one per line, after a banner line with the mode it was built for:
+
+<!-- example: showargs.za -->
+```za
+* Print all argv items cleanly
+*
+* Built twice:  zosasm -DTEST31=0   AMODE 64 (the default)
+*               zosasm -DTEST31=1   AMODE 31
+* The AMODE statement is chosen by TEST31; everything that depends on the
+* addressing mode is chosen by the built-in __AMODE__, which holds the value
+* of the AMODE statement read so far (0 before any AMODE statement).
+#define STR(x) C ## #(x)
+HELLOW   CSECT
+#if defined(TEST31) && TEST31
+HELLOW   AMODE 31
+#else
+HELLOW   AMODE 64
+#endif
+HELLOW   RMODE ANY
+#if __AMODE__ == 64
+         STMG  %r14,%r12,16(%r13)
+#elif __AMODE__ == 31
+         STM   %r14,%r12,12(%r13)
+#else
+#error "AMODE must be 31 or 64 before the code"
+#endif
+         LARL  %r12,HELLOW
+         USING HELLOW,%r12
+
+         STG   %r1,SAVED_R1
+         LARL  %r2,SAVEAREA
+         STG   %r13,128(,%r2)
+         STG   %r2,136(,%r13)
+         LGR   %r13,%r2
+
+* Locate BPX4WRT
+         LHI   %r0,544
+         A     %r0,16
+         LLGTR %r1,%r0
+         LHI   %r0,24
+         A     %r0,0(,%r1)
+         LLGTR %r1,%r0
+         LHI   %r0,220
+         A     %r0,0(,%r1)
+         LLGTR %r1,%r0
+         L     %r0,0(,%r1)
+         LLGTR %r0,%r0
+         STG   %r0,BPX_ENTRY
+
+* Initialize PARMLIST. BPX1WRT and BPX4WRT are one entry point; the service
+* looks at the AMODE of its caller to read the parameter list:
+*   AMODE 64: doubleword slots, the buffer slot points to a doubleword that
+*             holds the buffer address (P_BUF, filled in by DO_WRITE)
+*   AMODE 31: fullword slots, the buffer slot points to a fullword that
+*             holds the buffer address (P_BUF), the last slot has its high
+*             bit on
+         LARL  %r8,PWA
+         MVC   P_FD,=F'1'
+         XC    P_ALET(8),P_ALET
+#if __AMODE__ == 64
+         LA    %r0,0(,%r8)
+         STG   %r0,PARMLIST+0
+         LA    %r0,16(,%r8)
+         STG   %r0,PARMLIST+8
+         LA    %r0,32(,%r8)
+         STG   %r0,PARMLIST+16
+         LA    %r0,96(,%r8)
+         STG   %r0,PARMLIST+24
+         LA    %r0,4(,%r8)
+         STG   %r0,PARMLIST+32
+         LA    %r0,8(,%r8)
+         STG   %r0,PARMLIST+40
+         LA    %r0,12(,%r8)
+         STG   %r0,PARMLIST+48
+#else
+         LA    %r0,0(,%r8)
+         ST    %r0,PARMLIST+0
+         LA    %r0,16(,%r8)
+         ST    %r0,PARMLIST+4
+         LA    %r0,32(,%r8)
+         ST    %r0,PARMLIST+8
+         LA    %r0,96(,%r8)
+         ST    %r0,PARMLIST+12
+         LA    %r0,4(,%r8)
+         ST    %r0,PARMLIST+16
+         LA    %r0,8(,%r8)
+         ST    %r0,PARMLIST+20
+         LA    %r0,12(,%r8)
+         O     %r0,=X'80000000'
+         ST    %r0,PARMLIST+24
+#endif
+
+* Banner: the addressing mode this build runs in
+         LARL  %r1,BANNER
+         LGHI  %r2,BANNER_L
+         BRAS  %r14,DO_WRITE
+         LARL  %r1,NL_CHAR
+         LGHI  %r2,1
+         BRAS  %r14,DO_WRITE
+
+* R5 = SAVED_R1
+         LG    %r5,SAVED_R1
+#if __AMODE__ == 31
+         LLGTR %r5,%r5
+#endif
+         LTGR  %r5,%r5
+         JZ    EXIT
+
+* 0(R1) -> pointer to argc, 8(R1) (AMODE 31: 4(R1)) -> pointer to the argv
+* array: the pointers are doublewords in AMODE 64 and fullwords in AMODE 31
+#if __AMODE__ == 64
+         LG    %r8,0(,%r5)
+         LTGR  %r8,%r8
+         JZ    EXIT
+         LGF   %r10,0(,%r8)       R10 = argc (32-bit int)
+         LTGR  %r10,%r10
+         JLE   EXIT
+
+         LG    %r11,8(,%r5)
+         LTGR  %r11,%r11
+         JZ    EXIT
+#else
+         L     %r8,0(,%r5)
+         LLGTR %r8,%r8
+         LTGR  %r8,%r8
+         JZ    EXIT
+         LGF   %r10,0(,%r8)       R10 = argc (32-bit int)
+         LTGR  %r10,%r10
+         JLE   EXIT
+
+         L     %r11,4(,%r5)
+         LLGTR %r11,%r11
+         LTGR  %r11,%r11
+         JZ    EXIT
+#endif
+
+* Loop R6 = 0..argc-1
+         XGR   %r6,%r6
+
+ARGLOOP  DS    0H
+         CGR   %r6,%r10
+         JNL   EXIT
+
+* Fetch argv[R6]
+         LGR   %r7,%r6
+#if __AMODE__ == 64
+         SLLG  %r7,%r7,3
+         LG    %r8,0(%r7,%r11)    R8 = pointer to argument descriptor/string
+#else
+         SLLG  %r7,%r7,2
+         L     %r8,0(%r7,%r11)    R8 = pointer to argument descriptor/string
+         LLGTR %r8,%r8
+#endif
+         LTGR  %r8,%r8
+         JZ    NEXTARG
+
+* String data starts at offset 4 of the descriptor.
+* Determine string length by scanning for null terminator (0x00).
+         LA    %r1,4(,%r8)        R1 = start of string characters
+         LGR   %r2,%r1            R2 = scanner
+SCAN_NULL DS   0H
+         CLI   0(%r2),X'00'
+         BE    SCAN_DONE
+         AGHI  %r2,1
+         J     SCAN_NULL
+
+SCAN_DONE DS   0H
+         SGR   %r2,%r1            R2 = string length (bytes before \0)
+         LTGR  %r2,%r2
+         JZ    WRITENL
+         BRAS  %r14,DO_WRITE
+
+WRITENL  DS    0H
+* Write ASCII newline (0x0A)
+         LARL  %r1,NL_CHAR
+         LGHI  %r2,1
+         BRAS  %r14,DO_WRITE
+
+NEXTARG  DS    0H
+         AGHI  %r6,1
+         J     ARGLOOP
+
+EXIT     DS    0H
+         LG    %r13,SAVEAREA+128
+#if __AMODE__ == 64
+         LMG   %r14,%r12,16(%r13)
+#else
+         LM    %r14,%r12,12(%r13)
+#endif
+         LGHI  %r15,0
+         BR    %r14
+
+* write R2 bytes at R1; the kernel service runs in the AMODE of this program
+DO_WRITE DS    0H
+         STMG  %r0,%r15,WR_REGS
+#if __AMODE__ == 64
+         STG   %r1,P_BUF
+#else
+         ST    %r1,P_BUF
+#endif
+         ST    %r2,P_LEN
+         LARL  %r1,PARMLIST
+         LG    %r15,BPX_ENTRY
+         BASR  %r14,%r15
+         LMG   %r0,%r15,WR_REGS
+         BR    %r14
+
+         DS    0D
+SAVED_R1 DC    AD(0)
+BPX_ENTRY DC   AD(0)
+         DS    0H
+NL_CHAR  DC    X'15'              EBCDIC newline (0x15) -> converts to 0x0A on terminal
+         DC    X'00'
+BANNER   DC    STR(AMODE __AMODE__)   C'AMODE 64' or C'AMODE 31'
+BANNER_L EQU   *-BANNER
+         DS    0H
+         DS    0D
+SAVEAREA DS    18FD
+WR_REGS  DS    16FD
+
+PWA      DS    0D
+P_FD     DC    F'1'
+P_RV     DC    F'0'
+P_RC     DC    F'0'
+P_RN     DC    F'0'
+P_BUF    DC    AD(0)
+P_R15    DC    AD(0)
+P_ALET   DC    AD(0)
+PARMLIST DC    7AD(0)
+P_LEN    DC    F'0'
+         DS    0D
+         LTORG
+         END   HELLOW
+```
+
+```sh
+zosasm -DTEST31=0 -o showargs.o showargs.za   # AMODE 64 (also without -D)
+zosasm -DTEST31=1 -o showargs.o showargs.za   # AMODE 31
+/bin/ld -o showargs showargs.o                # on z/OS
+./showargs a bb ccc                           # the banner, then ./showargs, a, bb, ccc
+```
+
+What differs between the two builds, all selected by `__AMODE__`:
+
+* the save and restore of the registers (`STMG`/`LMG` at 16(13) or `STM`/`LM`
+  at 12(13));
+* the parameter list of the program: doubleword pointers and a stride of 8 in
+  AMODE 64, fullword pointers and a stride of 4 in AMODE 31;
+* the parameter list of the kernel call: `BPX1WRT` and `BPX4WRT` are one entry
+  point and the service reads the list the way the AMODE of its caller says,
+  so the AMODE 31 build builds fullword slots and the AMODE 64 build
+  doubleword slots (there is no `SAM64`);
+* the banner text, made with the stringify operator: `DC STR(AMODE
+  __AMODE__)` becomes `DC C'AMODE 31'`.
+
+Both builds were run on z/OS (`amode=31` and `amode=64` in the output of
+`/bin/file`) and print the same arguments. A statement placed before the
+`AMODE` statement would see `__AMODE__` as 0, which is why the program has a
+`#error` for that case.
 
 ---
 
@@ -2423,7 +2691,7 @@ cannot show it.
   section in the `B_TEXT` class of the module) and `.ADATA_<32 hex>`, the
   signature that ties the file to its object.
 * In the DWARF: one compile unit (`DW_LANG_IBM_Hlasm`, the producer is
-  `zosasm 0.1.0`); a `DW_TAG_subprogram` per CSECT/RSECT that has instructions;
+  `zosasm 0.2.0`); a `DW_TAG_subprogram` per CSECT/RSECT that has instructions;
   a `DW_TAG_label` for every label in code; a `DW_TAG_variable` with
   `DW_OP_addr` and a base or array type for every `DC`/`DS` label (the type
   follows the type letter and the length: `int32`, `char[10]`, ...); the line

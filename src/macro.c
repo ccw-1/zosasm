@@ -289,7 +289,8 @@ static int model_continues(const char *line, int is_cont) {
 
 int is_builtin_name(const char *n) {
     return !strcmp(n, "__file__") || !strcmp(n, "__line__") || !strcmp(n, "__goff__") ||
-           !strcmp(n, "__elf__") || !strcmp(n, "__ascii__") || !strcmp(n, "__ebcdic__");
+           !strcmp(n, "__elf__") || !strcmp(n, "__ascii__") || !strcmp(n, "__ebcdic__") ||
+           !strcmp(n, "__amode__") || !strcmp(n, "__rmode__");
 }
 
 int mac_top_kind(const char *t) {
@@ -1855,6 +1856,8 @@ MVal sys_value(Ctx *c, const char *name, int *ok) {
     if (!strcmp(name, "__elf__")) return v_int(c->ms->elf);
     if (!strcmp(name, "__ascii__")) return v_int(za_ascii != 0);
     if (!strcmp(name, "__ebcdic__")) return v_int(za_ascii == 0);
+    if (!strcmp(name, "__amode__") || !strcmp(name, "__rmode__"))
+        return v_int(c->ms->host.mode ? c->ms->host.mode(c->ms->host.user, name[2] == 'a') : 0);
     *ok = 0;
     return v_str("");
 }

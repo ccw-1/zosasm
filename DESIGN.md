@@ -435,7 +435,11 @@ conflict).
   `__BASE_FILE__` (the file named on the command line), `__INCLUDE_LEVEL__`
   (0 in the main file), `__COUNTER__` (0, 1, 2, ... one per use in this
   run), `__ZASM_VERSION__` (`major*10000 + minor*100 + patch`, 0.1.0 is
-  `100`), `__DATE__` (`2026-11-15`) and `__TIME__` (`20:21:05`), both UTC.
+  `100`), `__AMODE__` and `__RMODE__` (0 until an `AMODE`/`RMODE` statement
+  with 24, 31 or 64 has been read, then that number; `RMODE ANY` gives 31 as
+  in the assembler, `AMODE ANY`/`MIN` change nothing; kept in `emit_part`, so
+  macro generated statements count too), `__DATE__` (`2026-11-15`) and
+  `__TIME__` (`20:21:05`), both UTC.
   `__DATE__` and `__TIME__` use `SOURCE_DATE_EPOCH` when it is set; with
   `-reproducible` and no `SOURCE_DATE_EPOCH` they are an error (ZA4080), so
   an object cannot silently change between builds. A malformed

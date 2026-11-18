@@ -45,6 +45,8 @@ typedef struct {
     /* the time of the assembly (same as __DATE__: SOURCE_DATE_EPOCH, -reproducible); 0 when it is
      * not available (an error was reported) */
     int (*now)(void *user, time_t *t);
+    /* the AMODE (is_amode) or RMODE seen so far: 24, 31, 64, or 0 when not known yet */
+    int (*mode)(void *user, int is_amode);
     /* the next input record for aread() (80 columns, padded), or NULL at the end of the input */
     char *(*aread)(void *user);
     /* #insert: queue a record to be read after the outermost macro call (front or back of the queue) */

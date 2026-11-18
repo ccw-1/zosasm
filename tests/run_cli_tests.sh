@@ -72,6 +72,22 @@ SOURCE_DATE_EPOCH=1700000000 $X -reproducible -o $T/b2a.o $T/b2.za 2>/dev/null; 
 SOURCE_DATE_EPOCH=1700000000 $X -reproducible -o $T/b2b.o $T/b2.za 2>/dev/null
 cmp -s $T/b2a.o $T/b2b.o; check "-reproducible gives equal objects" $? 0
 $X -version | grep -q "^zosasm [0-9]"; check "-version" $? 0
+# __AMODE__ and __RMODE__ reach the object: 0,0 before the statements, 31,24 after
+printf 'T CSECT\n DC A(__AMODE__,__RMODE__)\nT AMODE 31\nT RMODE 24\n DC A(__AMODE__,__RMODE__)\n END\n' > $T/am.za
+$X -o $T/am.o $T/am.za 2>/dev/null; check "__AMODE__ assembles" $? 0
+$X -dump $T/am.o | grep -q 'len=16 00 00 00 00 00 00 00 00 00 00 00 1F 00 00 00 18'; check "__AMODE__ and __RMODE__ values in the object" $? 0
+# docs/examples/showargs.za picks its code with __AMODE__ (testdata/showargs.za is a link to it)
+for m in 0 1; do
+    $X -DTEST31=$m -o $T/sa$m.o docs/examples/showargs.za 2>/dev/null; check "showargs TEST31=$m assembles" $? 0
+done
+$X -DTEST31=0 -E docs/examples/showargs.za 2>/dev/null | grep -q "DC *C'AMODE 64'"; check "showargs AMODE 64 banner" $? 0
+$X -DTEST31=1 -E docs/examples/showargs.za 2>/dev/null | grep -q "DC *C'AMODE 31'"; check "showargs AMODE 31 banner" $? 0
+# the kernel service is called in the caller's AMODE, with a fullword (31) or doubleword (64) list
+$X -DTEST31=1 -E docs/examples/showargs.za 2>/dev/null | grep -q 'SAM'; [ $? = 1 ]; check "showargs AMODE 31 does not switch modes" $? 0
+$X -DTEST31=1 -E docs/examples/showargs.za 2>/dev/null | grep -q 'ST  *0,PARMLIST+24\|ST  *%r0,PARMLIST+24'; check "showargs AMODE 31 has a fullword parameter list" $? 0
+$X -DTEST31=0 -E docs/examples/showargs.za 2>/dev/null | grep -q 'STG  *%r0,PARMLIST+48'; check "showargs AMODE 64 has a doubleword parameter list" $? 0
+printf 'T CSECT\n AMODE 64\n DC A(__AMODE__)\n END\n' > $T/am2.za
+$X -E $T/am2.za 2>/dev/null | grep -q 'DC *A(64)'; check "__AMODE__ 64 in -E output" $? 0
 printf 'S DSECT\nA DS F\nM CSECT\n ASSERT sizeof(S)==8,"S must be 8"\n' | sed "s/\"/'/g" > $T/as.za
 $X -o $T/as.o $T/as.za 2>$T/err; check "ASSERT fails the assembly" $? 1
 grep -q "assertion failed: S must be 8" $T/err; check "ASSERT message" $? 0

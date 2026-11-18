@@ -201,6 +201,10 @@ static void test_input(void) {
            "T CSECT|DC C'T'|X LOCTR|DC C'X'", "");
     expect("sys.date has the form mm/dd/yy",
            "#macro D() {\n    DC F'&{len(sys.date)}'\n#}\n    D\n", "DC F'8'", "");
+    expect("__amode__ and __rmode__ in a macro",
+           "#macro M() {\n    DC C'&__amode__/&__rmode__'\n    #if (__amode__ == 31) {\n    DC C'yes'\n    #}\n#}\n"
+           "    M\n    AMODE 31\n    RMODE 24\n    M\n",
+           "DC C'0/0'|AMODE 31|RMODE 24|DC C'31/24'|DC C'yes'", "");
 }
 
 static void test_messages(void) {

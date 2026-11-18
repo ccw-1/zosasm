@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "../src/pp.h"
+#include "../src/version.h"
 #include "testlib.h"
 
 typedef struct {
@@ -183,14 +184,33 @@ static void test_builtins(void) {
            "");
     expect("__COUNTER__ in a macro", "#define N __COUNTER__\n X N,N\n", " X 0,1", "");
     expect("__COUNTER__ in a quote", " DC C'__COUNTER__'\n", " DC C'__COUNTER__'", "");
-    expect("__ZASM_VERSION__", " X __ZASM_VERSION__\n", " X 100", "");
-    expect("version in #if", "#if __ZASM_VERSION__ >= 100\n yes\n#else\n no\n#endif\n", " yes", "");
+    {
+        int v = ZASM_VERSION_NUM; /* keep this test in step with version.h */
+        char want[80];
+        snprintf(want, sizeof want, " X %d", v);
+        expect("__ZASM_VERSION__", " X __ZASM_VERSION__\n", want, "");
+        snprintf(want, sizeof want, "#if __ZASM_VERSION__ >= %d\n yes\n#else\n no\n#endif\n", v);
+        expect("version in #if", want, " yes", "");
+    }
     expect("__BASE_FILE__", " X __BASE_FILE__,__FILE__\n", " X t.za,t.za", "");
     expect("__INCLUDE_LEVEL__", " X __INCLUDE_LEVEL__\n", " X 0", "");
     expect("defined(builtin)",
            "#ifdef __LINE__\n a\n#endif\n#if defined(__COUNTER__)\n b\n#endif\n", " a| b", "");
     expect("builtin cannot be defined", "#define __COUNTER__ 5\n X __COUNTER__\n", " X 0",
            "ZA4021");
+    expect("__AMODE__ and __RMODE__ start at 0", " X __AMODE__,__RMODE__\n", " X 0,0", "");
+    expect("AMODE and RMODE set them",
+           "S CSECT\n X __AMODE__,__RMODE__\nS AMODE 31\n X __AMODE__,__RMODE__\n"
+           "S RMODE 64\n X __AMODE__,__RMODE__\n AMODE 24\n X __AMODE__,__RMODE__\n",
+           "S CSECT| X 0,0|S AMODE 31| X 31,0|S RMODE 64| X 31,64| AMODE 24| X 24,64", "");
+    expect("RMODE ANY is 31, AMODE ANY is unknown",
+           " AMODE ANY\n X __AMODE__\n RMODE any\n X __RMODE__\n", " AMODE ANY| X 0| RMODE any| X 31",
+           "");
+    expect("a #define of the operand",
+           "#define M 64\nS AMODE M\n#if __AMODE__ == 64\n yes\n#endif\n", "S AMODE 64| yes", "");
+    expect("a skipped AMODE changes nothing",
+           "#if 0\n AMODE 24\n#endif\n X __AMODE__\n", " X 0", "");
+    expect("defined(__AMODE__)", "#ifdef __RMODE__\n a\n#endif\n", " a", "");
     expect("builtin cannot be defined 2", "#define __DATE__ 5\n", "", "ZA4021");
     CHECK(system("rm -rf build/pp_inc && mkdir -p build/pp_inc") == 0);
     put_file("build/pp_inc/l.inc", " IN __INCLUDE_LEVEL__,__BASE_FILE__,__FILE__\n"
