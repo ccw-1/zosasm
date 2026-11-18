@@ -325,12 +325,12 @@ grep -q '#macro M1(a)' $T/m.out; check "mcp convert macros: #macro" $? 0
 mcp '{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"zosasm_convert_hlasm","arguments":{"macros":true,"flat":true,"source":"         MACRO\n         M1    &A\n         AIF   (\u0027&A\u0027 EQ \u0027\u0027).E\n         DC    C\u0027&A\u0027\n         MEXIT\n.E       DC    C\u0027-\u0027\n         MEND\n"}}}' > $T/m.out
 grep -q '#goto e' $T/m.out; check "mcp convert macros: flat" $? 0
 cp -r testdata/hlasm/lib2 $T/lib2
-mcp '{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"zosasm_convert_hlasm","arguments":{"macro_dir":"cli_tmp/lib2","output_dir":"'$T'/mz","keep_goto":true}}}' > $T/m.out
+mcp '{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"zosasm_convert_hlasm","arguments":{"macro_dir":"cli_tmp/lib2","output_dir":"cli_tmp/mz","keep_goto":true}}}' > $T/m.out
 grep -q '"success":true' $T/m.out; check "mcp convert macro_dir: success" $? 0
 [ -s $T/mz/SW.zmac ] && [ -s $T/mz/DSP.zmac ]; check "mcp convert macro_dir: files written" $? 0
 mcp '{"jsonrpc":"2.0","id":17,"method":"tools/call","params":{"name":"zosasm_convert_hlasm","arguments":{"macro_dir":"cli_tmp/lib2"}}}' > $T/m.out
 grep -q '"isError":true' $T/m.out; check "mcp convert macro_dir needs output_dir" $? 0
-mcp '{"jsonrpc":"2.0","id":18,"method":"tools/call","params":{"name":"zosasm_preprocess","arguments":{"source":"T CSECT\n DSP 1\n","macro_dirs":["'$T'/mz"],"sysparm":"X","macro_steps":5000}}}' > $T/m.out
+mcp '{"jsonrpc":"2.0","id":18,"method":"tools/call","params":{"name":"zosasm_preprocess","arguments":{"source":"T CSECT\n DSP 1\n","macro_dirs":["cli_tmp/mz"],"sysparm":"X","macro_steps":5000}}}' > $T/m.out
 grep -q 'A(4)' $T/m.out; check "mcp preprocess with macro_dirs" $? 0
 mcp '{"jsonrpc":"2.0","id":19,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n GREET\n","files":{"GREET.zmac":"#macro GREET() {\n #emit \"         DC    C\u0027\" + sys.parm + \"\u0027\"\n#}\n"},"sysparm":"HI"}}}' > $T/m.out
 grep -q '"success":true' $T/m.out; check "mcp assemble: macro from files and sysparm" $? 0
