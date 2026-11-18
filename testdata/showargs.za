@@ -1,0 +1,144 @@
+* Print all argv items cleanly
+HELLOW   CSECT
+HELLOW   AMODE 64
+HELLOW   RMODE ANY
+         STMG  %r14,%r12,16(%r13)
+         LARL  %r12,HELLOW
+         USING HELLOW,%r12
+
+         STG   %r1,SAVED_R1
+         LARL  %r2,SAVEAREA
+         STG   %r13,128(,%r2)
+         STG   %r2,136(,%r13)
+         LGR   %r13,%r2
+
+* Locate BPX4WRT
+         LHI   %r0,544
+         A     %r0,16
+         LLGTR %r1,%r0
+         LHI   %r0,24
+         A     %r0,0(,%r1)
+         LLGTR %r1,%r0
+         LHI   %r0,220
+         A     %r0,0(,%r1)
+         LLGTR %r1,%r0
+         L     %r0,0(,%r1)
+         LLGTR %r0,%r0
+         STG   %r0,BPX_ENTRY
+
+* Initialize PARMLIST
+         LARL  %r8,PWA
+         MVC   P_FD,=F'1'
+         XC    P_ALET(8),P_ALET
+         LA    %r0,0(,%r8)
+         STG   %r0,PARMLIST+0
+         LA    %r0,16(,%r8)
+         STG   %r0,PARMLIST+8
+         LA    %r0,32(,%r8)
+         STG   %r0,PARMLIST+16
+         LA    %r0,96(,%r8)
+         STG   %r0,PARMLIST+24
+         LA    %r0,4(,%r8)
+         STG   %r0,PARMLIST+32
+         LA    %r0,8(,%r8)
+         STG   %r0,PARMLIST+40
+         LA    %r0,12(,%r8)
+         STG   %r0,PARMLIST+48
+
+* R5 = SAVED_R1
+         LG    %r5,SAVED_R1
+         LTGR  %r5,%r5
+         JZ    EXIT
+
+* 0(R1) -> pointer to argc
+         LG    %r8,0(,%r5)
+         LTGR  %r8,%r8
+         JZ    EXIT
+         LGF   %r10,0(,%r8)       R10 = argc (32-bit int)
+         LTGR  %r10,%r10
+         JLE   EXIT
+
+* 8(R1) -> pointer to argv array (char **)
+         LG    %r11,8(,%r5)
+         LTGR  %r11,%r11
+         JZ    EXIT
+
+* Loop R6 = 0..argc-1
+         XGR   %r6,%r6
+
+ARGLOOP  DS    0H
+         CGR   %r6,%r10
+         JNL   EXIT
+
+* Fetch argv[R6]
+         LGR   %r7,%r6
+         SLLG  %r7,%r7,3
+         LG    %r8,0(%r7,%r11)    R8 = pointer to argument descriptor/string
+         LTGR  %r8,%r8
+         JZ    NEXTARG
+
+* String data starts at offset 4 of the descriptor.
+* Determine string length by scanning for null terminator (0x00).
+         LA    %r1,4(,%r8)        R1 = start of string characters
+         LGR   %r2,%r1            R2 = scanner
+SCAN_NULL DS   0H
+         CLI   0(%r2),X'00'
+         BE    SCAN_DONE
+         AGHI  %r2,1
+         J     SCAN_NULL
+
+SCAN_DONE DS   0H
+         SGR   %r2,%r1            R2 = string length (bytes before \0)
+         LTGR  %r2,%r2
+         JZ    WRITENL
+         BRAS  %r14,DO_WRITE
+
+WRITENL  DS    0H
+* Write ASCII newline (0x0A)
+         LARL  %r1,NL_CHAR
+         LGHI  %r2,1
+         BRAS  %r14,DO_WRITE
+
+NEXTARG  DS    0H
+         AGHI  %r6,1
+         J     ARGLOOP
+
+EXIT     DS    0H
+         LG    %r13,SAVEAREA+128
+         LMG   %r14,%r12,16(%r13)
+         LGHI  %r15,0
+         BR    %r14
+
+DO_WRITE DS    0H
+         STMG  %r0,%r15,WR_REGS
+         STG   %r1,P_BUF
+         ST    %r2,P_LEN
+         LARL  %r1,PARMLIST
+         LG    %r15,BPX_ENTRY
+         BASR  %r14,%r15
+         LMG   %r0,%r15,WR_REGS
+         BR    %r14
+
+         DS    0D
+SAVED_R1 DC    AD(0)
+BPX_ENTRY DC   AD(0)
+         DS    0H
+NL_CHAR  DC    X'15'              EBCDIC newline (0x15) -> converts to 0x0A on terminal
+         DC    X'00'
+         DS    0D
+SAVEAREA DS    18FD
+WR_REGS  DS    16FD
+
+PWA      DS    0D
+P_FD     DC    F'1'
+P_RV     DC    F'0'
+P_RC     DC    F'0'
+P_RN     DC    F'0'
+P_BUF    DC    AD(0)
+P_R15    DC    AD(0)
+P_ALET   DC    AD(0)
+PARMLIST DC    7AD(0)
+P_LEN    DC    F'0'
+         DS    0D
+         LTORG
+         END   HELLOW
