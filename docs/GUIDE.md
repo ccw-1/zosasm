@@ -2318,8 +2318,33 @@ Run under `qemu-s390x -g PORT` with `gdb-multiarch` (`set architecture
 s390:64-bit`, `target remote`): breakpoints by source line and by label stop at
 the linked addresses, `list` and `next` follow the source, a DC label prints its
 bytes (`print MSG` gives `"Hi"`), and registers show the values the code set.
-**Call frame information (`DWCFI`).** The unwinder needs the rules for leaving
-each frame, which the assembler cannot guess. Write them with the `DWCFI`
+**Call frame information (`DWCFI`).**
+
+*What CFI is.* A debugger stops in a function and must find the function that
+called it (for `bt`, `up` and `finish`). To do that it has to know where the
+caller's registers are at that moment. Call frame information (CFI) is DWARF data
+in the `.debug_frame` section that gives those rules for each address of the
+code. Two concepts make up the rules:
+
+- The **CFA** (canonical frame address) is a fixed reference point for one
+  frame. Here it is the stack pointer the caller had before the call, which is
+  `r15` at entry. Every other rule is relative to it.
+- A **register rule** says where a register of the caller is saved, as an
+  offset from the CFA, or that it has the same value, or that it has no value.
+  The return address (`r14`) is the register that tells the debugger where the
+  caller continues.
+
+The rules change while the function runs. In the example below the `STMG`
+saves `r14` at `112(r15)` while `r15` still is the caller's stack pointer, so
+the save is at CFA+112. After `LAY` lowers `r15` by 160, `r15` no longer is the
+caller's stack pointer, so the CFA must be written as `r15+160` from then on.
+Each `DWCFI` directive records the rule from the address where it stands.
+
+Without CFI the debugger cannot walk past the current frame ("frame did not save
+the PC"), so `bt` shows only the frame where the program stops. The assembler
+cannot derive the rules by itself: it sees `STMG` and `LAY` as ordinary
+instructions, and only the author knows which register holds the frame base.
+Write the rules with the `DWCFI`
 directive (it is not `CFI`: that is the Compare Immediate Fullword instruction)
 after the instruction that changes the frame, with operands separated by commas:
 
