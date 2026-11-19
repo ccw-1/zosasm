@@ -1271,3 +1271,69 @@ void asm_instr(Asm *a, Stmt *st) {
     asm_put(a, bytes, in->length);
     free(bytes);
 }
+
+/* ---- DWCFI: call frame information for the ELF debug information (dbg_dwarf.c). Named DWCFI because CFI is
+ * an instruction (Compare Immediate Fullword), and directives are looked up before instructions. ---- */
+
+/* %r0-%r15 or 0-15 */
+static int cfi_reg(const char *t, int *out) {
+    char kind;
+    int num;
+    int64_t v;
+    if (t[0] == '%') {
+        if (!asm_parse_pct(t, &kind, &num) || kind != 'R' || num < 0 || num > 15) return 0;
+        *out = num;
+        return 1;
+    }
+    if (!parse_i64(t, &v) || v < 0 || v > 15) return 0;
+    *out = (int)v;
+    return 1;
+}
+
+int cfi_operands(const char *s, CfiOp *out) {
+    char f[4][32]; /* the keyword and at most three operands */
+    size_t nf = 0, i;
+    const char *p = s;
+    for (;;) {
+        size_t m = 0;
+        if (nf == 4) return 0;
+        while (*p && *p != ',') {
+            if (*p == ' ' || *p == '\t') {
+                p++;
+                continue;
+            }
+            if (m + 1 >= sizeof f[0]) return 0;
+            f[nf][m++] = *p++;
+        }
+        if (m == 0) return 0;
+        f[nf][m] = 0;
+        nf++;
+        if (*p != ',') break;
+        p++;
+    }
+    for (i = 0; f[0][i]; i++) f[0][i] = (char)za_toupper((unsigned char)f[0][i]);
+    if (!strcmp(f[0], "CFA") || !strcmp(f[0], "SAVE")) {
+        if (nf != 3 || !cfi_reg(f[1], &out->reg) || !parse_i64(f[2], &out->off)) return 0;
+        out->kind = !strcmp(f[0], "CFA") ? CFI_CFA : CFI_SAVE;
+        return 1;
+    }
+    if (!strcmp(f[0], "SAME") || !strcmp(f[0], "UNDEF")) {
+        if (nf != 2 || !cfi_reg(f[1], &out->reg)) return 0;
+        out->kind = !strcmp(f[0], "SAME") ? CFI_SAME : CFI_UNDEF;
+        out->off = 0;
+        return 1;
+    }
+    return 0;
+}
+
+void dir_cfi(Asm *a, Stmt *st) {
+    CfiOp op;
+    if (a->pass != 2) return;
+    if (!asm_need_section(a, st)) return;
+    if (!cfi_operands(st->operands, &op)) {
+        diag_help(rep_errorf(a->rep, "ZA3069", st->op_span, "DWCFI operands are not valid: \"%s\"", st->operands),
+                  "DWCFI CFA,reg,off | DWCFI SAVE,reg,off | DWCFI SAME,reg | DWCFI UNDEF,reg (reg is %%r0-%%r15 or 0-15, "
+                  "off a decimal number; the keyword and the operands are separated by commas)");
+        st->bad = 1;
+    }
+}

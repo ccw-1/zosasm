@@ -348,7 +348,74 @@ static void test_ca_ce(void) {
     za_ascii = 0;
 }
 
+/* the ELF object with the DWARF of src (-elf -g); NULL when src does not assemble */
+static uint8_t *dwarf_obj(const char *src, size_t *n) {
+    Reporter *rep = rep_new(0);
+    Module *m;
+    DbgOptions o;
+    DbgElfSec *dbg = NULL;
+    size_t ndbg = 0, i;
+    char err[256];
+    uint8_t *obj = NULL;
+    za_ascii = 1;
+    m = asm_assemble_text("t.za", src, strlen(src), rep);
+    if (m) {
+        memset(&o, 0, sizeof o);
+        o.cwd = "/tmp";
+        o.main_file = "t.za";
+        o.producer = "zosasm test";
+        o.dbg_path = "";
+        if (dbg_build_elf(m, &o, &dbg, &ndbg, err, sizeof err)) obj = module_emit_elf_dbg(m, dbg, ndbg, n, err, sizeof err);
+    }
+    za_ascii = 0;
+    for (i = 0; i < ndbg; i++) free(dbg[i].rels);
+    free(dbg);
+    return obj;
+}
+
+/* DWCFI directives: the CIE, the FDE with its rules at the offsets of the directives, and the rejected forms */
+static void test_cfi(void) {
+    const char *src = "A        CSECT\n"
+                      "         STMG  %r14,%r15,112(%r15)\n"
+                      "         DWCFI SAVE,14,112\n"
+                      "         LAY   %r15,-160(%r15)\n"
+                      "         DWCFI CFA,15,160\n"
+                      "         BR    %r14\n"
+                      "         END\n";
+    size_t n = 0;
+    uint8_t *o = dwarf_obj(src, &n);
+    Elf e;
+    long df, rr;
+    const uint8_t *d;
+    CHECK_MSG(o != NULL, "CFI does not assemble");
+    if (!o) return;
+    CHECK(parse(&e, o, n));
+    df = find_sec(&e, ".debug_frame");
+    rr = find_sec(&e, ".rela.debug_frame");
+    CHECK(df > 0 && rr > 0);
+    if (df > 0) {
+        d = sec_data(&e, (size_t)df);
+        /* CIE: length 14, id -1, version 1, augmentation "", code 1, data 1, RA 14, CFA = r15+0, r14 undefined */
+        CHECK(be(d, 4) == 14 && be(d + 4, 4) == 0xFFFFFFFFu);
+        CHECK(d[8] == 1 && d[9] == 0 && d[10] == 1 && d[11] == 1 && d[12] == 14);
+        CHECK(d[13] == 0x0C && d[14] == 15 && d[15] == 0 && d[16] == 0x07 && d[17] == 14);
+        /* FDE at 18: length, CIE pointer 0 at 22, initial location (relocated, 0 in place) at 26, range at 34
+         * (the section is 14 bytes: STMG 6, LAY 6, BR 2); advance 6, SAVE r14 at CFA+112, advance 6, CFA r15+160 */
+        CHECK(be(d + 22, 4) == 0 && be(d + 26, 8) == 0 && be(d + 34, 8) == 14);
+        CHECK(d[42] == 0x04 && be(d + 43, 4) == 6 && d[47] == 0x11 && d[48] == 14);
+        CHECK(d[49] == 0xF0 && d[50] == 0x00); /* 112 as a signed LEB128 */
+        CHECK(d[51] == 0x04 && be(d + 52, 4) == 6 && d[56] == 0x12 && d[57] == 15 && d[58] == 0xA0 && d[59] == 0x01);
+    }
+    if (rr > 0) CHECK(sh(&e, (size_t)rr, F_SIZE) == 24); /* one FDE: the pc of the section is relocated */
+    free(o);
+    /* not a CFI operation, a register that does not exist, a CFI before any section */
+    CHECK(dwarf_obj("A CSECT\n DWCFI FOO,1\n BR %r14\n END\n", &n) == NULL);
+    CHECK(dwarf_obj("A CSECT\n DWCFI CFA,16,8\n BR %r14\n END\n", &n) == NULL);
+    CHECK(dwarf_obj("DWCFI CFA,15,160\nA CSECT\n BR %r14\n END\n", &n) == NULL);
+}
+
 int main(void) {
+    test_cfi();
     test_ca_ce();
     test_basic();
     test_classes();

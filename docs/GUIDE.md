@@ -1103,7 +1103,7 @@ Code ranges:
 | `ZA0xxx` | syntax of lines, strings, quoted symbols, attributes |
 | `ZA1xxx` | symbols and expressions; `ZA104x` sizes; `ZA105x` ASSERT |
 | `ZA2xxx` | instructions, operands, DC/DS and constants; `ZA206x` XD and CCW |
-| `ZA3xxx` | sections, GOFF directives, USING (`ZA306x`) |
+| `ZA3xxx` | sections, GOFF directives, USING and DWCFI (`ZA306x`) |
 | `ZA4xxx` | the preprocessor; `ZA405x` and `ZA41xx` the macro language (chapter 19) |
 | `ZA9xxx` | not supported yet / internal |
 
@@ -2318,9 +2318,46 @@ Run under `qemu-s390x -g PORT` with `gdb-multiarch` (`set architecture
 s390:64-bit`, `target remote`): breakpoints by source line and by label stop at
 the linked addresses, `list` and `next` follow the source, a DC label prints its
 bytes (`print MSG` gives `"Hi"`), and registers show the values the code set.
-Not done: LLDB and dbx on the ELF object. Without CFI (`.eh_frame`) gdb cannot
-unwind past the current frame ("frame did not save the PC"), so `bt` shows only
-the frame where the program stops.
+**Call frame information (`DWCFI`).** The unwinder needs the rules for leaving
+each frame, which the assembler cannot guess. Write them with the `DWCFI`
+directive (it is not `CFI`: that is the Compare Immediate Fullword instruction)
+after the instruction that changes the frame, with operands separated by commas:
+
+| Directive | Meaning |
+|-----------|---------|
+| `DWCFI CFA,reg,off` | the CFA is `reg + off` (the caller's stack pointer is the CFA) |
+| `DWCFI SAVE,reg,off` | register `reg` of the caller is saved at `CFA + off` |
+| `DWCFI SAME,reg` | register `reg` has the same value in the caller |
+| `DWCFI UNDEF,reg` | register `reg` has no value in the caller (outermost frame) |
+
+`reg` is `%r0`-`%r15` or 0-15, `off` is a decimal number. The CIE says the CFA
+is `r15 + 0` (the stack pointer at entry, which is what the caller had before
+the call) and that the return address is `r14`. A fragment of a subroutine
+(not a complete program, so the test suite does not assemble it):
+
+```
+MAIN     CSECT
+         STMG  %r14,%r15,112(%r15)
+         DWCFI SAVE,14,112
+         LAY   %r15,-160(%r15)
+         DWCFI CFA,15,160
+         ...
+         BR    %r14
+```
+
+An entry point that is not called (the program start, with `r14` = 0) ends the
+backtrace: `DWCFI UNDEF,14` there, as in the `START` program of the gdb check. Rules are
+given at the offset where the directive stands, and they stay until the next
+directive. The directive goes into `.debug_frame` as one FDE per CSECT (ELF form
+only). Bad operands give `ZA3069`; a directive before any section is open is an
+error, as for any other statement. Checked under `qemu-s390x` with
+`gdb-multiarch`: `bt` from a subroutine shows the caller and the start of the
+caller's caller, and the caller's `$pc` and stack pointer are recovered.
+
+Not done: CFI with `-g` in the GOFF form (there the link module has no `.debug_frame`),
+and LLDB and dbx on the ELF object. Without CFI gdb cannot unwind past the current
+frame ("frame did not save the PC"), so `bt` shows only the frame where the program
+stops.
 
 ---
 

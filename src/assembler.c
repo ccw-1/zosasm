@@ -37,7 +37,7 @@ static const DirEntry directive_tab[] = {
     {"CCW", dir_ccw},      {"CCW0", dir_ccw},     {"CCW1", dir_ccw},     {"CEJECT", dir_ceject},
     {"CNOP", dir_cnop},    {"COM", dir_section},  {"COPY", dir_copy},    {"CSECT", dir_section},
     {"CXD", dir_cxd},      {"DC", dir_dc},        {"DROP", dir_drop},    {"DS", dir_dc},
-    {"DSECT", dir_section}, {"DXD", dir_dxd},     {"EJECT", dir_ignore}, {"END", dir_end},
+    {"DSECT", dir_section}, {"DWCFI", dir_cfi},    {"DXD", dir_dxd},     {"EJECT", dir_ignore}, {"END", dir_end},
     {"ENTRY", dir_entry},  {"EQU", dir_equ},      {"EXITCTL", dir_exitctl}, {"EXTRN", dir_extrn},
     {"ICTL", dir_ignore},  {"ISEQ", dir_ignore},  {"LOCTR", dir_loctr},  {"LTORG", dir_ltorg},
     {"OPSYN", dir_opsyn},  {"ORG", dir_org},      {"POP", dir_pushpop},  {"PRINT", dir_ignore},

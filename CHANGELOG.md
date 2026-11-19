@@ -9,9 +9,11 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 * `-elf -g` writes the DWARF 4 into the ELF64 object as `.debug_*` sections
   with RELA relocations against the `.text.NAME` sections (`src/dbg_dwarf.c`,
   `dbg_build_elf`, `module_emit_elf_dbg`). Checked with readelf, ld and gdb
-  (`gdb-multiarch` under `qemu-s390x`): breakpoints, source and variables work;
-  no CFI yet, so `bt` stops at the current frame. `-gside`, `-gdwarf` and
-  `-gdbgpath` are rejected with `-elf`.
+  (`gdb-multiarch` under `qemu-s390x`): breakpoints, source, variables and `bt`
+  work. `-gside`, `-gdwarf` and `-gdbgpath` are rejected with `-elf`.
+* CFI directive `DWCFI CFA|SAVE|SAME|UNDEF` (GUIDE 17): `.debug_frame` with one
+  FDE per CSECT, so gdb unwinds through the callers (checked under `qemu-s390x`).
+  Named `DWCFI` because `CFI` is an instruction.
 * `-g` puts the DWARF into the object: the link module gets the class
   `C_ADATAE9C3` (NOLOAD, framed copies), so no `.dbg` file is needed for LLDB.
   The `.dbg` file is now written only with `-gside` (new); `-gdwarf` implies

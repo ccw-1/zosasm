@@ -1201,11 +1201,24 @@ of the ELF object in `src/elf.c` (`module_emit_elf_dbg`); a relocation against a
 class is a RELA entry against the section symbol of `.text.NAME`, and the in-place
 value is cleared. `-gside`, `-gdwarf` and `-gdbgpath` are rejected with `-elf`.
 
+CFI: the `DWCFI` directive (`src/instr.c`, `dir_cfi`; not `CFI`, which is an
+instruction and is looked up after the directives) records its rule at the
+offset of its statement. The statement has no code, so its record gets its class
+offset from `zsym_record` in pass 2 (`src/dbg.c` `collect()` reads `m->zrecs`
+for it and files it in `DSect.cfis`). `build_frame` (`src/dbg_dwarf.c`) writes
+`.debug_frame` (`SEC_FRAME`): one CIE (version 1, return column 14, CFA `r15+0`,
+`r14` undefined) and one FDE per DSect, whose `initial_location` is a RK_TEXT
+relocation against the DSect index. The rules are `DW_CFA_advance_loc4` deltas
+with `def_cfa_sf`, `offset_extended_sf`, `same_value` and `undefined`. The CFA
+is the caller's stack pointer, so `DWCFI CFA,15,off` after `LAY` is correct for
+gcc-style frames. The GOFF form has no `.debug_frame` and no CFI.
+
 **Not done.** 31-bit `ELFCLASS32` (Linux on Z has been 64-bit only for
 years), a `-elf` listing note, `.note` sections for the entry point,
 `SHT_GROUP` for `COMDAT`-like merging, HFP types in IBM's encoding (`0xdf`:
-LLDB decodes them, other debuggers show the raw value), CFI (`.eh_frame`, so
-gdb cannot unwind), LLDB and dbx on the ELF object, and a run on a real machine.
+LLDB decodes them, other debuggers show the raw value), `.eh_frame` (gdb reads
+`.debug_frame`; `.eh_frame` is needed for the C++ runtime), CFI for the GOFF
+form, LLDB and dbx on the ELF object, and a run on a real machine.
 The debugger check was done with gdb under `qemu-s390x` (GUIDE 17).
 
 ## 18. The MCP server (`src/mcp.c`)

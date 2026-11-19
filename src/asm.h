@@ -644,6 +644,16 @@ int asm_base_disp(Asm *a, Stmt *st, Operand o, int longdisp, int64_t *base, int6
 const IsaInst *asm_choose_variant(const IsaInst *vars, size_t nv, int n);
 void dir_using(Asm *a, Stmt *st);
 void dir_drop(Asm *a, Stmt *st);
+void dir_cfi(Asm *a, Stmt *st);
+/* CFI operands (instr.c): CFA reg,off | SAVE reg,off | SAME reg; the offset is a decimal number.
+ * Returns 0 when malformed. The debug information reads them again from the statement. */
+typedef enum { CFI_CFA, CFI_SAVE, CFI_SAME, CFI_UNDEF } CfiKind;
+typedef struct {
+    CfiKind kind;
+    int reg;
+    int64_t off;
+} CfiOp;
+int cfi_operands(const char *operands, CfiOp *out);
 
 /* literal.c */
 void dir_ltorg(Asm *a, Stmt *st);

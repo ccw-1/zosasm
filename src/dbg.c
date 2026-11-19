@@ -245,6 +245,18 @@ static void collect(Dbg *g) {
         r.seq = (int)k;
         vec_push(&d->rows, r);
     }
+    /* CFI directives: a zero-length statement, so its record carries its address */
+    for (k = 0; k < m->zrecs.n; k++) {
+        const ZRec *z = &m->zrecs.v[k];
+        DSect *d;
+        DCfi c;
+        if (!z->cls || !z->st || !z->st->op || !za_streqi(z->st->op, "DWCFI")) continue;
+        d = dsect_of(g, z->cls);
+        if (!d || !cfi_operands(z->st->operands, &c.op)) continue;
+        c.off = z->off;
+        c.seq = (int)k;
+        vec_push(&d->cfis, c);
+    }
     /* labels and data items */
     for (i = 0; i < m->sym_order.n; i++) {
         const Symbol *s = m->sym_order.v[i];

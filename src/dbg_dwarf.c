@@ -377,6 +377,69 @@ static void build_ranges(Dbg *g) {
     d64(b, 0);
 }
 
+static int cmp_cfi(const void *x, const void *y) {
+    const DCfi *a = x, *b = y;
+    if (a->off != b->off) return a->off < b->off ? -1 : 1;
+    return a->seq < b->seq ? -1 : a->seq > b->seq;
+}
+
+/* .debug_frame (ELF form only): a CIE and an FDE for every section with bytes. The CFA is the stack
+ * pointer the caller had before the call, so the CIE says CFA = r15 (the stack pointer at entry) and the
+ * return address is undefined: with no CFI directives a backtrace stops at the frame where the program is.
+ * The CFI directives (instr.c) change the rules from their address on: CFA reg,off; SAVE reg,off (register
+ * saved at CFA+off); SAME reg; UNDEF reg (the register has no value in the caller: the outermost frame). */
+static void build_frame(Dbg *g) {
+    Buf *b = &g->sec[SEC_FRAME].d;
+    size_t i, k, cie_at = b->len;
+    d32(b, 0); /* length, set below */
+    d32(b, 0xFFFFFFFF); /* CIE id */
+    d8(b, 1);           /* version */
+    d8(b, 0);           /* no augmentation */
+    duleb(b, 1);        /* code alignment factor */
+    dsleb(b, 1);        /* data alignment factor */
+    d8(b, 14);          /* return address register */
+    d8(b, 0x0C);        /* DW_CFA_def_cfa r15, 0 */
+    duleb(b, 15);
+    duleb(b, 0);
+    d8(b, 0x07);        /* DW_CFA_undefined r14 */
+    duleb(b, 14);
+    put32_at(b, cie_at, (uint32_t)(b->len - cie_at - 4));
+    for (i = 0; i < g->sects.n; i++) {
+        DSect *d = g->sects.v[i];
+        size_t fde_at;
+        int64_t prev = 0;
+        if (d->len <= 0) continue;
+        if (d->cfis.n > 1) qsort(d->cfis.v, d->cfis.n, sizeof *d->cfis.v, cmp_cfi);
+        fde_at = b->len;
+        d32(b, 0);             /* length, set below */
+        d32(b, (uint32_t)cie_at); /* the CIE */
+        d64rel(g, SEC_FRAME, (int)i, (uint64_t)d->base);
+        d64(b, (uint64_t)d->len);
+        for (k = 0; k < d->cfis.n; k++) {
+            const DCfi *c = &d->cfis.v[k];
+            d8(b, 0x04); /* DW_CFA_advance_loc4: the factor is 1 */
+            d32(b, (uint32_t)(c->off - prev));
+            prev = c->off;
+            if (c->op.kind == CFI_CFA) {
+                d8(b, 0x12); /* DW_CFA_def_cfa_sf */
+                duleb(b, (uint64_t)c->op.reg);
+                dsleb(b, c->op.off);
+            } else if (c->op.kind == CFI_SAVE) {
+                d8(b, 0x11); /* DW_CFA_offset_extended_sf */
+                duleb(b, (uint64_t)c->op.reg);
+                dsleb(b, c->op.off);
+            } else if (c->op.kind == CFI_SAME) {
+                d8(b, 0x08); /* DW_CFA_same_value */
+                duleb(b, (uint64_t)c->op.reg);
+            } else {
+                d8(b, 0x07); /* DW_CFA_undefined */
+                duleb(b, (uint64_t)c->op.reg);
+            }
+        }
+        put32_at(b, fde_at, (uint32_t)(b->len - fde_at - 4));
+    }
+}
+
 /* the name of a file in the line table: relative to the compilation directory when below it */
 static const char *file_rel(const Dbg *g, const DFile *f) {
     size_t k = strlen(g->comp_dir);
@@ -480,7 +543,7 @@ void dbg_dwarf(Dbg *g) {
     uint32_t *sub_off = NULL;
     size_t i;
     static const char *const names[SEC_COUNT] = {".debug_info",    ".debug_line",     ".debug_abbrev", ".debug_aranges",
-                                                 ".debug_pubnames", ".debug_srcfiles", ".debug_ranges"};
+                                                 ".debug_pubnames", ".debug_srcfiles", ".debug_ranges", ".debug_frame"};
     for (i = 0; i < SEC_COUNT; i++) g->sec[i].name = names[i];
     build_abbrev(g);
     if (!g->elf) build_srcfiles(g);
@@ -489,8 +552,10 @@ void dbg_dwarf(Dbg *g) {
     build_aranges(g);
     if (g->nsub) build_pubnames(g, sub_off);
     if (g->elf) build_ranges(g);
+    if (g->elf) build_frame(g);
     g->have[SEC_INFO] = g->have[SEC_ABBREV] = g->have[SEC_ARANGES] = 1;
     g->have[SEC_SRCFILES] = !g->elf;
     g->have[SEC_RANGES] = g->elf;
+    g->have[SEC_FRAME] = g->elf;
     g->have[SEC_LINE] = g->have[SEC_PUBNAMES] = g->nsub > 0;
 }
