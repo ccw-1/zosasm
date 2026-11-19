@@ -34,4 +34,28 @@ char *dbg_host_path(const DbgOptions *o, const char *path);
 int dbg_build(Module *m, const uint8_t *obj, size_t objlen, const DbgOptions *o, DbgResult *r, char *err,
               size_t errsz);
 
+/* ELF form (-elf -g): the DWARF sections, to be added to the ELF object as sections of their own.
+ * A relocation refers to the section of a class (cls) or to another DWARF section (sec, an index
+ * into the list); off is in the section, the in-place value is the addend. */
+typedef struct {
+    uint32_t off;
+    uint32_t type; /* R_390_32 or R_390_64 */
+    Class *cls;
+    int sec;
+} DbgElfRel;
+
+typedef struct {
+    const char *name; /* .debug_info ... */
+    uint8_t *data;
+    size_t len;
+    DbgElfRel *rels;
+    size_t nrels;
+} DbgElfSec;
+
+/* Makes the DWARF sections for the ELF object; the array is malloc'ed. Returns 1, or 0 with err. */
+int dbg_build_elf(Module *m, const DbgOptions *o, DbgElfSec **secs, size_t *nsecs, char *err, size_t errsz);
+
+/* module_emit_elf with the DWARF sections added (elf.c). */
+uint8_t *module_emit_elf_dbg(Module *m, const DbgElfSec *dbg, size_t ndbg, size_t *len, char *err, size_t errsz);
+
 #endif

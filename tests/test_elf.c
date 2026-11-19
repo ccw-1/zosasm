@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "../src/asm.h"
+#include "../src/dbg.h"
 #include "../src/ebcdic.h"
 #include "testlib.h"
 
@@ -249,6 +250,81 @@ static void test_charset(void) {
     }
 }
 
+/* -elf -g: the DWARF sections, their relocations as RELA entries against the .text sections */
+static void test_dwarf(void) {
+    const char *src = "A        CSECT\n"
+                      "         BR    %r14\n"
+                      "         BR    %r14\n"
+                      "B        CSECT\n"
+                      "         DC    F'1'\n"
+                      "         END\n";
+    Reporter *rep = rep_new(0);
+    Module *m;
+    DbgOptions o;
+    DbgElfSec *dbg = NULL;
+    size_t ndbg = 0, n = 0, k, i;
+    char err[256];
+    uint8_t *obj;
+    Elf e;
+    long st, ri, rr, ta, tb;
+    int ok;
+    za_ascii = 1;
+    m = asm_assemble_text("t.za", src, strlen(src), rep);
+    CHECK_MSG(m != NULL, "assembly failed");
+    if (!m) {
+        za_ascii = 0;
+        return;
+    }
+    memset(&o, 0, sizeof o);
+    o.cwd = "/tmp";
+    o.main_file = "t.za";
+    o.producer = "zosasm test";
+    o.dbg_path = "";
+    ok = dbg_build_elf(m, &o, &dbg, &ndbg, err, sizeof err);
+    CHECK_MSG(ok, "dwarf: %s", err);
+    if (!ok) {
+        za_ascii = 0;
+        return;
+    }
+    obj = module_emit_elf_dbg(m, dbg, ndbg, &n, err, sizeof err);
+    CHECK_MSG(obj != NULL, "emit: %s", err);
+    za_ascii = 0;
+    if (!obj) return;
+    CHECK(parse(&e, obj, n));
+    CHECK(find_sec(&e, ".debug_info") > 0 && find_sec(&e, ".debug_abbrev") > 0);
+    CHECK(find_sec(&e, ".debug_line") > 0 && find_sec(&e, ".debug_aranges") > 0);
+    CHECK(find_sec(&e, ".rela.debug_info") > 0);
+    ri = find_sec(&e, ".debug_ranges");
+    rr = find_sec(&e, ".rela.debug_ranges");
+    ta = find_sec(&e, ".text.A");
+    tb = find_sec(&e, ".text.B");
+    CHECK(ri > 0 && rr > 0 && ta > 0 && tb > 0);
+    if (ri <= 0 || rr <= 0 || ta <= 0 || tb <= 0) {
+        free(obj);
+        return;
+    }
+    /* two entries (begin, end) per CSECT and the zero terminator; the addends are in RELA */
+    CHECK(sh(&e, (size_t)ri, F_SIZE) == 48);
+    for (i = 0; i < 48; i++) CHECK(sec_data(&e, (size_t)ri)[i] == 0);
+    CHECK(sh(&e, (size_t)rr, F_SIZE) == 4 * 24);
+    st = find_sec(&e, ".symtab");
+    {
+        static const uint64_t want[] = {0, 4, 0, 4};
+        const uint8_t *r = sec_data(&e, (size_t)rr);
+        for (k = 0; k < 4; k++) {
+            size_t sidx = (size_t)(be(r + k * 24 + 8, 8) >> 32);
+            uint32_t type = (uint32_t)(be(r + k * 24 + 8, 8) & 0xFFFFFFFFu);
+            uint64_t shndx = be(sec_data(&e, (size_t)st) + sidx * 24 + 6, 2);
+            CHECK(type == 22);
+            CHECK(be(r + k * 24 + 16, 8) == want[k]);
+            CHECK(shndx == (uint64_t)(k < 2 ? ta : tb));
+        }
+    }
+    free(obj);
+    for (i = 0; i < ndbg; i++) free(dbg[i].rels);
+    free(dbg);
+}
+
 /* CA'..' and CE'..' name the character set, whatever the default is */
 static void test_ca_ce(void) {
     const char *src = "T CSECT\n DC CA'ab',CE'ab',CAL4'a',CEL4'a'\n LA %r1,CA'a'\n LA %r2,CE'a'\n"
@@ -278,5 +354,6 @@ int main(void) {
     test_classes();
     test_rejected();
     test_charset();
+    test_dwarf();
     TEST_MAIN_END();
 }

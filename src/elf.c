@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "asm.h"
+#include "dbg.h"
 #include "goff.h"
 
 #define EM_S390_ 22
@@ -65,11 +66,12 @@ static uint32_t strtab_add(StrTab *t, const char *s) {
 /* ---- the sections ---------------------------------------------------- */
 
 typedef struct {
-    Class *cls;
+    Class *cls;    /* NULL for a DWARF section (-g) */
     char *name;
     uint32_t type;
     uint64_t flags;
     uint64_t align;
+    uint64_t size; /* bytes in the file (0 for NOBITS with no class text) */
     uint8_t *data; /* a copy, relocation addends cleared */
     uint32_t sym;  /* index of its section symbol */
     Buf rela;
@@ -153,6 +155,7 @@ static void add_sec(Ctx *x, Section *s, Class *c) {
         buf_write(&nm, c->name, strlen(c->name));
     }
     e.name = xstrdup(buf_cstr(&nm));
+    e.size = (uint64_t)c->len;
     if (e.type != SHT_NOBITS_ && c->len > 0) {
         e.data = xmalloc((size_t)c->len);
         memcpy(e.data, c->data, (size_t)c->len);
@@ -314,8 +317,14 @@ static int do_relocs(Ctx *x, ElfSec *e) {
 /* ---- the whole object ------------------------------------------------ */
 
 uint8_t *module_emit_elf(Module *m, size_t *len, char *err, size_t errsz) {
+    return module_emit_elf_dbg(m, NULL, 0, len, err, errsz);
+}
+
+/* the object with the DWARF sections dbg (-g): plain sections of their own, named as the
+ * DWARF standard names them; their relocations refer to the section symbols of the classes */
+uint8_t *module_emit_elf_dbg(Module *m, const DbgElfSec *dbg, size_t ndbg, size_t *len, char *err, size_t errsz) {
     Ctx x;
-    size_t si, ci, i, k, nsec, nrela_secs = 0;
+    size_t si, ci, i, k, nsec, nrela_secs = 0, dbase;
     SectionVec secs = {0};
     SymbolVec externs = {0};
     Buf out = {0}, shstr = {0};
@@ -349,6 +358,21 @@ uint8_t *module_emit_elf(Module *m, size_t *len, char *err, size_t errsz) {
             Class *c = s->classes.v[ci];
             if (c->len > 0 || ci == 0) add_sec(&x, s, c);
         }
+    }
+    /* the DWARF sections of -g: ordinary sections after the classes; their relocations come later */
+    dbase = x.secs.n;
+    for (k = 0; k < ndbg; k++) {
+        ElfSec e;
+        memset(&e, 0, sizeof e);
+        e.name = xstrdup(dbg[k].name);
+        e.type = SHT_PROGBITS_;
+        e.align = 1;
+        e.size = (uint64_t)dbg[k].len;
+        if (dbg[k].len > 0) {
+            e.data = xmalloc(dbg[k].len);
+            memcpy(e.data, dbg[k].data, dbg[k].len);
+        }
+        vec_push(&x.secs, e);
     }
 
     /* symbols: null, file, section symbols, local labels, then the globals */
@@ -409,7 +433,40 @@ uint8_t *module_emit_elf(Module *m, size_t *len, char *err, size_t errsz) {
     /* ENTRY of the module (END operand) is not an ELF notion; nothing to emit */
 
     for (i = 0; i < x.secs.n; i++)
-        if (!do_relocs(&x, &x.secs.v[i])) return NULL;
+        if (x.secs.v[i].cls && !do_relocs(&x, &x.secs.v[i])) return NULL;
+    /* DWARF relocations: the in-place value moves to the addend, as for the code */
+    for (k = 0; k < ndbg; k++) {
+        ElfSec *e = &x.secs.v[dbase + k];
+        size_t j;
+        for (j = 0; j < dbg[k].nrels; j++) {
+            const DbgElfRel *r = &dbg[k].rels[j];
+            size_t len = r->type == R_390_64_ ? 8 : 4;
+            uint32_t sym;
+            if (r->type != R_390_32_ && r->type != R_390_64_) {
+                fail(&x, "an unsupported DWARF relocation type", e->name);
+                return NULL;
+            }
+            if (r->off + len > dbg[k].len) {
+                fail(&x, "a DWARF relocation lies outside its section", e->name);
+                return NULL;
+            }
+            if (r->cls) {
+                ElfSec *t = sec_of(&x, r->cls);
+                if (!t) {
+                    fail(&x, "a DWARF relocation against a class without text", e->name);
+                    return NULL;
+                }
+                sym = t->sym;
+            } else {
+                sym = x.secs.v[dbase + (size_t)r->sec].sym;
+            }
+            {
+                int64_t addend = read_be(e->data + r->off, (int)len, 0);
+                memset(e->data + r->off, 0, len);
+                write_rela(e, r->off, sym, r->type, addend);
+            }
+        }
+    }
 
     /* section header numbering */
     nsec = x.secs.n;
@@ -448,7 +505,7 @@ uint8_t *module_emit_elf(Module *m, size_t *len, char *err, size_t errsz) {
         pad_to(&out, (size_t)e->align);
         e->foff = out.len;
         if (e->type == SHT_NOBITS_) continue;
-        if (e->cls->len > 0) buf_write(&out, e->data, (size_t)e->cls->len);
+        if (e->size > 0) buf_write(&out, e->data, (size_t)e->size);
     }
     pad_to(&out, 8);
     {
@@ -512,7 +569,7 @@ uint8_t *module_emit_elf(Module *m, size_t *len, char *err, size_t errsz) {
             put64(&out, e->flags);
             put64(&out, 0);
             put64(&out, e->foff);
-            put64(&out, (uint64_t)e->cls->len);
+            put64(&out, e->size);
             put32(&out, 0);
             put32(&out, 0);
             put64(&out, e->align);

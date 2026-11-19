@@ -1191,10 +1191,21 @@ check the magic, `-charset` and the error exit; during development the
 objects were linked with `s390x-linux-gnu-ld` and read with
 `s390x-linux-gnu-objdump` (the displacements were correct).
 
+**Debug information (`-elf -g`).** `src/dbg_dwarf.c` builds the DWARF in ELF
+form (`DbgOptions`, `dbg_build_elf`): DWARF 4, the compile unit with
+`DW_AT_ranges` (no `.debug_srcfiles`, language `DW_LANG_Mips_Assembler`),
+`DW_LNS_set_file` in the line program (no IBM extended opcode), and the DSect base
+is 0 because each class is its own section. `.debug_ranges` has a begin and an
+end address per CSECT plus a zero terminator. The DWARF sections become sections
+of the ELF object in `src/elf.c` (`module_emit_elf_dbg`); a relocation against a
+class is a RELA entry against the section symbol of `.text.NAME`, and the in-place
+value is cleared. `-gside`, `-gdwarf` and `-gdbgpath` are rejected with `-elf`.
+
 **Not done.** 31-bit `ELFCLASS32` (Linux on Z has been 64-bit only for
-years), debug information (`.debug_*`, `-gz` is ignored), a `-elf` listing
-note, `.note` sections for the entry point, `SHT_GROUP` for `COMDAT`-like
-merging, and a run on a real machine or under `qemu-s390x`.
+years), a `-elf` listing note, `.note` sections for the entry point,
+`SHT_GROUP` for `COMDAT`-like merging, HFP types in IBM's encoding (`0xdf`:
+LLDB decodes them, other debuggers show the raw value), and a run on a real
+machine or under `qemu-s390x`.
 
 ## 18. The MCP server (`src/mcp.c`)
 

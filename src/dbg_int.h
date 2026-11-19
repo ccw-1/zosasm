@@ -6,7 +6,7 @@
 
 #include "dbg.h"
 
-enum { SEC_INFO, SEC_LINE, SEC_ABBREV, SEC_ARANGES, SEC_PUBNAMES, SEC_SRCFILES, SEC_COUNT };
+enum { SEC_INFO, SEC_LINE, SEC_ABBREV, SEC_ARANGES, SEC_PUBNAMES, SEC_SRCFILES, SEC_RANGES, SEC_COUNT };
 enum { RK_TEXT, RK_SEC }; /* a relocation refers to the text symbol of a section or to a debug section */
 enum { R390_32 = 4, R390_64 = 0x16 };
 
@@ -99,6 +99,7 @@ typedef struct {
     char *sig_hex;
     uint32_t main_off; /* DIE of the main file in .debug_srcfiles */
     int nsub;          /* subprograms */
+    int elf;           /* ELF form (-elf -g): standard DWARF, no .debug_srcfiles, one ELF section per class */
 } Dbg;
 
 /* byte output, big endian */

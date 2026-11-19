@@ -2300,6 +2300,22 @@ produces for the same instructions (`brasl` gets `R_390_PLT32DBL` here, clang
 uses `R_390_PC32DBL` unless `@PLT` is written). It has not been run on a Linux
 on Z machine or under emulation.
 
+**Debug information (`-elf -g`).** `zosasm -elf -g` puts the DWARF 4 into the
+object: the sections `.debug_info`, `.debug_abbrev`, `.debug_line`,
+`.debug_aranges`, `.debug_ranges` and `.debug_pubnames` (the last when there
+are subprograms). A relocation of the DWARF against a class is a RELA entry
+against the `.text.NAME` section, so `ld` relocates the addresses of the
+subprograms, labels and line table. No `.dbg` file and no link module are made.
+Differences from the GOFF form (section 21): the compile unit is
+`DW_LANG_Mips_Assembler` and gives its code range with `DW_AT_ranges` (one
+range per CSECT); the line table uses the standard `DW_LNS_set_file`; there is
+no `.debug_srcfiles`. `-gside`, `-gdwarf` and `-gdbgpath` are errors with
+`-elf`. Hexadecimal floats use IBM's encoding (`DW_ATE_IBM_float_hex`), which
+LLDB decodes and other debuggers show as raw values. Checked with `readelf`
+and by linking with `s390x-linux-gnu-ld` (`MAIN`, `SUB` and `MSG` at the
+addresses the linker gives them, and the subprogram ranges in `.debug_aranges`);
+not run in a debugger.
+
 ---
 
 ## 18. For AI agents: the MCP server `zosasm-mcp`
@@ -2760,6 +2776,7 @@ Not the same as `as -g`:
   floats and arrays of them, and DSECT structures.
 * The `.dbg` has no symbols for the `B_IDRL` and `B_PRV` classes (IBM's has
   them, with size 0).
-* `-g` and `-elf` exclude each other (ELF objects have no GOFF link module).
+* `-gside`, `-gdwarf` and `-gdbgpath` are errors with `-elf`: the ELF object
+  holds the DWARF itself (section 17), so there is no `.dbg` file.
 * DBGNAME holds at most 200 bytes of path.
 

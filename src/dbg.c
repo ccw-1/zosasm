@@ -207,7 +207,9 @@ static void collect(Dbg *g) {
         d->cls = s->classes.v[0];
         d->id = d->cls->esd;
         d->len = d->cls->len;
-        {
+        if (g->elf) {
+            d->base = 0; /* ELF: the class is its own section, so its addresses start at 0 */
+        } else {
             int al = d->cls->attr.align >= 0 ? d->cls->attr.align : 3; /* doubleword unless CATTR says otherwise */
             int64_t a = (int64_t)1 << al;
             text_end = (text_end + a - 1) / a * a;
@@ -519,4 +521,49 @@ int dbg_build(Module *m, const uint8_t *obj, size_t objlen, const DbgOptions *o,
     g->sig_hex[32] = 0;
     r->elf = dbg_elf(g, &r->elf_len);
     return build_mod2(g, r, err, errsz);
+}
+
+/* ---- the ELF form (-elf -g) --------------------------------------------------- */
+
+int dbg_build_elf(Module *m, const DbgOptions *o, DbgElfSec **out, size_t *nout, char *err, size_t errsz) {
+    Dbg *g = xcalloc(sizeof *g);
+    size_t i, k, n = 0, pos[SEC_COUNT];
+    DbgElfSec *s;
+    g->o = o;
+    g->m = m;
+    g->elf = 1;
+    collect(g);
+    if (g->sects.n == 0) {
+        snprintf(err, errsz, "-g: no named control section to describe");
+        return 0;
+    }
+    dbg_dwarf(g);
+    for (i = 0; i < SEC_COUNT; i++) pos[i] = n, n += g->have[i] ? 1 : 0;
+    s = xcalloc((n + 1) * sizeof *s);
+    for (i = 0; i < SEC_COUNT; i++) {
+        DbgElfSec *e;
+        if (!g->have[i]) continue;
+        e = &s[pos[i]];
+        e->name = g->sec[i].name;
+        e->data = (uint8_t *)g->sec[i].d.p;
+        e->len = g->sec[i].d.len;
+        e->nrels = g->sec[i].rels.n;
+        e->rels = xcalloc((e->nrels + 1) * sizeof *e->rels);
+        for (k = 0; k < e->nrels; k++) {
+            const DRel *r = &g->sec[i].rels.v[k];
+            DbgElfRel *x = &e->rels[k];
+            x->off = r->off;
+            x->type = (uint32_t)r->type;
+            if (r->kind == RK_TEXT) {
+                x->cls = g->sects.v[r->idx]->cls;
+                x->sec = -1;
+            } else {
+                x->cls = NULL;
+                x->sec = (int)pos[r->idx];
+            }
+        }
+    }
+    *out = s;
+    *nout = n;
+    return 1;
 }

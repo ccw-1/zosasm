@@ -397,14 +397,18 @@ strings -a $T/g/pb.dbg | grep -q '^/u/me/w/pb.za$'; check "-g -gmap: the source 
 $X -disasm $T/g/pb.o | grep -q 'PB       CSECT'; check "-g: -disasm reads the first module" $? 0
 $X -g -gdwarf $T/g/x.dbg -o $T/g/x.o $T/g/pb.za 2>/dev/null; [ -s $T/g/x.dbg ]; check "-gdwarf FILE" $? 0
 $X -gdir /u/me -gside -o $T/g/y.o $T/g/pb.za 2>/dev/null; [ -s $T/g/y.dbg ]; check "-gdir with -gside writes FILE.dbg" $? 0
-$X -g -elf -o $T/g/z.o $T/g/pb.za 2>/dev/null; check "-g with -elf is an error" $? 2
+$X -gside -elf -o $T/g/z.o $T/g/pb.za 2>/dev/null; check "-gside with -elf is an error" $? 2
+$X -g -elf -o $T/g/z.o $T/g/pb.za 2>/dev/null; check "-g with -elf exit" $? 0
+[ -s $T/g/z.o ] && [ ! -e $T/g/z.dbg ] && grep -q '\.debug_info' $T/g/z.o && grep -q '\.rela\.debug_info' $T/g/z.o; check "-g -elf: DWARF sections in the object, no .dbg" $? 0
 $X -g -gdbgpath /u/me/$(printf 'x%.0s' $(seq 1 210)).dbg -o $T/g/w.o $T/g/pb.za 2>/dev/null; check "-gdbgpath too long" $? 1
 cp $T/g/pb.o $T/g/a.o; cp $T/g/pb.dbg $T/g/a.dbg
 $X -gside -gmap $P/$T/g=/u/me/w -o $T/g/b.o $T/g/pb.za 2>/dev/null; cmp -s $T/g/a.dbg $T/g/b.dbg; check "-gside is reproducible" $? 0
 mcp '{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n LR 1,1\n","dwarf":true,"dwarf_base64":true,"dwarf_dir":"/u/x"}}}' > $T/m.out
 grep -q '"dwarf_size":' $T/m.out && grep -q '"dwarf_base64":"f0VMR' $T/m.out; check "mcp assemble: dwarf" $? 0
-mcp '{"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n","dwarf":true,"format":"elf"}}}' > $T/m.out
-grep -q '"isError":true' $T/m.out; check "mcp assemble: dwarf with elf" $? 0
+mcp '{"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n","dwarf":true,"dwarf_output":"x.dbg","format":"elf"}}}' > $T/m.out
+grep -q '"isError":true' $T/m.out; check "mcp assemble: dwarf_output with elf" $? 0
+mcp '{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n","dwarf":true,"format":"elf","object_base64":true}}}' > $T/m.out
+! grep -q '"isError":true' $T/m.out; check "mcp assemble: dwarf with elf (DWARF in the object)" $? 0
 
 # the workspace: with no ZOSASM_UNRESTRICTED, file names are limited to the
 # directory of the server binary (build/)

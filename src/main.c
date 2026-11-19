@@ -47,7 +47,8 @@ static void usage(FILE *f) {
                "                  statements (default) | also the original source files\n"
                "  -g              the DWARF (as z/OS as -g) goes into the object, in the link module\n"
                "                  appended to it (class C_ADATAE9C3, NOLOAD); the paths in the debug\n"
-               "                  information are those of the z/OS host (chapter 21)\n"
+               "                  information are those of the z/OS host (chapter 21). With -elf the\n"
+               "                  DWARF sections (.debug_*) are in the ELF object itself\n"
                "  -gside          also write FILE.dbg with the same DWARF (for dbx); implies -g\n"
                "  -gdwarf FILE    write the .dbg file here (default: the object name with .dbg); implies -gside\n"
                "  -gdir DIR       the z/OS directory that corresponds to the current directory\n"
@@ -390,8 +391,9 @@ int main(int argc, char **argv) {
         fprintf(stderr, "zosasm: -charset takes ascii or ebcdic, not %s\n", charset);
         return 2;
     }
-    if (gflag && elf) {
-        fprintf(stderr, "zosasm: -g (z/OS debug information) cannot be combined with -elf\n");
+    if (gflag && elf && (gside || gdbgpath)) {
+        fprintf(stderr, "zosasm: -gside, -gdwarf and -gdbgpath write a .dbg file, which -elf does not use "
+                        "(with -elf the DWARF is in the object)\n");
         return 2;
     }
     za_ascii = charset ? !strcmp(charset, "ascii") : elf;
@@ -463,7 +465,22 @@ int main(int argc, char **argv) {
         }
         for (k = 0; k < ppo.defines.n; k++) vec_push(&mod->zdefs, xstrdup(ppo.defines.v[k]));
     }
-    obj = elf ? module_emit_elf(mod, &olen, err, sizeof err) : module_emit(mod, &olen, err, sizeof err);
+    if (gflag && elf) {
+        DbgElfSec *dsecs = NULL;
+        size_t nd = 0;
+        char cwd[4096];
+        dopt.cwd = getcwd(cwd, sizeof cwd) ? cwd : "";
+        dopt.main_file = in;
+        dopt.producer = xasprintf("zosasm %s", ZASM_VERSION_STR);
+        dopt.dbg_path = "";
+        if (!dbg_build_elf(mod, &dopt, &dsecs, &nd, err, sizeof err)) {
+            fprintf(stderr, "zosasm: %s: %s\n", in, err);
+            return 1;
+        }
+        obj = module_emit_elf_dbg(mod, dsecs, nd, &olen, err, sizeof err);
+    } else {
+        obj = elf ? module_emit_elf(mod, &olen, err, sizeof err) : module_emit(mod, &olen, err, sizeof err);
+    }
     if (!obj) {
         fprintf(stderr, "zosasm: %s: cannot write object: %s\n", in, err);
         return 1;
@@ -474,7 +491,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
         return 1;
     }
-    if (gflag) {
+    if (gflag && !elf) {
         DbgResult dr;
         char *dbgname, cwd[4096];
         const char *slash = strrchr(outname, '/'), *dot = strrchr(outname, '.');

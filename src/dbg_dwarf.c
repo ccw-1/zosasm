@@ -26,6 +26,7 @@ static void ab_end(Buf *b) {
 enum {
     AT_NAME = 0x03, AT_LOCATION = 0x02, AT_STMT_LIST = 0x10, AT_LOW_PC = 0x11, AT_HIGH_PC = 0x12,
     AT_LANGUAGE = 0x13, AT_COMP_DIR = 0x1b, AT_PRODUCER = 0x25, AT_UPPER_BOUND = 0x2f, AT_ENCODING = 0x3e,
+    AT_RANGES = 0x55,
     AT_BYTE_SIZE = 0x0b, AT_CONST_VALUE = 0x1c, AT_MEMBER_LOC = 0x38, AT_EXTERNAL = 0x3f, AT_TYPE = 0x49, AT_IBM_SRCFILE = 0x390f, AT_IBM_FILE_DIR = 0x3910,
     AT_IBM_FILE_A = 0x3918, AT_IBM_FILE_B = 0x3915
 };
@@ -34,6 +35,7 @@ enum { F_ADDR = 0x01, F_DATA2 = 0x05, F_DATA4 = 0x06, F_DATA1 = 0x0b, F_STRING =
 
 #define TAG_IBM_DIR 0xde15
 #define TAG_IBM_FILE 0xde10
+#define LANG_ASM 0x8001 /* DW_LANG_Mips_Assembler, what other assemblers write for ELF */
 
 static uint32_t ab_dir_off, ab_file_off;
 
@@ -44,9 +46,13 @@ static void build_abbrev(Dbg *g) {
     ab_attr(b, AT_PRODUCER, F_STRING);
     ab_attr(b, AT_COMP_DIR, F_STRING);
     ab_attr(b, AT_NAME, F_STRING);
-    ab_attr(b, AT_IBM_SRCFILE, F_SEC_OFFSET);
-    ab_attr(b, AT_LOW_PC, F_ADDR);
-    ab_attr(b, AT_HIGH_PC, F_ADDR);
+    if (g->elf) {
+        ab_attr(b, AT_RANGES, F_SEC_OFFSET);
+    } else {
+        ab_attr(b, AT_IBM_SRCFILE, F_SEC_OFFSET);
+        ab_attr(b, AT_LOW_PC, F_ADDR);
+        ab_attr(b, AT_HIGH_PC, F_ADDR);
+    }
     if (g->nsub) ab_attr(b, AT_STMT_LIST, F_SEC_OFFSET);
     ab_end(b);
     ab_start(b, AB_BASE, 0x24, 0);
@@ -94,6 +100,7 @@ static void build_abbrev(Dbg *g) {
     ab_attr(b, AT_HIGH_PC, F_ADDR);
     ab_end(b);
     d8(b, 0);
+    if (g->elf) return;
     /* the units of .debug_srcfiles: a directory and a file */
     ab_dir_off = (uint32_t)b->len;
     ab_start(b, 1, TAG_IBM_DIR, 0);
@@ -234,13 +241,17 @@ static void build_info(Dbg *g, uint32_t **sub_off) {
     d32rel(g, SEC_INFO, RK_SEC, SEC_ABBREV, 0);
     d8(b, 8);
     duleb(b, AB_CU);
-    d16(b, 0xde00);
+    d16(b, g->elf ? LANG_ASM : 0xde00);
     dstr(b, g->o->producer);
     dstr(b, g->comp_dir);
     dstr(b, g->cu_name);
-    d32rel(g, SEC_INFO, RK_SEC, SEC_SRCFILES, g->main_off);
-    d64rel(g, SEC_INFO, 0, (uint64_t)g->sects.v[0]->base);
-    d64rel(g, SEC_INFO, (int)g->sects.n - 1, (uint64_t)(last->base + last->len));
+    if (g->elf) {
+        d32rel(g, SEC_INFO, RK_SEC, SEC_RANGES, 0);
+    } else {
+        d32rel(g, SEC_INFO, RK_SEC, SEC_SRCFILES, g->main_off);
+        d64rel(g, SEC_INFO, 0, (uint64_t)g->sects.v[0]->base);
+        d64rel(g, SEC_INFO, (int)g->sects.n - 1, (uint64_t)(last->base + last->len));
+    }
     if (g->nsub) d32rel(g, SEC_INFO, RK_SEC, SEC_LINE, 0);
     /* types: the base types first, then the arrays that refer to them */
     for (i = 0; i < g->types.n; i++) {
@@ -351,6 +362,21 @@ static void build_pubnames(Dbg *g, const uint32_t *sub_off) {
     put32_at(b, 0, (uint32_t)(b->len - 4));
 }
 
+/* .debug_ranges (ELF form only): the ranges of the CU, one per section, as absolute addresses (the CU has no
+ * base address, so each relocated value is the address itself) */
+static void build_ranges(Dbg *g) {
+    Buf *b = &g->sec[SEC_RANGES].d;
+    size_t i;
+    for (i = 0; i < g->sects.n; i++) {
+        DSect *d = g->sects.v[i];
+        if (d->len <= 0) continue;
+        d64rel(g, SEC_RANGES, (int)i, (uint64_t)d->base);
+        d64rel(g, SEC_RANGES, (int)i, (uint64_t)(d->base + d->len));
+    }
+    d64(b, 0);
+    d64(b, 0);
+}
+
 /* the name of a file in the line table: relative to the compilation directory when below it */
 static const char *file_rel(const Dbg *g, const DFile *f) {
     size_t k = strlen(g->comp_dir);
@@ -360,6 +386,7 @@ static const char *file_rel(const Dbg *g, const DFile *f) {
 
 static void ext_file(Dbg *g, const DFile *f) { /* IBM: define the file of the following rows */
     Buf *b = &g->sec[SEC_LINE].d;
+    if (g->elf) return; /* DW_LNS_set_file does it in the ELF form */
     d8(b, 0);
     d8(b, 5);
     d8(b, 0xDE);
@@ -452,15 +479,18 @@ static void build_line(Dbg *g) {
 void dbg_dwarf(Dbg *g) {
     uint32_t *sub_off = NULL;
     size_t i;
-    static const char *const names[SEC_COUNT] = {".debug_info",    ".debug_line",     ".debug_abbrev",
-                                                 ".debug_aranges", ".debug_pubnames", ".debug_srcfiles"};
+    static const char *const names[SEC_COUNT] = {".debug_info",    ".debug_line",     ".debug_abbrev", ".debug_aranges",
+                                                 ".debug_pubnames", ".debug_srcfiles", ".debug_ranges"};
     for (i = 0; i < SEC_COUNT; i++) g->sec[i].name = names[i];
     build_abbrev(g);
-    build_srcfiles(g);
+    if (!g->elf) build_srcfiles(g);
     build_info(g, &sub_off);
     if (g->nsub) build_line(g);
     build_aranges(g);
     if (g->nsub) build_pubnames(g, sub_off);
-    g->have[SEC_INFO] = g->have[SEC_ABBREV] = g->have[SEC_ARANGES] = g->have[SEC_SRCFILES] = 1;
+    if (g->elf) build_ranges(g);
+    g->have[SEC_INFO] = g->have[SEC_ABBREV] = g->have[SEC_ARANGES] = 1;
+    g->have[SEC_SRCFILES] = !g->elf;
+    g->have[SEC_RANGES] = g->elf;
     g->have[SEC_LINE] = g->have[SEC_PUBNAMES] = g->nsub > 0;
 }

@@ -1194,14 +1194,18 @@ static void tool_assemble(const J *args, Buf *out) {
         char **maps;
         size_t nm, k;
         int bad = 0;
-        if (is_elf) {
-            tool_fail(out, "'dwarf' (z/OS debug information) cannot be combined with format \"elf\"");
+        if (is_elf && (jstr(args, "dwarf_output") || jstr(args, "dwarf_dbgpath") || jbool(args, "dwarf_base64", 0))) {
+            tool_fail(out, "'dwarf_output', 'dwarf_base64' and 'dwarf_dbgpath' are for the .dbg file of GOFF; "
+                           "with format \"elf\" the DWARF is in the object");
             goto done;
         }
-        dbgfile = tmp_path(&t, ".dbg");
+        /* with format elf the DWARF sections are in the object and no .dbg file is written */
+        dbgfile = is_elf ? NULL : tmp_path(&t, ".dbg");
         add_arg(&a, "-g");
-        add_arg(&a, "-gdwarf");
-        add_arg(&a, dbgfile);
+        if (dbgfile) {
+            add_arg(&a, "-gdwarf");
+            add_arg(&a, dbgfile);
+        }
         if (jstr(args, "dwarf_dir")) {
             add_arg(&a, "-gdir");
             add_arg(&a, jstr(args, "dwarf_dir"));
@@ -1761,7 +1765,8 @@ static const char *tools_json(void) {
         "\"dwarf\":{\"type\":\"boolean\",\"description\":\"Also make the debug information of z/OS "
         "`as -g`: DWARF for dbx and LLDB, in the object (link module, class C_ADATAE9C3) and in a separate .dbg file (-gside). "
         "Give 'dwarf_output' or 'dwarf_base64' to get the .dbg. Use 'dwarf_dir' to say where the "
-        "source and the .dbg will be ON Z/OS. Not with format elf. Guide chapter 21.\"},"
+        "source and the .dbg will be ON Z/OS. With format elf the DWARF sections are in the object itself (no .dbg; "
+        "dwarf_dir and dwarf_map apply). Guide chapter 21.\"},"
         "\"dwarf_output\":{\"type\":\"string\",\"description\":\"File name to write the .dbg to, "
         "inside the workspace.\"},"
         "\"dwarf_base64\":{\"type\":\"boolean\",\"description\":\"Also return the .dbg base64 encoded in "

@@ -6,6 +6,10 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 
 ## Unreleased
 
+* `-elf -g` writes the DWARF 4 into the ELF64 object as `.debug_*` sections
+  with RELA relocations against the `.text.NAME` sections (`src/dbg_dwarf.c`,
+  `dbg_build_elf`, `module_emit_elf_dbg`). Checked with readelf and ld; not
+  run in a debugger. `-gside`, `-gdwarf` and `-gdbgpath` are rejected with `-elf`.
 * `-g` puts the DWARF into the object: the link module gets the class
   `C_ADATAE9C3` (NOLOAD, framed copies), so no `.dbg` file is needed for LLDB.
   The `.dbg` file is now written only with `-gside` (new); `-gdwarf` implies
