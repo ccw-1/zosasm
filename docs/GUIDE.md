@@ -2313,8 +2313,14 @@ no `.debug_srcfiles`. `-gside`, `-gdwarf` and `-gdbgpath` are errors with
 `-elf`. Hexadecimal floats use IBM's encoding (`DW_ATE_IBM_float_hex`), which
 LLDB decodes and other debuggers show as raw values. Checked with `readelf`
 and by linking with `s390x-linux-gnu-ld` (`MAIN`, `SUB` and `MSG` at the
-addresses the linker gives them, and the subprogram ranges in `.debug_aranges`);
-not run in a debugger.
+addresses the linker gives them, and the subprogram ranges in `.debug_aranges`).
+Run under `qemu-s390x -g PORT` with `gdb-multiarch` (`set architecture
+s390:64-bit`, `target remote`): breakpoints by source line and by label stop at
+the linked addresses, `list` and `next` follow the source, a DC label prints its
+bytes (`print MSG` gives `"Hi"`), and registers show the values the code set.
+Not done: LLDB and dbx on the ELF object. Without CFI (`.eh_frame`) gdb cannot
+unwind past the current frame ("frame did not save the PC"), so `bt` shows only
+the frame where the program stops.
 
 ---
 

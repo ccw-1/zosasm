@@ -1204,8 +1204,9 @@ value is cleared. `-gside`, `-gdwarf` and `-gdbgpath` are rejected with `-elf`.
 **Not done.** 31-bit `ELFCLASS32` (Linux on Z has been 64-bit only for
 years), a `-elf` listing note, `.note` sections for the entry point,
 `SHT_GROUP` for `COMDAT`-like merging, HFP types in IBM's encoding (`0xdf`:
-LLDB decodes them, other debuggers show the raw value), and a run on a real
-machine or under `qemu-s390x`.
+LLDB decodes them, other debuggers show the raw value), CFI (`.eh_frame`, so
+gdb cannot unwind), LLDB and dbx on the ELF object, and a run on a real machine.
+The debugger check was done with gdb under `qemu-s390x` (GUIDE 17).
 
 ## 18. The MCP server (`src/mcp.c`)
 
