@@ -113,6 +113,26 @@ $X -generic -disasm $T/hello.o -o $T/backg.za 2>$T/err; check "-generic exit" $?
 cmp -s $T/back.za $T/backg.za; check "-generic ignores ZSYM" $? 0
 $X -disasm $T/hello.o 2>/dev/null | $X -gz0 -o $T/backz.o /dev/stdin 2>/dev/null; check "ZSYM source assembles" $? 0
 cmp -s $T/hello0.o $T/backz.o; check "ZSYM source gives the object back" $? 0
+# DWCFI emits no code: without -g the GOFF object is the same with and without it, and with -g the code,
+# the symbols of the program and the relocations match (the debug class lengths differ, the line rows too)
+cat > $T/cfi_w.za <<'EOF'
+MAIN     CSECT
+         STMG  %r14,%r15,112(%r15)
+         DWCFI SAVE,14,112
+         LAY   %r15,-160(%r15)
+         DWCFI CFA,15,160
+         BR    %r14
+         END
+EOF
+grep -v DWCFI $T/cfi_w.za > $T/cfi_wo.za
+$X -gz0 -o $T/cfi_w0.o $T/cfi_w.za 2>/dev/null; $X -gz0 -o $T/cfi_wo0.o $T/cfi_wo.za 2>/dev/null
+cmp -s $T/cfi_w0.o $T/cfi_wo0.o; check "DWCFI leaves the GOFF object unchanged (-gz0)" $? 0
+mkdir -p $T/cfi_a $T/cfi_b && cp $T/cfi_w.za $T/cfi_a/x.za && cp $T/cfi_wo.za $T/cfi_b/x.za
+(cd $T/cfi_a && $P/$X -gz0 -g -o x.o x.za 2>/dev/null); (cd $T/cfi_b && $P/$X -gz0 -g -o x.o x.za 2>/dev/null)
+$X -dump $T/cfi_a/x.o 2>/dev/null | grep -E '^(TXT esd=2 |RLD)' > $T/cfi_a.txt
+$X -dump $T/cfi_b/x.o 2>/dev/null | grep -E '^(TXT esd=2 |RLD)' > $T/cfi_b.txt
+cmp -s $T/cfi_a.txt $T/cfi_b.txt; check "DWCFI leaves the code and relocations unchanged (-g)" $? 0
+test -s $T/cfi_a.txt; check "the code record was dumped" $? 0
 head -c 200 $T/hello.o > $T/trunc.o
 $X -disasm $T/trunc.o 2>/dev/null; check "-disasm bad object" $? 1
 $X -disasm $T/missing.o 2>/dev/null; check "-disasm missing file" $? 1
