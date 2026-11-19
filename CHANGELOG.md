@@ -4,6 +4,14 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 `vX.Y.Z`. Things not compared with IBM's tools are marked in the User's Guide
 (section 14).
 
+## Unreleased
+
+* `-g` puts the DWARF into the object: the link module gets the class
+  `C_ADATAE9C3` (NOLOAD, framed copies), so no `.dbg` file is needed for LLDB.
+  The `.dbg` file is now written only with `-gside` (new); `-gdwarf` implies
+  `-gside`. dbx still reads the `.dbg` file. LLDB reads the embedded copy first
+  (`CDADwarf.cpp`, `locateEmbedded`); not yet verified on z/OS.
+
 ## 0.2.0 - 2026-11-18
 
 Hardening and tooling after a full review of the sources: hostile source

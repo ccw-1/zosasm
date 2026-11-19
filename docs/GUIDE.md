@@ -68,7 +68,7 @@ printed here is that file, and the test suite assembles each of them.
 | one program for AMODE 64 and AMODE 31 (`__AMODE__`) | 15.5, 3 | `showargs.za` |
 | convert existing HLASM source (columns, registers, `COPY`) | 16 | `hlasm-demo.asm`, `hlasm-demo.za` |
 | format `.za` source (columns, indentation of macros) | 20 | `linkage.za`, `cmacros.za` |
-| debug on z/OS with dbx or LLDB (`-g`, the `.dbg` file) | 21 | |
+| debug on z/OS with dbx or LLDB (`-g`: DWARF in the object; `-gside`: also the `.dbg` file) | 21 | |
 | write objects for Linux on Z (ELF, ASCII text) | 17 | `linux-hello.za` |
 | let an AI agent assemble, inspect and read this guide (MCP) | 18 | |
 
@@ -1377,8 +1377,9 @@ zafmt [options] [file ...]          (chapter 20)
 | `-elf` | write a relocatable ELF64 object for Linux on Z instead of GOFF; implies `-ascii`, ignores `-gz` (section 17) |
 | `-ascii`, `-charset ascii\|ebcdic` | character set of `C'..'` constants and of the type attribute (default `ebcdic`; `ascii` with `-elf`) |
 | `-gz0`, `-gz1`, `-gz2` | symbolic information level (default `-gz1`) |
-| `-g` | also write `FILE.dbg` (DWARF for dbx and LLDB) and append the debug link module to the object (chapter 21) |
-| `-gdwarf FILE` | write the DWARF file to FILE (default: the object name with `.dbg`); implies `-g` |
+| `-g` | put the DWARF for dbx and LLDB into the object (class `C_ADATAE9C3`, NOLOAD) and append the debug link module (chapter 21) |
+| `-gside` | also write `FILE.dbg` with the same DWARF (for dbx); implies `-g` |
+| `-gdwarf FILE` | write the `.dbg` file to FILE (default: the object name with `.dbg`); implies `-gside` |
 | `-gdir DIR` | the z/OS directory that corresponds to the current directory; implies `-g` |
 | `-gmap FROM=TO` | a path prefix of this machine and its z/OS counterpart, repeatable; implies `-g` |
 | `-gdbgpath PATH` | where the `.dbg` will be on z/OS, at most 200 bytes; implies `-g` |
@@ -2647,16 +2648,26 @@ lists, aligning `EQU` or `DC` columns across lines.
 
 ## 21. Debug information for dbx and LLDB: `-g`
 
-z/OS `as -g -mgoff -o prog.o prog.asm` writes, next to the object, a file
-`prog.dbg` with DWARF, and puts a small link module into the object that
-names that file. dbx and the LLDB port find the DWARF through it after
-`ld` has made the program. `zosasm -g` does the same on any machine:
+`zosasm -g` puts the DWARF for dbx and the LLDB port into the object
+itself: a second GOFF module (the link module) carries the DWARF as a NOLOAD
+class, `C_ADATAE9C3`. Nothing is loaded at run time and no separate file is
+needed after `ld` has made the program:
 
 ```sh
-zosasm -g -gdir /u/me/proj -o prog.o prog.za     # writes prog.o and prog.dbg
-z-scp prog.o prog.dbg prog.za me@zos:/u/me/proj/ # tagged transfer, see below
+zosasm -g -gdir /u/me/proj -o prog.o prog.za     # writes prog.o with the DWARF inside
+z-scp prog.o prog.za me@zos:/u/me/proj/          # tagged transfer, see below
 ssh zos 'cd /u/me/proj && ld -o prog prog.o && lldb prog'
 ```
+
+`-gside` also writes `prog.dbg` with the same DWARF, for dbx, which does not
+read the class:
+
+```sh
+zosasm -gside -gdir /u/me/proj -o prog.o prog.za # prog.o and prog.dbg
+```
+
+`as -g` writes the `.dbg` only, next to the object. The embedded copy is a
+zosasm addition.
 
 `zosasm` is a cross assembler, so the paths written into the debug
 information must be those of the **z/OS host**, not of the machine that
@@ -2664,26 +2675,29 @@ assembles:
 
 | option | meaning |
 |---|---|
-| `-g` | write the `.dbg` and append the link module |
-| `-gdwarf FILE` | name of the `.dbg` on this machine (default: the object name with `.dbg`) |
+| `-g` | put the DWARF into the object (class `C_ADATAE9C3`) and append the link module |
+| `-gside` | also write the `.dbg` file (for dbx); implies `-g` |
+| `-gdwarf FILE` | write the `.dbg` here, name of the file on this machine (default: the object name with `.dbg`); implies `-gside` |
 | `-gdir DIR` | the z/OS directory that corresponds to the current directory. A source `sub/a.za` is recorded as `DIR/sub/a.za`, the `.dbg` as `DIR/prog.dbg` |
 | `-gmap FROM=TO` | files outside the current directory: a path prefix on this machine and the one on z/OS (several allowed, applied in order) |
 | `-gdbgpath PATH` | where the `.dbg` will be on z/OS, when it is not simply the name of the object under `-gdir` (at most 200 bytes) |
 
 Without `-gdir` the local absolute paths are recorded; that works when the
-files are mounted (or copied) under the same names. dbx and LLDB look for the
-`.dbg` at the recorded path first and then in their search directories
-(`target.debug-file-search-paths` in LLDB, `dbx -I` / `_DBX_USE_PATHNAME`), so a moved
-`.dbg` is found when its directory is given. The source is looked up at the
-recorded path too.
+files are mounted (or copied) under the same names. LLDB reads the DWARF from
+the object first; a `.dbg` is looked up only when the object has no embedded
+copy for it, at the recorded path and then in its search directories
+(`target.debug-file-search-paths`). dbx looks for the `.dbg` at the recorded
+path and in `dbx -I` / `_DBX_USE_PATHNAME`, so use `-gside` for dbx. The
+source is looked up at the recorded path too.
 
-**Transfer.** Both `.o` and `.dbg` are binary. The source must be tagged
+**Transfer.** The `.o` (and `.dbg`, with `-gside`) is binary. The source must be tagged
 `ISO8859-1` (z-scp does that); an untagged source breaks `as`, and debuggers
 cannot show it.
 
 ### 21.1 What is written
 
-* `prog.dbg`: an ELF32 big endian relocatable file (machine 22) with DWARF 4:
+* The DWARF is an ELF32 big endian relocatable file (machine 22) with DWARF 4 (the
+  same bytes as `prog.dbg` with `-gside`):
   `.debug_info`, `.debug_abbrev`, `.debug_line`, `.debug_aranges`,
   `.debug_pubnames` and IBM's `.debug_srcfiles` (the file table of the
   `DW_TAG_IBM_src_file` entries), their `.rel.*` sections, and the symbols
@@ -2717,6 +2731,10 @@ cannot show it.
   and `D_@@ADBG_LIT`, and an ER for every CSECT. The binder accepts the file
   as one input; `-dump` shows both modules, `-disasm` and `-unpack` read the
   first one.
+* The DWARF ELF itself is in that module as the class `C_ADATAE9C3` (NOLOAD,
+  unstructured, like the ZSYM class `C_ADATAE9C1`): each copy is preceded by
+  its 8-byte big-endian length, so several modules can share the class after
+  `ld`. The class is not in the first module, because the signature covers it.
 * The signature is the MD5 of the first module and of the DWARF sections, so
   the `.dbg` matches only its own object.
 

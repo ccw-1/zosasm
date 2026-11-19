@@ -6,6 +6,9 @@
 
 #include "asm.h"
 
+/* the class of module 2 that holds the .dbg ELF (NOLOAD, framed copies); reader: CDADwarf.cpp */
+#define DBG_CLASS "C_ADATAE9C3"
+
 typedef struct {
     const char *cwd;      /* the local current directory (absolute) */
     const char *gdir;     /* z/OS directory that corresponds to cwd, or NULL */

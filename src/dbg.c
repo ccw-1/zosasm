@@ -386,13 +386,16 @@ static int build_mod2(Dbg *g, DbgResult *r, char *err, size_t errsz) {
     const char *e = NULL;
     GoffEnd end;
     size_t n = g->sects.n, i, plen = strlen(g->o->dbg_path), tlen;
-    uint32_t sd, dbgname, entries, litpr, dbgname_len, lit_len = 0, er0;
-    Buf name = {0}, ent = {0}, lit = {0};
+    uint32_t sd, dbgname, entries, litpr, dbgname_len, lit_len = 0, er0, embedded;
+    Buf name = {0}, ent = {0}, lit = {0}, fr = {0};
     GoffReloc *rl = xcalloc((n * 3 + 1) * sizeof *rl);
     size_t nrl = 0;
     const uint8_t *out;
     size_t outlen;
 
+    /* the ELF framed for the class C_ADATAE9C3 */
+    d64(&fr, r->elf_len);
+    buf_write(&fr, r->elf, r->elf_len);
     /* the text of DBGNAME: padded length, signature, the path of the .dbg in EBCDIC */
     tlen = 8 + 16 + plen + 1;
     dbgname_len = (uint32_t)((tlen + 7) & ~(size_t)7);
@@ -434,9 +437,26 @@ static int build_mod2(Dbg *g, DbgResult *r, char *err, size_t errsz) {
         uint32_t ed = mk_esd(w, &e, GOFF_ED, sd, "D_@@ADBG_LIT", GOFF_NS_PARTS3, 0, BA_DED, 0);
         litpr = mk_esd(w, &e, GOFF_PR, ed, "LIT", GOFF_NS_PARTS3, lit_len, BA_DPR, 0);
     }
+    /* the same ELF inside the object: class C_ADATAE9C3 (NOLOAD, unstructured), each
+     * copy framed by its 8-byte big endian length so that several modules can share the class */
+    {
+        GoffESD ed;
+        memset(&ed, 0, sizeof ed);
+        ed.type = GOFF_ED;
+        ed.parent = sd;
+        ename(&ed, DBG_CLASS);
+        ed.name_space = GOFF_NS_NORMAL;
+        ed.length = (uint32_t)(8 + r->elf_len);
+        ed.attr.text_style = GOFF_STYLE_UNSTRUCTURED;
+        ed.attr.bind_algorithm = GOFF_BIND_CAT;
+        ed.attr.loading = GOFF_NOLOAD;
+        if (!e) e = goff_write_esd(w, &ed);
+        embedded = ed.id;
+    }
     if (!e) e = goff_write_text(w, dbgname, 0, GOFF_STYLE_BYTE, (const uint8_t *)name.p, name.len);
     if (!e) e = goff_write_text(w, entries, 0, GOFF_STYLE_BYTE, (const uint8_t *)ent.p, ent.len);
     if (!e) e = goff_write_text(w, litpr, 0, GOFF_STYLE_BYTE, (const uint8_t *)lit.p, lit.len);
+    if (!e) e = goff_write_text(w, embedded, 0, GOFF_STYLE_UNSTRUCTURED, (const uint8_t *)fr.p, fr.len);
     /* the relocations of ENTRIES, grouped by the item they refer to */
 #define RL(RID, OFF)                                    \
     do {                                                \

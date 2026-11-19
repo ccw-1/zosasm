@@ -18,7 +18,7 @@
 #include "zsym.h"
 
 static void usage(FILE *f) {
-    fprintf(f, "usage: zosasm [-o out.o] [-elf] [-ascii|-charset ascii|ebcdic] [-gz0|-gz1|-gz2] [-g [-gdwarf FILE] [-gdir DIR] [-gmap FROM=TO] [-gdbgpath PATH]] [-DNAME[=val]] [-Idir] [-Mdir] [-sysparm STR] [-macro-steps N] [-E] [-reproducible] [-strict-registers] [-l FILE [-ldata] [-lpage N] [-lbrief]] [-diag text|json] [-color] [-Werror] [-max-errors N] source.za (or - for standard input)\n"
+    fprintf(f, "usage: zosasm [-o out.o] [-elf] [-ascii|-charset ascii|ebcdic] [-gz0|-gz1|-gz2] [-g [-gside] [-gdwarf FILE] [-gdir DIR] [-gmap FROM=TO] [-gdbgpath PATH]] [-DNAME[=val]] [-Idir] [-Mdir] [-sysparm STR] [-macro-steps N] [-E] [-reproducible] [-strict-registers] [-l FILE [-ldata] [-lpage N] [-lbrief]] [-diag text|json] [-color] [-Werror] [-max-errors N] source.za (or - for standard input)\n"
                "       zosasm -dump file.o\n"
                "       zosasm [-o out.za] -disasm file.o\n"
                "       zosasm [-o dir] -unpack file.o\n"
@@ -45,10 +45,11 @@ static void usage(FILE *f) {
                "                  the directory given with -o (default .)\n"
                "  -gz0|-gz1|-gz2  symbolic object information (ZSYM) in the object: none | symbols and\n"
                "                  statements (default) | also the original source files\n"
-               "  -g              also write FILE.dbg (DWARF, as z/OS as -g) and append the module that\n"
-               "                  links the object to it; the object is bound on z/OS, so the paths in\n"
-               "                  the debug information are those of the z/OS host:\n"
-               "  -gdwarf FILE    write the DWARF file here (default: the object name with .dbg)\n"
+               "  -g              the DWARF (as z/OS as -g) goes into the object, in the link module\n"
+               "                  appended to it (class C_ADATAE9C3, NOLOAD); the paths in the debug\n"
+               "                  information are those of the z/OS host (chapter 21)\n"
+               "  -gside          also write FILE.dbg with the same DWARF (for dbx); implies -g\n"
+               "  -gdwarf FILE    write the .dbg file here (default: the object name with .dbg); implies -gside\n"
                "  -gdir DIR       the z/OS directory that corresponds to the current directory\n"
                "  -gmap FROM=TO   a path prefix of this machine and its z/OS counterpart (repeatable)\n"
                "  -gdbgpath PATH  where the .dbg will be on z/OS (default: its path made with -gdir/-gmap)\n"
@@ -257,6 +258,7 @@ int main(int argc, char **argv) {
     const char *out = NULL, *in = NULL, *disasm = NULL, *unpack = NULL;
     int color = 0, json = 0, werror = 0, max_err = 50, i, only_pp = 0, zlevel = 1, generic = 0, elf = 0, gflag = 0;
     const char *gdwarf = NULL, *gdbgpath = NULL;
+    int gside = 0;
     DbgOptions dopt;
     const char *charset = NULL;
     PpOptions ppo;
@@ -325,8 +327,12 @@ int main(int argc, char **argv) {
             charset = argv[++i];
         } else if (!strcmp(a, "-g")) {
             gflag = 1;
+        } else if (!strcmp(a, "-gside")) {
+            gside = 1;
+            gflag = 1;
         } else if (!strcmp(a, "-gdwarf") && i + 1 < argc) {
             gdwarf = argv[++i];
+            gside = 1;
             gflag = 1;
         } else if (!strcmp(a, "-gdir") && i + 1 < argc) {
             dopt.gdir = argv[++i];
@@ -487,7 +493,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
             return 1;
         }
-        {
+        if (gside) {
             FILE *df = fopen(dbgname, "wb");
             if (!df || fwrite(dr.elf, 1, dr.elf_len, df) != dr.elf_len || fclose(df) != 0) {
                 fprintf(stderr, "zosasm: %s: %s\n", dbgname, strerror(errno));

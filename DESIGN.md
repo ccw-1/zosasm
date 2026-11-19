@@ -1353,8 +1353,9 @@ Not byte-compatible with HLASM on purpose: the DWARF is zosasm's own, the contai
 that CDA needs are kept.
 
 * **Order** (`main.c`): assemble, `module_emit` (module 1, sets `Class.esd`), `dbg_build`, append
-  module 2 to the object file, write the `.dbg`. `dbg_build` needs the emitted object because the
-  signature covers it.
+  module 2 to the object file, and with `-gside` write the `.dbg`. `dbg_build` needs the emitted
+  object because the signature covers it. The DWARF ELF is also in module 2 (below), not in
+  module 1, for the same reason.
 * **`dbg.c`**: `collect` reads the `Module` after assembly. Sections: named CSECT/RSECT only.
   Rows: the `ZRec`s of machine instructions and `CNOP`, sorted and deduplicated (`Stmt.file`/`line`
   are the macro call line for generated statements and the file of a `#include`). Labels and
@@ -1385,6 +1386,11 @@ that CDA needs are kept.
   the EBCDIC name, N = ESD id of the section's `B_TEXT` ED in module 1), RLD to the name in `LIT`),
   `D_@@ADBG_LIT` (PR `LIT`, the names), one ER per CSECT. The layout equals IBM's (`-dump` of both
   compared for several programs: ESDs, text, RLDs).
+* **Embedded DWARF** (beyond IBM, 2026-11-19): ED `C_ADATAE9C3` in module 2 (NOLOAD, unstructured,
+  CAT, ZSYM's attributes), text = the `.dbg` ELF, each copy framed by its 8-byte big-endian length.
+  The same bytes as the `.dbg` with `-gside`. LLDB reads it through the binder fast-data path
+  (`readModuleCUs`, `locateEmbedded` in `CDADwarf.cpp`) and stages the copy whose signature matches
+  to a temp file. Not checked on z/OS yet (`tests/test_dbg.c` checks the framing and bytes).
 * **Signature**: MD5 over module 1 and the DWARF sections; the hex form is the `.ADATA_` symbol.
   LLDB accepts a `.dbg` only if this symbol equals the 16 bytes in DBGNAME.
 * **Reading**: `goff_parse` stops at the first END record (`GoffModule.bytes`), so `-disasm`,

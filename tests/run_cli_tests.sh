@@ -382,22 +382,25 @@ $F -op 12 $T/f1.za | grep -q '^loop       lr    1,2'; check "zafmt -op" $? 0
 $F -bad $T/f1.za 2>/dev/null; check "zafmt unknown option" $? 2
 $F -check docs/examples/linkage.za docs/examples/table.za docs/examples/hello.za; check "zafmt: the examples are formatted" $? 0
 
-# -g: debug information (the .dbg and the link module)
+# -g: debug information (the DWARF in the object; -gside also writes the .dbg)
 mkdir -p $T/g
 printf 'PB CSECT\n USING *,15\nL1 LR 1,1\n BR 14\nD1 DC F'"'"'1'"'"'\n END\n' > $T/g/pb.za
-$X -g -gmap $P/$T/g=/u/me/w -o $T/g/pb.o $T/g/pb.za 2>/dev/null; check "-g exit" $? 0
-[ -s $T/g/pb.o ] && [ -s $T/g/pb.dbg ]; check "-g writes the object and FILE.dbg" $? 0
+$X -gside -gmap $P/$T/g=/u/me/w -o $T/g/pb.o $T/g/pb.za 2>/dev/null; check "-gside exit" $? 0
+[ -s $T/g/pb.o ] && [ -s $T/g/pb.dbg ]; check "-gside writes the object and FILE.dbg" $? 0
+$X -g -gmap $P/$T/g=/u/me/w -o $T/g/nd.o $T/g/pb.za 2>/dev/null; check "-g exit" $? 0
+[ -s $T/g/nd.o ] && [ ! -e $T/g/nd.dbg ]; check "-g writes the object and no .dbg" $? 0
+$X -dump $T/g/nd.o | grep -q 'C_ADATAE9C3'; check "-g: the object holds the DWARF in C_ADATAE9C3" $? 0
 head -c 4 $T/g/pb.dbg | od -An -c | grep -q 'E   L   F'; check "-g: the .dbg is an ELF file" $? 0
 $X -dump $T/g/pb.o | grep -q '=== module 2'; check "-g: the object holds a second module" $? 0
 $X -dump $T/g/pb.o | grep -q 'D_@@ADBG_DBG'; check "-g: the link module has D_@@ADBG_DBG" $? 0
 strings -a $T/g/pb.dbg | grep -q '^/u/me/w/pb.za$'; check "-g -gmap: the source path is the z/OS path" $? 0
 $X -disasm $T/g/pb.o | grep -q 'PB       CSECT'; check "-g: -disasm reads the first module" $? 0
 $X -g -gdwarf $T/g/x.dbg -o $T/g/x.o $T/g/pb.za 2>/dev/null; [ -s $T/g/x.dbg ]; check "-gdwarf FILE" $? 0
-$X -gdir /u/me -o $T/g/y.o $T/g/pb.za 2>/dev/null; [ -s $T/g/y.dbg ]; check "-gdir implies -g" $? 0
+$X -gdir /u/me -gside -o $T/g/y.o $T/g/pb.za 2>/dev/null; [ -s $T/g/y.dbg ]; check "-gdir with -gside writes FILE.dbg" $? 0
 $X -g -elf -o $T/g/z.o $T/g/pb.za 2>/dev/null; check "-g with -elf is an error" $? 2
 $X -g -gdbgpath /u/me/$(printf 'x%.0s' $(seq 1 210)).dbg -o $T/g/w.o $T/g/pb.za 2>/dev/null; check "-gdbgpath too long" $? 1
 cp $T/g/pb.o $T/g/a.o; cp $T/g/pb.dbg $T/g/a.dbg
-$X -g -gmap $P/$T/g=/u/me/w -o $T/g/b.o $T/g/pb.za 2>/dev/null; cmp -s $T/g/a.dbg $T/g/b.dbg; check "-g is reproducible" $? 0
+$X -gside -gmap $P/$T/g=/u/me/w -o $T/g/b.o $T/g/pb.za 2>/dev/null; cmp -s $T/g/a.dbg $T/g/b.dbg; check "-gside is reproducible" $? 0
 mcp '{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n LR 1,1\n","dwarf":true,"dwarf_base64":true,"dwarf_dir":"/u/x"}}}' > $T/m.out
 grep -q '"dwarf_size":' $T/m.out && grep -q '"dwarf_base64":"f0VMR' $T/m.out; check "mcp assemble: dwarf" $? 0
 mcp '{"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n","dwarf":true,"format":"elf"}}}' > $T/m.out

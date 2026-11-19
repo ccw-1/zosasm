@@ -259,6 +259,29 @@ static void test_build(void) {
         }
         CHECK(ok);
     }
+    /* the same ELF inside the link module: class C_ADATAE9C3, text = 8 byte BE length + the file */
+    {
+        uint32_t id = 0;
+        int ok = 0;
+        for (k = 0; k < g2->esds.n; k++) {
+            const GoffESD *d = g2->esds.v[k];
+            size_t i;
+            if (d->type != GOFF_ED || d->name_len != 11) continue;
+            for (i = 0; i < 11 && (char)za_to_latin1[d->name[i]] == "C_ADATAE9C3"[i]; i++)
+                ;
+            if (i == 11) id = d->id;
+        }
+        CHECK(id != 0);
+        for (k = 0; k < g2->texts.n; k++) {
+            const GoffText *t = &g2->texts.v[k];
+            if (t->esdid != id) continue;
+            ok = 1;
+            CHECK(t->len >= 8 && be(t->data, 8) == r.elf_len);
+            CHECK(t->len == 8 + r.elf_len && !memcmp(t->data + 8, r.elf, r.elf_len));
+        }
+        CHECK(ok);
+    }
+
     /* one ER per CSECT in the module: the section PB */
     {
         int er = 0;
