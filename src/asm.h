@@ -270,6 +270,7 @@ typedef struct {
     const char *file;
     int line; /* 1-based */
     const char *text;
+    const char *orig; /* the line as written when block comments were blanked in text, else NULL */
 } SrcLine;
 
 typedef Vec(SrcLine) SrcVec;
@@ -319,6 +320,19 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
 void split_operands(OperandVec *out, const char *s);
 
 int is_blank(int c);
+/* Blank the C-style block comments of one line in place (every byte of a comment
+ * and its delimiters becomes a blank, so columns stay). *in_comment carries a comment that is
+ * open at the end of the line over to the next one. Not scanned: comment lines (first non-blank
+ * character * or ;), quoted
+ * strings and text after "//". Returns nonzero when the line touches a comment. */
+int bc_line(char *s, int *in_comment);
+/* bc_line over all lines of one file (text is replaced, orig keeps the line as written); an
+ * unclosed comment is the error ZA4036. */
+void src_blank_comments(SrcVec *lines, Reporter *rep);
+/* The column anchor: a line whose first non-blank character is '^' is read as if the text after
+ * the '^' started in column 1 ("    ^LB1  DC  AD(0)"). Returns that text, or s itself when the
+ * line has no anchor. */
+const char *caret_rest(const char *s);
 int is_sym_start(int c);
 int is_sym_char(int c);
 int is_symbol_like(const char *s);

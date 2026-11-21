@@ -6,6 +6,18 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 
 ## Unreleased
 
+* Column anchor `^`: a line whose first non-blank character is `^` is read as if
+  the text after it started in column 1 (`    ^LB1  DC  AD(0)`; GUIDE 2.1). It
+  indents statements that have a name, also in macro bodies (`^NAME op` is a model
+  statement with the label `NAME`). Diagnostics point at the real columns; `zafmt`
+  keeps such lines as written.
+* Block comments `/* ... */` (several lines possible, GUIDE 2.1): blanked by the
+  preprocessor before anything reads the lines, so line numbers and columns do not
+  change; not recognised inside `'..'`, `".."`, comment lines (also indented ones) and after `//`; the
+  listing shows the lines as written; an unclosed comment is ZA4036; `zafmt` keeps
+  lines that touch a comment. `hlasm2za` writes `/ *` in a remark that holds `/*`
+  (PL/X style text in `IHAFPC` and others would swallow the rest of the macro).
+
 * `hlasm2za` converts all of SYS1.MACLIB (2080 members, 2214 macros, 0 failed; was
   2210 and 8 failed). Fixed: a comment line with a non-blank column 72 continues
   on the next record (HLASM rule, `IXGCON`); `MNOTE` with a blank after the comma

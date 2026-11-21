@@ -180,6 +180,35 @@ loop:    LA    1,4(,2)            a colon after the label is accepted
                F'3'               ... so this line continues it
 ```
 
+* **Anchor `^`.** A line whose first non-blank character is `^` is read as if
+  the text after the `^` started in column 1. Use it to indent a statement
+  that has a name, for example inside a block or a macro:
+
+  ```
+  #macro SAVE(n) {
+      ^L&n   DC    A(&n)         the name L7 is in the name field
+      ^      DC    X'00'         no name: the blanks after ^ start the operation
+  #}
+  ```
+
+  `    ^LB1  DC  AD(0)` is the statement `LB1  DC  AD(0)`; the diagnostics point
+  at the real columns. `^` alone, or `^` followed by a comment (`^* ...`), is an
+  empty line or a comment. In a macro body `^NAME op` gives a model statement
+  the label `NAME` (the colon of `NAME:` is optional there). `zafmt` keeps a
+  line with `^` as written, with its continuation lines.
+* **Block comments.** `/* ... */` is a comment that may span lines. Every
+  character of it, and the delimiters, count as blanks, so `LR 1,2 /* c */ r`
+  is `LR 1,2` with the remark `r`, `A(1 /* c */ ,2)` has a blank where the
+  comment is, and the line numbers and the columns of the text around it do not
+  change. They work everywhere (also in `#macro` bodies, `#define` lines and
+  macro library files); the listing shows the lines as written. Not a comment
+  start: `/*` inside `'...'`, `"..."`, in a line whose first non-blank
+  character is `*` or `;` (a comment line, also indented in a macro body),
+  and after `//` on the line. A remark that contains `/*` outside quotes starts
+  a comment too (write it differently), and one that holds an unpaired `'`
+  (`don't`) hides the rest of its line from the scan. A comment that is not
+  closed before the end of the file is the error ZA4036. Comments do not nest.
+  `zafmt` keeps lines that touch a comment as written.
 * Mnemonics, directives, register names and attribute letters are not case
   sensitive. **Symbols are case sensitive** (`Total` and `TOTAL` differ).
 * Source text is UTF-8 (or Latin-1). Character constants are converted to
@@ -1977,6 +2006,7 @@ a bad command line.
 | lower case source | names, operations and operands in upper case; quoted strings stay as written; the digits of `X'..'` are upper cased |
 | `* comment`, `.* comment` | `* comment`; a comment whose column 72 is not blank continues on the next record(s), which stay part of the comment (as in HLASM) |
 | remark after an operation without operands (`CSECT`, `LTORG`, `PR`...) | a `* remark` comment line before the statement (zosasm would read it as operands) |
+| a remark that contains `/*` (PL/X style text) | the remark with `/ *`, so that it does not start a block comment (section 2.1) |
 | `YREGS` | `R0 EQU %r0` ... `R15 EQU %r15` |
 | `R12 EQU 12`, `BASE EQU R12` | `R12 EQU %r12`, `BASE EQU %r12` (see 16.2) |
 | register numbers: `LR 1,2`, `L 1,4(2,3)`, `USING *,12`, `DROP 12` | `LR %r1,%r2`, `L %r1,4(%r2,%r3)`, `USING *,%r12`, `DROP %r12` (floating point, access, control and vector registers get `%f`, `%a`, `%c`, `%v`) |
@@ -2624,8 +2654,10 @@ BUF      DS    CL600
   continue on the next line after a comma. The name field of the call is
   `&sys.label`.
 * `//` starts a macro comment (not emitted); `*` as first character is an
-  assembler comment line that is emitted. Macro code and model statements
-  cannot start in column 1 (ZA4104); a `label:` is written with a colon.
+  assembler comment line that is emitted; `/* ... */` is a block comment
+  (section 2.1) and may be used in macro code and between model statements.
+  Macro code and model statements cannot start in column 1 (ZA4104); a
+  `label:` is written with a colon, or `^label` instead of indentation.
 * `-E` prints the expansion; the listing marks generated lines with `+`.
 
 ### 19.2 Statements and values
@@ -2733,6 +2765,9 @@ by expanding the converted macro library before and after formatting).
   continuation lines move with the first line.
 * A line whose quote or parenthesis is not closed is only stripped of trailing
   blanks.
+* A line that starts with the anchor `^` (section 2.1), or touches a `/* */`
+  comment, is kept as written (trailing blanks go), and so are the continuation
+  lines of its statement.
 
 Not done: changing the case of names or operations, wrapping long operand
 lists, aligning `EQU` or `DC` columns across lines.

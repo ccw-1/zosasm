@@ -94,6 +94,35 @@ Statement layout, one per line:
   the ESD of `"a.b"` is `a.b`. `-disasm` writes such names this way.
   The preprocessor leaves a quoted symbol alone. Errors: `ZA0004` (bad
   escape, empty, not closed), `ZA1021` (not a valid symbol).
+* **Column anchor `^`** (2026-11-21): a line whose first non-blank character
+  is `^` is read as if the text after it started in column 1, so a statement
+  with a name can be indented (`    ^LB1  DC  AD(0)`). `caret_rest()`
+  (`reader.c`) gives that text; `read_statements` adds the skipped columns to
+  the spans of the first line (`co`), and the preprocessor helpers that take a
+  line apart (`remark_start`, `is_comment_or_blank`, `check_comma`,
+  `stmt_fields`) call it, so macro calls, `#define` expansion and the trailing
+  comma check see the same fields. The line text stays as written (no
+  rewriting, so columns and the listing are right). In macro bodies
+  `model_fields` (`macro.c`) reads `^NAME op` as a model statement with the
+  label `NAME`. `zafmt` keeps such lines, with their continuation lines.
+* **Block comments** `/* ... */` (2026-11-21): `bc_line` (`reader.c`) blanks
+  the comment text and delimiters byte by byte in a copy of the line, so the
+  line numbers and the columns of the other text stay; `src_blank_comments`
+  does it for all lines of a file (`pp_file` for the main file and the includes,
+  `mac_load_library` for macro files) before anything else reads the lines, so
+  macro bodies, `#define` lines and `#` directives see no comments. The line
+  as written is kept in `SrcLine.orig` (the listing prints it; `emit_part`
+  sets it when the output line equals the blanked file line). Not scanned:
+  lines whose first non-blank character is `*` or `;` (when no comment is open;
+  indented comment lines occur in macro bodies, and the converted SYS1.MACLIB
+  macros hold `*/*** ... */` lines), `'..'` (a quote
+  that is an attribute reference such as `L'X` does not start a string) and
+  `".."`, and everything after `//`; an unpaired `'` (`don't` in a remark)
+  stops the scan of the rest of the line. Comments do not nest. An open
+  comment at the end of the file is ZA4036 (at the last `/*` that opened it).
+  Only the preprocessor path blanks comments: `asm_assemble_text` (used by
+  `-disasm` and tests) reads lines as they are. `zafmt` keeps every line that
+  touches a comment (`bc_line` on a copy).
 * Source is UTF-8 or Latin-1. Character constants are converted to
   **IBM-1047** unless a `CA'...'` (ASCII) type is used. See `internal/ebcdic`.
 
@@ -476,7 +505,8 @@ conflict).
 * Error codes: `ZA4010-4012` include, `ZA4020-4023` define/undef,
   `ZA4030-4034` conditionals, `ZA4040-4042` macro calls, `ZA4050/4051`
   `#error`/`#warning`, `ZA4060/4061` pragma, `ZA4070` comma continuation,
-  `ZA4080/4081` the time of `__DATE__`/`__TIME__`.
+  `ZA4080/4081` the time of `__DATE__`/`__TIME__`, `ZA4036` an unclosed
+  `/*` comment.
   When the preprocessor reports an error the assembler does not run.
 * Diagnostics map each output line to its original file and line; expanded
   lines get a note "in expansion of macro X at file:line"; included files

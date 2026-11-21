@@ -319,6 +319,9 @@ static void put_diag(L *l, const Diag *d, const char *src) {
     }
 }
 
+/* the source line as written (block comments are blanked in text) */
+static const char *ltext(const SrcLine *s) { return s->orig ? s->orig : s->text; }
+
 /* ---- statement rows --------------------------------------------------- */
 
 static int op_is(const Stmt *st, const char *name) { return st->op && za_streqi(st->op, name); }
@@ -347,7 +350,7 @@ static void line_row(L *l, size_t k, int mark, int info) {
     const uint8_t *bytes = NULL;
     const char *op;
     if (si < 0) {
-        row(l, NULL, NULL, 0, fc, sl->line, mark, sl->text);
+        row(l, NULL, NULL, 0, fc, sl->line, mark, ltext(sl));
         return;
     }
     st = l->m->stmts.v[si];
@@ -372,7 +375,7 @@ static void line_row(L *l, size_t k, int mark, int info) {
             showloc = 1;
         }
     }
-    obj_rows(l, loc, showloc, bytes, bytes ? nb : 0, fc, sl->line, mark, sl->text);
+    obj_rows(l, loc, showloc, bytes, bytes ? nb : 0, fc, sl->line, mark, ltext(sl));
     lit_rows(l, zi);
     if (w) ctl_after(l, w, st->operands ? st->operands : "");
 }
@@ -636,7 +639,7 @@ void listing_write(FILE *f, const Module *m, const SrcVec *lines, const PpEventV
             e.file = lines->v[i].file;
             e.line = e.line_end = lines->v[i].line;
             e.kind = PE_LINE;
-            e.text = lines->v[i].text;
+            e.text = ltext(&lines->v[i]);
             e.first = i;
             e.n = 1;
             vec_push(&own, e);
@@ -704,7 +707,7 @@ void listing_write(FILE *f, const Module *m, const SrcVec *lines, const PpEventV
             if (e->kind == PE_DIRECTIVE) pragma_effect(l, e->text, 1);
             row(l, NULL, NULL, 0, fc, e->line, e->kind == PE_DIRECTIVE ? '#' : '-', e->text);
             if (e->kind == PE_DIRECTIVE) pragma_effect(l, e->text, 0);
-        } else if (e->n == 1 && !strcmp(e->text, lines->v[e->first].text)) {
+        } else if (e->n == 1 && !strcmp(e->text, ltext(&lines->v[e->first]))) {
             line_row(l, e->first, ' ', 1);
         } else {
             row(l, NULL, NULL, 0, fc, e->line, ' ', e->text);
@@ -716,7 +719,7 @@ void listing_write(FILE *f, const Module *m, const SrcVec *lines, const PpEventV
             l->printing = 1;
             put_diag(l, evd[i].v[j],
                      (e->kind == PE_DIRECTIVE || e->kind == PE_SKIPPED ||
-                      (e->n == 1 && !strcmp(e->text, lines->v[e->first].text)))
+                      (e->n == 1 && !strcmp(e->text, ltext(&lines->v[e->first]))))
                          ? e->text
                          : NULL);
             l->printing = was;

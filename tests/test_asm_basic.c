@@ -54,6 +54,38 @@ static void test_read_statements(void) {
     CHECK_STR(st.v[3]->operands, "A(L'MAIN+4)");
 }
 
+static void test_anchor(void) {
+    const char *src = "    ^LB1  DC  A(1),\n"
+                      "            A(2)\n"
+                      "  ^   DC  C'x'\n"
+                      "    ^\n"
+                      "    ^* a comment\n"
+                      "^LB2 DC  C'x\n";
+    SrcVec lines = {0};
+    StmtVec st = {0};
+    Reporter *rep = rep_new(0);
+    src_split(&lines, "t.za", src, strlen(src));
+    read_statements(&st, lines.v, lines.n, rep);
+    CHECK(st.n == 3);
+    if (st.n == 3) {
+        CHECK_STR(st.v[0]->name, "LB1");
+        CHECK_STR(st.v[0]->operands, "A(1),A(2)");
+        CHECK(st.v[0]->name_span.pos.col == 6); /* columns count the blanks and the ^ */
+        CHECK(st.v[0]->op_span.pos.col == 11);
+        CHECK(stmt_operand_span(st.v[0], 0, 1).pos.col == 15);
+        CHECK(stmt_operand_span(st.v[0], 5, 1).pos.col == 13 && stmt_operand_span(st.v[0], 5, 1).pos.line == 2);
+        CHECK_STR(st.v[1]->name, "");
+        CHECK_STR(st.v[1]->op, "DC");
+        CHECK(st.v[1]->op_span.pos.col == 7);
+        CHECK_STR(st.v[2]->name, "LB2");
+    }
+    CHECK(rep_error_count(rep) == 1);
+    if (rep_count(rep) == 1) {
+        CHECK_STR(rep_get(rep, 0)->code, "ZA0002");
+        CHECK(rep_get(rep, 0)->span.pos.col == 10); /* "^LB2 DC  C'x": the operand */
+    }
+}
+
 static void test_read_errors(void) {
     const char *src = "X  DC  C'abc\nLBL\n";
     SrcVec lines = {0};
@@ -453,6 +485,7 @@ static void test_diag_help(void) {
 int main(void) {
     test_read_statements();
     test_read_errors();
+    test_anchor();
     test_split_operands();
     test_quoted_symbols();
     test_dc();

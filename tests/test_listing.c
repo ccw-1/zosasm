@@ -95,6 +95,21 @@ static void test_preprocessor_rows(void) {
     CHECK(before(t, "TWO(2)", "LR 1,2"));
 }
 
+static void test_block_comments(void) {
+    /* the listing shows the lines as written, comments included */
+    char *t = list("/* header\n"
+                   "   comment */\n"
+                   "T        CSECT  /* the section */\n"
+                   "    ^L1  LR    %r1,%r2  /* r */  remark\n"
+                   "         END\n");
+    CHECK(has(t, "/* header"));
+    CHECK(has(t, "   comment */"));
+    CHECK(has(t, "T        CSECT  /* the section */"));
+    CHECK(has(t, "000000  1812"));
+    CHECK(has(t, "^L1  LR    %r1,%r2  /* r */  remark"));
+    CHECK(has(t, "0 errors"));
+}
+
 static void test_literals(void) {
     char *t = list("T        CSECT\n"
                    "         USING T,%r12\n"
@@ -322,6 +337,7 @@ int main(void) {
     test_rows();
     test_diag_inline();
     test_preprocessor_rows();
+    test_block_comments();
     test_literals();
     test_literals_at_end();
     test_data();

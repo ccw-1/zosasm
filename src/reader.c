@@ -14,6 +14,12 @@
 
 int is_blank(int c) { return c == ' ' || c == '\t'; }
 
+const char *caret_rest(const char *s) {
+    const char *p = s;
+    while (is_blank((unsigned char)*p)) p++;
+    return *p == '^' ? p + 1 : s;
+}
+
 int is_sym_start(int c) { return za_isalpha(c) || c == '@' || c == '#' || c == '$' || c == '_'; }
 
 int is_sym_char(int c) { return is_sym_start(c) || za_isdigit(c); }
@@ -193,7 +199,85 @@ long close_quote(const char *s, size_t i) {
     return -1;
 }
 
+/* ---- block comments ----------------------------------------------------- */
+
+int bc_line(char *s, int *in) {
+    int touched = *in;
+    size_t i = 0;
+    if (!*in) { /* a comment line (indented too: macro bodies) is not scanned */
+        const char *p = caret_rest(s);
+        while (is_blank((unsigned char)*p)) p++;
+        if (*p == '*' || *p == ';') return 0;
+    }
+    while (s[i]) {
+        if (*in) {
+            if (s[i] == '*' && s[i + 1] == '/') {
+                s[i] = s[i + 1] = ' ';
+                i += 2;
+                *in = 0;
+            } else {
+                s[i++] = ' ';
+            }
+            continue;
+        }
+        if (s[i] == '"') {
+            long j = close_dquote(s, i);
+            if (j < 0) break;
+            i = (size_t)j + 1;
+        } else if (s[i] == '\'') {
+            long j;
+            if (is_attr_quote(s, i)) {
+                i++;
+                continue;
+            }
+            j = close_quote(s, i);
+            if (j < 0) break; /* an open quote: the rest is not scanned */
+            i = (size_t)j + 1;
+        } else if (s[i] == '/' && s[i + 1] == '/') {
+            break;
+        } else if (s[i] == '/' && s[i + 1] == '*') {
+            s[i] = s[i + 1] = ' ';
+            i += 2;
+            *in = 1;
+            touched = 1;
+        } else {
+            i++;
+        }
+    }
+    return touched;
+}
+
 /* ---- text to lines ------------------------------------------------------ */
+
+void src_blank_comments(SrcVec *lines, Reporter *rep) {
+    size_t j, open_line = 0;
+    int in = 0, open_col = 0;
+    for (j = 0; j < lines->n; j++) {
+        const char *txt = lines->v[j].text;
+        char *copy;
+        int was = in;
+        if (!in && !strstr(txt, "/*")) continue;
+        copy = xstrdup(txt);
+        if (!bc_line(copy, &in)) {
+            free(copy);
+            continue;
+        }
+        if (!was && in) {
+            const char *q, *last = NULL;
+            for (q = strstr(txt, "/*"); q; q = strstr(q + 1, "/*")) last = q;
+            open_line = j;
+            open_col = last ? (int)(last - txt) + 1 : 1;
+        }
+        lines->v[j].orig = txt;
+        lines->v[j].text = copy;
+    }
+    if (in)
+        diag_help(rep_errorf(rep, "ZA4036",
+                             span_make(lines->v[open_line].file, lines->v[open_line].line, open_col, 2),
+                             "this comment is not closed before the end of the file"),
+                  "a comment that starts with /* ends at the next */; a /* in a remark that is not "
+                  "in quotes starts one too");
+}
 
 void src_split(SrcVec *out, const char *file, const char *text, size_t len) {
     char *buf;
@@ -224,6 +308,7 @@ void src_split(SrcVec *out, const char *file, const char *text, size_t len) {
             l.file = file;
             l.line = line++;
             l.text = buf + start;
+            l.orig = NULL;
             vec_push(out, l);
             start = i + 1;
         }
@@ -319,6 +404,12 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
         int cur_ln;
         Buf ops = {0};
         Vec(Seg) segs = {0};
+        int co; /* columns before the text read as column 1 (the '^' anchor) */
+        {
+            const char *rest = caret_rest(line);
+            co = (int)(rest - line);
+            line = rest;
+        }
         if (blank_line(line) || line[0] == '*' || line[0] == ';') continue;
         st = xcalloc(sizeof *st);
         st->file = file;
@@ -336,7 +427,7 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
             }
             while (line[q] && !is_blank((unsigned char)line[q])) q++;
             nl = q - p;
-            st->name_span = span_make(file, ln, (int)p + 1, (int)nl);
+            st->name_span = span_make(file, ln, (int)p + 1 + co, (int)nl);
             if (nl > 0 && line[q - 1] == ':') nl--;
             if (line[p] == '"') {
                 const char *why = NULL;
@@ -361,9 +452,9 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
         q = p;
         while (line[q] && !is_blank((unsigned char)line[q])) q++;
         st->op = xstrndup(line + p, q - p);
-        st->op_span = span_make(file, ln, (int)p + 1, (int)(q - p));
+        st->op_span = span_make(file, ln, (int)p + 1 + co, (int)(q - p));
         if (!st->op[0]) {
-            diag_help(rep_errorf(rep, "ZA0001", span_make(file, ln, 1, (int)strlen(st->name)),
+            diag_help(rep_errorf(rep, "ZA0001", span_make(file, ln, 1 + co, (int)strlen(st->name)),
                                  "statement has a name but no operation"),
                       "an operation (instruction or directive) must follow the name; labels need "
                       "to start in column 1 and the operation must be separated by blanks");
@@ -381,7 +472,7 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
             const char *rest;
             Seg sg;
             if (!scan_operand_end(cur, p, &end)) {
-                diag_help(rep_errorf(rep, "ZA0002", span_make(file, cur_ln, (int)p + 1, (int)(len - p)),
+                diag_help(rep_errorf(rep, "ZA0002", span_make(file, cur_ln, (int)p + 1 + co, (int)(len - p)),
                                      "unterminated quoted string or unbalanced parenthesis in the "
                                      "operand field"),
                           "a quote (') must be closed on the same line; write two quotes ('') for a "
@@ -391,7 +482,7 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
             }
             sg.off = (int)ops.len;
             sg.line = cur_ln;
-            sg.col = (int)p + 1;
+            sg.col = (int)p + 1 + co;
             vec_push(&segs, sg);
             buf_write(&ops, cur + p, end - p);
             rest = cur + end;
@@ -399,6 +490,7 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
             if (end > p && cur[end - 1] == ',' && !st->bad && i + 1 < n) {
                 /* continuation */
                 i++;
+                co = 0;
                 cur = lines[i].text;
                 cur_ln = lines[i].line;
                 p = 0;

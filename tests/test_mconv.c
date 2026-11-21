@@ -322,6 +322,14 @@ static void test_maclib_forms(void) {
                 "               );\n DCL X FIXED;\n %END ERBFITEM;\n",
                 0, &nw);
     CHECK_MSG(strstr(c, "not an assembler macro") != NULL || strstr(c, "PL/X") != NULL, "PL/X member:\n%s", c);
+    /* a remark that opens a PL/X block comment must not swallow the rest of the macro (IHAFPC):
+     * the converted text can be read back */
+    c = convert("         MACRO\n         BCMT\n         DC    F'1'          3 * BIT(6), /* RESERVED\n"
+                "         DC    F'2'\n         MEND\n",
+                0, &nw);
+    CHECK_MSG(strstr(c, "#macro BCMT(") != NULL && strstr(c, "/*") == NULL, "block comment in a remark:\n%s", c);
+    x = expand(xasprintf("%s    BCMT\n", c));
+    CHECK_MSG(strstr(x, "F'1'") != NULL && strstr(x, "F'2'") != NULL && !strstr(x, "ZA4"), "block comment expansion: %s", x);
 }
 
 int main(void) {

@@ -250,9 +250,23 @@ static void model_fields(const char *line, int is_cont, Fields *f) {
     f->rs = n;
     while (is_blank((unsigned char)m[p])) p++;
     if (!is_cont) {
+        int anchor = m[p] == '^'; /* "^NAME op": NAME is a label as if it stood in column 1 */
+        if (anchor) p++;
         q = p;
         while (m[q] && !is_blank((unsigned char)m[q])) q++;
-        if (q - p >= 2 && m[q - 1] == ':') {
+        if (anchor && q > p) {
+            f->has_label = 1;
+            f->ls = p;
+            f->le = m[q - 1] == ':' && q - p >= 2 ? q - 1 : q;
+            p = q;
+            while (is_blank((unsigned char)m[p])) p++;
+            q = p;
+            while (m[q] && !is_blank((unsigned char)m[q])) q++;
+        } else if (anchor) {
+            while (is_blank((unsigned char)m[p])) p++;
+            q = p;
+            while (m[q] && !is_blank((unsigned char)m[q])) q++;
+        } else if (q - p >= 2 && m[q - 1] == ':') {
             f->has_label = 1;
             f->ls = p;
             f->le = q - 1;
@@ -2013,6 +2027,7 @@ void mac_load_library(MacSys *ms, const char *file, const char *text, size_t len
     SrcVec lines = {0};
     size_t i = 0;
     src_split(&lines, file, text, len);
+    src_blank_comments(&lines, ms->rep);
     while (i < lines.n) {
         int kind = mac_top_kind(lines.v[i].text);
         if (kind == 1) {

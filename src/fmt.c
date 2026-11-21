@@ -137,6 +137,8 @@ typedef struct {
     int blanks;
     Vec(char *) gh, gr; /* pending statement lines with a remark: head and remark */
     Vec(char) stk; /* open blocks: 1 = a switch */
+    Vec(char *) B; /* the lines with their block comments blanked */
+    Vec(char) T;   /* 1 = the line touches a block comment */
 } F;
 
 static size_t ulen(const char *s, size_t n) {
@@ -326,7 +328,7 @@ static void do_stmt(F *f, int block) {
     while (fl.opd[0] && fl.opd[strlen(fl.opd) - 1] == ',' && f->i < f->L.n) {
         Fld c;
         char *next = f->L.v[f->i];
-        if (is_blank_line(next) || !split_stmt(next, block, 1, 0, &c) || !c.opd[0]) break;
+        if (is_blank_line(next) || f->T.v[f->i] || !split_stmt(next, block, 1, 0, &c) || !c.opd[0]) break;
         put_stmt(f, layout(f->o, indent, block, &c, 1, opd_col, NULL), c.rem);
         f->i++;
         fl = c;
@@ -425,6 +427,35 @@ static void do_hash(F *f) {
     f->i = k;
 }
 
+/* ---- anchored lines ----------------------------------------------------------------------- */
+
+/* does the operand field of the statement text (name field first, unless cont) end in a comma? */
+static int ends_in_comma(const char *s, int cont) {
+    size_t p = 0, end;
+    if (!cont) {
+        while (s[p] && !is_blank((unsigned char)s[p])) p++; /* name */
+        while (is_blank((unsigned char)s[p])) p++;
+        while (s[p] && !is_blank((unsigned char)s[p])) p++; /* operation */
+    }
+    while (is_blank((unsigned char)s[p])) p++;
+    if (!s[p] || !scan_operand_end(s, p, &end)) return 0;
+    return end > p && s[end - 1] == ',';
+}
+
+/* A line that starts with the column anchor '^' ("    ^LB1  DC  AD(0)") or touches a block
+ * comment is kept as written, with its continuation lines: the author chose its layout.
+ * stmt is the text of the statement on the first line (without comments). */
+static void do_verbatim(F *f, const char *stmt) {
+    int more = ends_in_comma(stmt, 0);
+    put_line(f, rtrim_dup(f->L.v[f->i]));
+    f->i++;
+    while (more && f->i < f->L.n && !is_blank_line(f->B.v[f->i]) && !f->T.v[f->i]) {
+        more = ends_in_comma(f->B.v[f->i], 1);
+        put_line(f, rtrim_dup(f->L.v[f->i]));
+        f->i++;
+    }
+}
+
 /* ---- driver ------------------------------------------------------------------------------- */
 
 char *za_format(const char *text, size_t len, const FmtOptions *o) {
@@ -440,11 +471,22 @@ char *za_format(const char *text, size_t len, const FmtOptions *o) {
         vec_push(&f.L, xstrndup(text + s, e - s));
         if (i < len) i++;
     }
+    {
+        int in = 0;
+        size_t k;
+        for (k = 0; k < f.L.n; k++) {
+            char *b = xstrdup(f.L.v[k]);
+            vec_push(&f.T, (char)bc_line(b, &in));
+            vec_push(&f.B, b);
+        }
+    }
     while (f.i < f.L.n) {
         char *line = f.L.v[f.i];
         const char *p = skipb(line);
         int block = f.stk.n > 0;
-        if (*p == 0) {
+        if (f.T.v[f.i]) {
+            do_verbatim(&f, caret_rest(f.B.v[f.i]));
+        } else if (*p == 0) {
             put_line(&f, "");
             f.i++;
         } else if (!block && (line[0] == '*' || line[0] == ';' || (line[0] == '/' && line[1] == '/'))) {
@@ -456,6 +498,8 @@ char *za_format(const char *text, size_t len, const FmtOptions *o) {
         } else if (block && p[0] == '/' && p[1] == '/') {
             put_line(&f, xasprintf("%*s%s", (int)f.stk.n * o->indent, "", rtrim_dup(p)));
             f.i++;
+        } else if (*p == '^') {
+            do_verbatim(&f, caret_rest(line));
         } else if (*p == '#' && (block || line[0] == '#')) {
             do_hash(&f);
         } else {

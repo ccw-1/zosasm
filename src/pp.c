@@ -3,7 +3,7 @@
  * Diagnostic codes: ZA4010-4012 #include, ZA4020-4023 #define/#undef,
  * ZA4030-4034 conditionals, ZA4040-4042 macro calls, ZA4050/4051 #error and
  * #warning, ZA4060/4061 #pragma, ZA4070 trailing comma, ZA4080/4081 the time
- * of __DATE__ and __TIME__. */
+ * of __DATE__ and __TIME__, ZA4036 a comment that is not closed. */
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -73,6 +73,8 @@ typedef struct {
     size_t *rd_next;
     StrVec ains;
     StrMap msyn; /* OPSYN of macro names: upper case name -> macro name ("" = deleted) */
+    /* the file line being read, blanked and as written (block comments) */
+    const char *cur_text, *cur_orig;
 } Pp;
 
 /* ---- lexical helpers --------------------------------------------------- */
@@ -1042,8 +1044,8 @@ static void do_directive(Pp *pp, const char *dir, const char *rest, const char *
 
 /* where the remark of a line starts; text before is subject to expansion */
 static size_t remark_start(const char *s) {
-    size_t p = 0, n = strlen(s), end;
-    if (s[0] == '*' || s[0] == ';') return 0;
+    size_t p = (size_t)(caret_rest(s) - s), n = strlen(s), end;
+    if (s[p] == '*' || s[p] == ';') return 0;
     while (s[p] && !is_blank((unsigned char)s[p])) p++; /* name */
     while (is_blank((unsigned char)s[p])) p++;
     if (!s[p]) return n;
@@ -1056,6 +1058,7 @@ static size_t remark_start(const char *s) {
 }
 
 static int is_comment_or_blank(const char *s) {
+    s = caret_rest(s);
     if (s[0] == '*' || s[0] == ';') return 1;
     return *skip_blanks(s) == 0;
 }
@@ -1064,7 +1067,10 @@ static int is_comment_or_blank(const char *s) {
 static void check_comma(Pp *pp, const char *part, int line) {
     size_t p = 0, end;
     int continuation = pp->comma;
-    if (is_comment_or_blank(part)) return;
+    if (continuation ? (*skip_blanks(part) == 0 || part[0] == '*' || part[0] == ';')
+                     : is_comment_or_blank(part))
+        return;
+    if (!continuation) part = caret_rest(part);
     if (pp->comma && !is_blank((unsigned char)part[0]))
         diag_help(rep_warnf(pp->rep, "ZA4070", span_make(pp->file, line, 1, 1),
                             "the previous line ends with a comma, so this line is read as its "
@@ -1097,6 +1103,7 @@ typedef struct {
 static int stmt_fields(const char *part, StmtFields *f) {
     size_t p = 0, q, end;
     if (is_comment_or_blank(part)) return 0;
+    part = caret_rest(part);
     if (!is_blank((unsigned char)part[0])) {
         while (part[p] && !is_blank((unsigned char)part[p])) p++;
         f->name = xstrndup(part, p);
@@ -1270,6 +1277,7 @@ static void emit_part(Pp *pp, const char *part) {
     l.file = pp->file;
     l.line = pp->line;
     l.text = xstrdup(part);
+    l.orig = pp->cur_orig && !strcmp(part, pp->cur_text) ? pp->cur_orig : NULL;
     vec_push(pp->out, l);
     check_comma(pp, part, pp->line);
 }
@@ -1351,6 +1359,7 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
     src_split(&lines, file, text, len);
     /* the empty segment after the final newline is not a line */
     if (lines.n > 1 && lines.v[lines.n - 1].text[0] == 0 && len > 0 && text[len - 1] == '\n') lines.n--;
+    src_blank_comments(&lines, pp->rep);
     pp->file = file;
     pp->rd_lines = &lines;
     pp->rd_next = &nxt;
@@ -1376,6 +1385,8 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
             t = xstrdup(buf_cstr(&b));
         }
         pp->line = ln;
+        pp->cur_text = lines.v[i].text;
+        pp->cur_orig = lines.v[i].orig;
         {
             int mk = mac_top_kind(t);
             if (mk) {
@@ -1392,7 +1403,7 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
                     ev.line = ev.line_end = lines.v[i + j].line;
                     ev.depth = pp->depth;
                     ev.kind = on ? PE_DIRECTIVE : PE_SKIPPED;
-                    ev.text = lines.v[i + j].text;
+                    ev.text = lines.v[i + j].orig ? lines.v[i + j].orig : lines.v[i + j].text;
                     ev.first = first;
                     ev.n = 0;
                     vec_push(pp->opt->events, ev);
@@ -1459,7 +1470,7 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
             ev.line = ln;
             ev.line_end = lines.v[k].line;
             ev.depth = pp->depth;
-            ev.text = t;
+            ev.text = t == lines.v[i].text && lines.v[i].orig ? lines.v[i].orig : t;
             ev.first = pp->out->n;
             ev.n = 0;
             if (dir) {

@@ -105,6 +105,31 @@ static void test_no_expansion(void) {
     expect("splice in an ordinary line", " DC A(1,\\\n2)\n", " DC A(1,2)", "");
 }
 
+static void test_anchor(void) {
+    /* "^" starts the statement as if it stood in column 1 */
+    expect("anchor expands", "#define N 10\n   ^L1  LHI 1,N   N is here\n", "   ^L1  LHI 1,10   N is here", "");
+    expect("anchor comment", "#define N 10\n  ^* N\n", "  ^* N", "");
+    expect("anchor macro call", "#define N 10\n#macro MM(n) {\n    ^L&n  DC  A(&n)\n    LB&n: DC  X'00'\n    ^     DC  X'01'\n#}\n"
+           "    ^X1  MM N\n",
+           "L10      DC    A(10)|LB10     DC    X'00'|         DC    X'01'", "");
+    expect("anchor continuation", " ^A DC A(1),\n   A(2)\n LR 1,2\n", " ^A DC A(1),|   A(2)| LR 1,2", "");
+}
+
+static void test_block_comments(void) {
+    /* the comment is blanked, the columns of the text around it stay */
+    expect("one line", " LR 1,2 /* c */ remark\n", " LR 1,2         remark", "");
+    expect("several lines", "/* a\n b */ LR 1,2\n X\n", "    |      LR 1,2| X", "");
+    expect("in a string", " DC C'/* x */',\"/*\"\n", " DC C'/* x */',\"/*\"", "");
+    expect("attribute quote", " DC A(L'X /* c */)\n", " DC A(L'X        )", "");
+    expect("comment line", "* /* not a comment\n LR 1,2\n", "* /* not a comment| LR 1,2", "");
+    expect("indented comment line", "    */* not a comment */\n LR 1,2\n", "    */* not a comment */| LR 1,2", "");
+    expect("after //", " LR 1,2 // /* not\n LR 3,4\n", " LR 1,2 // /* not| LR 3,4", "");
+    expect("define", "#define N 10 /* ten */\n LHI 1,N\n", " LHI 1,10", "");
+    expect("macro body", "#macro MM(n) {\n/* a note\n   on two lines */\n    LR  1,&n /* r */\n#}\n    MM 2\n",
+           "         LR    1,2", "");
+    expect("not closed", " LR 1,2\n /* open\n LR 3,4\n", " LR 1,2|        |       ", "ZA4036");
+}
+
 static void test_conditionals(void) {
     expect("ifdef taken", "#define A\n#ifdef A\n yes\n#else\n no\n#endif\n", " yes", "");
     expect("ifdef not taken", "#ifdef A\n yes\n#else\n no\n#endif\n", " no", "");
@@ -347,6 +372,8 @@ static void test_assemble(void) {
 int main(void) {
     test_macros();
     test_no_expansion();
+    test_anchor();
+    test_block_comments();
     test_conditionals();
     test_directives();
     test_comma();

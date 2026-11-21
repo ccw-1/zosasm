@@ -194,6 +194,19 @@ typedef struct {
     int open_paren; /* the operand field ends inside parentheses */
 } Fields;
 
+/* a remark of the generated source must not hold the start of a block comment (a PL/X style
+ * remark that opens one would swallow the lines after it): the slash and the star are
+ * separated by a blank */
+static char *no_block_comment(const char *r) {
+    Buf b = {0};
+    size_t i;
+    for (i = 0; r[i]; i++) {
+        buf_putc(&b, r[i]);
+        if (r[i] == '/' && r[i + 1] == '*') buf_putc(&b, ' ');
+    }
+    return xstrdup(buf_cstr(&b));
+}
+
 static void split_fields(const char *s, Fields *f) {
     size_t p = 0, q;
     int depth = 0, inq = 0;
@@ -235,7 +248,7 @@ static void split_fields(const char *s, Fields *f) {
     f->open_paren = depth > 0;
     f->operands = xstrndup(s + p, q - p);
     while (is_blank((unsigned char)s[q])) q++;
-    f->remark = xstrdup(s + q);
+    f->remark = no_block_comment(s + q);
 }
 
 /* Columns count characters: the byte offset of column col (0-based) of a UTF-8 line */

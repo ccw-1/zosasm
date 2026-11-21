@@ -36,6 +36,21 @@ static void test_fields(void) {
     CHECK_STR(fmt("  DC C'abc  \n"), "  DC C'abc\n");
 }
 
+static void test_anchor(void) {
+    /* a line that starts with ^ is kept as written, with its continuation lines */
+    CHECK_STR(fmt_idem("  ^LB1 dc  a(1),\n     a(2)   r\n lr 1,2\n"), "  ^LB1 dc  a(1),\n     a(2)   r\n         lr    1,2\n");
+    CHECK_STR(fmt_idem("#macro M(n) {\n  ^L&n   DC  A(&n)\n  LB:  DC X'0'\n#}\n"),
+              "#macro M(n) {\n  ^L&n   DC  A(&n)\n    LB: DC    X'0'\n#}\n");
+}
+
+static void test_block_comments(void) {
+    /* lines that touch a block comment are kept, and so are the continuation lines of a statement */
+    CHECK_STR(fmt_idem("/* a  comment\n   over  lines */\n lr 1,2 /* r */\n lr 3,4\n"),
+              "/* a  comment\n   over  lines */\n lr 1,2 /* r */\n         lr    3,4\n");
+    CHECK_STR(fmt_idem(" dc a(1), /* c */\n   a(2)   r\n lr 1,2\n"), " dc a(1), /* c */\n   a(2)   r\n         lr    1,2\n");
+    CHECK_STR(fmt_idem(" dc a(1),\n /* c */ a(2)\n lr 1,2\n"), "         dc    a(1),\n /* c */ a(2)\n         lr    1,2\n");
+}
+
 static void test_remarks(void) {
     /* remarks of neighbours that reach the remark column are aligned with each other */
     CHECK_STR(fmt_idem(" LA 1,A_LONG_OPERAND_FIELD_HERE r1\n LA 1,X r2\n LA 2,A_LONG_OPERAND_FIELD_HERE_2 r3\n"),
@@ -93,6 +108,8 @@ static void test_options(void) {
 int main(void) {
     test_fields();
     test_remarks();
+    test_block_comments();
+    test_anchor();
     test_continuation();
     test_comments_blank();
     test_blocks();

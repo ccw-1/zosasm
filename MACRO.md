@@ -204,8 +204,12 @@ directive or a keyword cannot exist (`#define`, `#if`...).
   assembler); continuation lines may be indented.
 * `*` as first non-blank character: an assembler comment line, emitted
   (shows in the listing with `print gen`). `//` as first non-blank character,
-  or after macro code: a macro comment, never emitted. `/* ... */` is not
-  used.
+  or after macro code: a macro comment, never emitted. `/* ... */` is a
+  block comment that the preprocessor blanks before the macro compiler reads
+  the lines (GUIDE 2.1): it may span lines and be used in macro code and model
+  statements. `^` as first non-blank character: `^NAME op operands` is a model
+  statement with the label `NAME` (colon optional) and `^   op operands` one
+  without a label, so a labeled statement can be indented.
 * Macro code continues while parentheses, brackets or a string are open, or
   after a trailing `\`.
 * Blank lines are dropped. Tabs count to 8 columns.
