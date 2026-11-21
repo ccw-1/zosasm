@@ -173,7 +173,7 @@ the MNOTE message is ignored` (check against the MNOTE rule below), 5 x
 `continuation mark on the last line` (check that they are real file ends, not
 mis-split comments), 3 x `declaration has no &` (accepted), 1 x `*PROCESS`.
 
-### HLASM facts established by the probes (tests/oracle material: /tmp/pr/m1..m6, c1, u1, u2)
+### HLASM facts established by the probes (probe sources kept in testdata/oracle/maclib/: m1 MNOTE/LCLB/prototype, m3-m6 nested MACRO spelling, c1 comment continuation, u1 undeclared variable, u2 unquoted MNOTE)
 
 1. A comment line (`*` or `.*` in column 1) whose column 72 is non-blank continues on
    the next record; the continuation record is part of the comment whatever it
@@ -229,7 +229,7 @@ mis-split comments), 3 x `declaration has no &` (accepted), 1 x `*PROCESS`.
       and prints "converted M macros from X members; not assembler: ERBFITEM,
       ERBSTSGT (PL/X); no macro definition: GDKICOB HWTJICOB IGGCSINP IKJTMP3;
       failed: none". Exit code 1 only for real failures. `make test-maclib` checks the
-      numbers (expected after 4.1-4.5: 2216 macros? recount, 0 failed) and each
+      numbers (expected after 4.1-4.5: 2214 macros = 2210 + IXGCON, IHBRDWRA, CPF, IGWRMRCD; 0 failed) and each
       listed non-assembler member by name so a new one cannot hide.
 - [ ] **4.7 regression**. Rerun `ZASM_MACLIB=../maclib_utf8 make test-maclib` (compile all,
       flat == structured, `#goto` count not worse than the 0 of the dispatch form),
@@ -238,7 +238,7 @@ mis-split comments), 3 x `declaration has no &` (accepted), 1 x `*PROCESS`.
 - [ ] **4.8 (beyond "converted": equivalence)**. Nothing so far shows that a converted
       macro expands like HLASM; the structured/flat check only compares two
       conversions of the same macro. Oracle run on igor: for a sample of macros
-      (all 2216 would need arguments), assemble `M args` with HLASM `as -a` using
+      (all 2214 would need arguments), assemble `M args` with HLASM `as -a` using
       the real macro text and with `zosasm -E` using the `.zmac`, compare the
       generated statements and MNOTEs. Start with the 4 repaired macros, the 20 most
       called ones (GETMAIN, WTO, SAVE, RETURN, ...) and one per `-keep-goto`
