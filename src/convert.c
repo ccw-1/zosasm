@@ -73,6 +73,7 @@ typedef struct {
     Vec(Sym *) symlist;
     StrMap dirs;   /* known directives */
     StrMap macros; /* macros defined in this file: 1 commented out, 2 converted */
+    int nconv;     /* macro definitions converted so far */
     StrMap noted;  /* keys already warned about */
     MHStmtVec open; /* open code from the first conditional assembly statement on */
     size_t open_first; /* its first line index */
@@ -456,6 +457,19 @@ static void macro_warn(void *user, int line, const char *msg) { warnf(user, line
 
 static void collect_stmts(Conv *c, size_t *pi, MHStmtVec *st, int is_main, int depth, int copy_line, int *ended);
 
+/* HLASM continues a comment line (* or .* in column 1) over the following records while its
+ * continuation column is not blank; those records are comment text whatever they contain.
+ * Returns the text of the next such record (and moves *i onto it), or NULL. */
+static char *comment_cont_next(Conv *c, size_t *i) {
+    if (!has_cont_mark(c, c->lines.v[*i]) || *i + 1 >= c->lines.n) return NULL;
+    (*i)++;
+    {
+        char *t = columns(c, c->lines.v[*i], c->o.begin - 1);
+        return rtrim_dup(t, strlen(t));
+    }
+}
+
+
 /* COPY member inside a macro: the statements of DIR/member.mac are read at this point (the
  * assembler does the same when it reads the macro definition). 1 when the member was found. */
 static int copy_member(Conv *c, const char *name, MHStmtVec *st, int depth, int line) {
@@ -498,12 +512,18 @@ static void collect_stmts(Conv *c, size_t *pi, MHStmtVec *st, int is_main, int d
         memset(&s, 0, sizeof s);
         s.line = copy_line ? copy_line : (int)i + 1;
         if (blank_str(t)) continue;
-        if (t[0] == '*') {
-            s.kind = MH_ASMCOMMENT;
-            s.text = rtrim_dup(t + 1, strlen(t + 1));
-        } else if (t[0] == '.' && t[1] == '*') {
-            s.kind = MH_MACCOMMENT;
-            s.text = rtrim_dup(t + 2, strlen(t + 2));
+        if (t[0] == '*' || (t[0] == '.' && t[1] == '*')) {
+            char *more;
+            s.kind = t[0] == '*' ? MH_ASMCOMMENT : MH_MACCOMMENT;
+            s.text = rtrim_dup(t + (t[0] == '*' ? 1 : 2), strlen(t + (t[0] == '*' ? 1 : 2)));
+            vec_push(st, s);
+            while ((more = comment_cont_next(c, &i)) != NULL) {
+                MHStmt k = s;
+                k.line = copy_line ? copy_line : (int)i + 1;
+                k.text = more;
+                vec_push(st, k);
+            }
+            continue;
         } else {
             Fields f;
             char *joined = join_statement(c, &i);
@@ -555,6 +575,25 @@ static void macro_def(Conv *c, size_t macro_first, size_t *pi) {
         why = xstrdup("MEND is missing");
         res = NULL;
         i = c->lines.n - 1;
+        if (c->o.member) {
+            /* nothing after the last MEND of a library member is read by HLASM: a MACRO that is
+             * not closed after a converted macro is the text of a PL/X or PL/I trailer */
+            const char *first = c->lines.v[0];
+            while (*first == ' ') first++;
+            if (c->nconv > 0) {
+                for (j = macro_first; j <= i && j < c->lines.n; j++) push_comment(c, (int)j + 1, raw_comment(c, c->lines.v[j]));
+                warnf(c, (int)macro_first + 1, "text after the last MEND is ignored (a MACRO without MEND follows a converted macro)");
+                *pi = i;
+                return;
+            }
+            if (*first == '%' || strstr(c->lines.v[macro_first], "/*") || (macro_first + 1 < c->lines.n && strstr(c->lines.v[macro_first + 1], "/*"))) {
+                push_comment(c, (int)macro_first + 1, xstrdup("* ---- not an assembler macro (PL/X source), left as comments ----"));
+                for (j = macro_first; j <= i && j < c->lines.n; j++) push_comment(c, (int)j + 1, raw_comment(c, c->lines.v[j]));
+                warnf(c, (int)macro_first + 1, "not an assembler macro: PL/X macro source, skipped");
+                *pi = i;
+                return;
+            }
+        }
     } else {
         res = c->o.comment_macros ? NULL : mconv_macro(&st, &mo, &why);
         if (c->o.comment_macros) why = xstrdup("-comment-macros");
@@ -570,6 +609,7 @@ static void macro_def(Conv *c, size_t macro_first, size_t *pi) {
             if (st.v[j].kind == MH_STMT) {
                 char *nm = za_strupper(st.v[j].op);
                 strmap_put(&c->macros, nm, (void *)2);
+                c->nconv++;
                 break;
             }
     } else {
@@ -683,10 +723,10 @@ static void parse(Conv *c) {
             continue;
         }
         if (c->wrapping && (t[0] == '*' || (t[0] == '.' && t[1] == '*'))) {
-            if (t[0] == '*')
-                open_push(c, line, MH_ASMCOMMENT, NULL, NULL, NULL, NULL, rtrim_dup(t + 1, strlen(t + 1)));
-            else
-                open_push(c, line, MH_MACCOMMENT, NULL, NULL, NULL, NULL, rtrim_dup(t + 2, strlen(t + 2)));
+            char *more;
+            int kind = t[0] == '*' ? MH_ASMCOMMENT : MH_MACCOMMENT;
+            open_push(c, line, kind, NULL, NULL, NULL, NULL, rtrim_dup(t + (t[0] == '*' ? 1 : 2), strlen(t + (t[0] == '*' ? 1 : 2))));
+            while ((more = comment_cont_next(c, &i)) != NULL) open_push(c, (int)i + 1, kind, NULL, NULL, NULL, NULL, more);
             continue;
         }
         if (t[0] == '*' || (t[0] == '.' && t[1] == '*')) {
@@ -697,6 +737,11 @@ static void parse(Conv *c) {
                 push_comment(c, line, xasprintf("*%s", rtrim_dup(t[0] == '*' ? t + 1 : t + 2, strlen(t) - (t[0] == '*' ? 1 : 2))));
             else
                 push_comment(c, line, rtrim_dup(body, strlen(body)));
+            {
+                char *more;
+                while ((more = comment_cont_next(c, &i)) != NULL)
+                    push_comment(c, (int)i + 1, xasprintf("*%s", more));
+            }
             continue;
         }
         first = i;

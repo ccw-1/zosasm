@@ -858,7 +858,7 @@ static void declare_list(MC *m, const char *ops, int global, Ty ty) {
         char *hl;
         int dim = -1, array = 0;
         if (!t[0]) continue;
-        if (t[0] != '&' && za_isalpha((unsigned char)t[0])) { /* a missing & is read as if it were there */
+        if (t[0] != '&' && (za_isalpha((unsigned char)t[0]) || strchr("@#$_", t[0]))) { /* a missing & is read as if it were there */
             t = xasprintf("&%s", t);
             warn(m, "the declaration \"%s\" has no &: read as &%s", ov.v[k].text, ov.v[k].text);
         }
@@ -924,7 +924,8 @@ static void parse_proto(MC *m, const MHStmt *p) {
         Var *v;
         if (!t[0]) continue;
         if (!hl) {
-            fail(m, "cannot read the prototype operand \"%s\"", t);
+            /* HLASM: ASMA025S, but the macro is still defined and the operand is ignored */
+            warn(m, "the prototype operand \"%s\" is ignored (HLASM: ASMA025S invalid macro prototype operand)", t);
             continue;
         }
         if (var_find(m, hl)) {
@@ -1121,6 +1122,8 @@ static void conv_aif(MC *m, const MHStmt *s) {
     }
 }
 
+static void conv_model(MC *m, const MHStmt *s);
+
 static void conv_mnote(MC *m, const MHStmt *s) {
     OperandVec ov = {0};
     const char *msg;
@@ -1146,6 +1149,19 @@ static void conv_mnote(MC *m, const MHStmt *s) {
             sev = atoi(a);
         else
             sevtxt = a;
+    }
+    {
+        const char *q = msg;
+        size_t ol = strlen(s->operands);
+        while (*q == ' ') q++;
+        /* HLASM: the message has to be a quoted string (or start with a variable symbol or a
+         * parenthesis, which a substitution can turn into one). Otherwise the generated MNOTE
+         * statement is passed on, the assembler flags it (ASMA163W) and gives no message. */
+        if (ov.n >= 2 ? (!*q || !strchr("'&(", *q)) : (ol > 0 && s->operands[ol - 1] == ',') || (*q && !strchr("'&(", *q))) {
+            warn(m, "MNOTE without a quoted message: HLASM passes the statement on with ASMA163W and gives no message");
+            conv_model(m, s);
+            return;
+        }
     }
     {
         XP p;

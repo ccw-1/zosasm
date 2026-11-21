@@ -1116,10 +1116,21 @@ other form) does that for a whole library and compiles every result. On
 with the default dispatch fallback **no macro has a `#goto`**, and 1128 of
 the 2076 outputs use a dispatch loop. With `-keep-goto` 948 outputs need no
 `#goto` (891 before `else if`, fork/join chains and the class 1-3 rule of
-`closed()`) and 72,413 `#goto` remain (73,884 before). 8 members are not
-converted (4 PL/S members without `MEND`, `IXGCON` with stray text, `IGWRMRCD`
-with a `!` operand, `IHBRDWRA` with `LCLB @IDS3270` without `&`, `CPF` with `?`
-in an expression). Not compared with HLASM.
+`closed()`) and 72,413 `#goto` remain (73,884 before). Since PLAN.md Phase 4
+(2026-11-21) 2214 macros convert and no member fails: the 8 former failures were
+4 converter defects (a comment line with a non-blank column 72 continues on the
+next record in HLASM, so `IXGCON` had a `Macro` word in a continued comment;
+`MNOTE` with a blank after the comma or an unquoted message, `CPF` and
+`IHBRDWRA`: the statement is passed on as a model line, HLASM gives ASMA163W and
+no message; `LCLB @IDS3270` without `&`; a prototype operand `!` in `IGWRMRCD`,
+HLASM ASMA025S but the macro is defined), 2 false failures (PL/X text after the
+last `MEND` of `IRRPICRX`, `CBRSMF`) and 2 PL/X macro members (`ERBFITEM`,
+`ERBSTSGT`, reported as "not an assembler macro"); 46 members have no macro
+definition (C/PL/I/COBOL/REXX copybooks). The `-macro-dir` summary lists the
+three groups and the exit status is 1 only for real failures. Expansions of
+`IXGCON`, `IGWRMRCD`, `IHBRDWRA` and `CPF` were compared with HLASM R6.0 on igor
+(`tools/oracle_macro_cmp.py`: same statements). The rest of the corpus is not
+compared with HLASM.
 
 **Not done.** `SETAF`/`SETCF`, computed `AGO`, created `&(` symbols, `C'x'`
 terms in conditional assembly expressions, `AREAD` with operands, macro

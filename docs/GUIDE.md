@@ -2111,8 +2111,15 @@ was left behind.
 `hlasm2za` turns a `MACRO` ... `MEND` definition into a macro of chapter 19
 (`#macro NAME(a, b = 1) {` ... `#}`). A library member is converted with
 `-m`, a whole library with `-macro-dir DIR -o OUT` (every `DIR/*.mac` becomes
-`OUT/NAME.zmac`; the summary gives the counts). `zosasm -M OUT` then finds the
-macros by name.
+`OUT/NAME.zmac`; the summary gives the counts and names the members that are
+not assembler macros (PL/X sources), have no macro definition (copybooks) or
+failed; the exit status is 1 only for failures). `zosasm -M OUT` then finds the
+macros by name. The converter reads source the way HLASM does where it matters
+for definitions: a comment line (`*` or `.*`) whose column 72 is not blank
+continues on the next record, a `MNOTE` without a quoted message is passed on
+as a model statement (HLASM gives ASMA163W and no message), a prototype operand
+that is not a symbolic parameter is ignored with a warning, and text after the
+last `MEND` of a member is not read.
 
 What the converter does with a definition:
 

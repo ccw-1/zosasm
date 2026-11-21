@@ -272,10 +272,63 @@ static void test_post(void) {
     CHECK_MSG(count(c, "#goto") >= 1 && !strstr(c, "#switch (pc)"), "keep-goto shape:\n%s", c);
 }
 
+/* the SYS1.MACLIB members that used to fail (PLAN.md Phase 4); each form was probed with HLASM */
+static char *card(const char *text, int mark) { /* a record of 71 columns + column 72 */
+    char *r = xasprintf("%-71s%c\n", text, mark ? 'X' : ' ');
+    return r;
+}
+
+static void test_maclib_forms(void) {
+    int nw = 0;
+    char *c, *x, *src;
+    /* a comment line with a mark in column 72 continues on the next record (IXGCON) */
+    src = xasprintf("         MACRO\n         CC\n%s%s%s%s         DC    C'CC'\n         MEND\n",
+                    card("* A COMMENT", 1), card("         MACRO Reference\". Do one of the following", 1),
+                    card(".* MACRO COMMENT", 1), card("               MNOTE 0,'IN COMMENT'", 0));
+    c = convert(src, 0, &nw);
+    CHECK_MSG(strstr(c, "#macro CC(") != NULL && strstr(c, "#macro Reference") == NULL, "comment continuation:\n%s", c);
+    x = expand(xasprintf("%s    CC\n", c));
+    CHECK_MSG(strstr(x, "|         DC    C'CC'") != NULL && !strstr(x, "ZA4"), "comment continuation expansion: %s", x);
+    /* the same in open code: the continued record is not a statement */
+    c = convert(xasprintf("%s         DC    C'A'\n", card("* TEXT", 1)), 0, &nw);
+    CHECK_MSG(count(c, "DC") == 1, "open code comment continuation:\n%s", c);
+    /* MNOTE: a blank after the comma ends the operand field; an unquoted message (CPF, IHBRDWRA) */
+    c = convert("         MACRO\n         MN    &A\n         MNOTE 4, 'TRAILING COMMA'\n"
+                "         MNOTE 4,SEQNO=&A INVALID - IGNORED'\n         MNOTE 0,'AFTER &A'\n         MEND\n",
+                0, &nw);
+    CHECK_MSG(strstr(c, "#macro MN(") != NULL && nw >= 2, "mnote forms converted (%d warnings):\n%s", nw, c);
+    x = expand(xasprintf("%s    MN    7\n", c));
+    CHECK_MSG(strstr(x, "MNOTE 4,SEQNO=7") != NULL && strstr(x, "ZA4052") != NULL, "mnote expansion: %s", x);
+    /* LCLB with a bare name starting with @ (IHBRDWRA) */
+    c = convert("         MACRO\n         LB\n         LCLB  @IDS\n&IDS     SETB  1\n"
+                "         AIF   (NOT &IDS).X\n         DC    C'SET'\n.X       ANOP\n         MEND\n",
+                0, &nw);
+    CHECK_MSG(strstr(c, "#macro LB(") != NULL, "bare @ declaration:\n%s", c);
+    /* a prototype operand that is not a symbolic parameter is ignored (IGWRMRCD) */
+    c = convert("         MACRO\n         PR                             !                          @T4C\n"
+                "         DC    C'PR'\n         MEND\n",
+                0, &nw);
+    CHECK_MSG(strstr(c, "#macro PR(") != NULL && nw >= 1, "bad prototype operand:\n%s", c);
+    x = expand(xasprintf("%s    PR\n", c));
+    CHECK_MSG(strstr(x, "C'PR'") != NULL, "prototype expansion: %s", x);
+    /* text after the last MEND of a member that holds a MACRO word is not a failure (IRRPICRX) */
+    c = convert("         MACRO\n         TR\n         DC    C'TR'\n         MEND\n"
+                "* PL/X TEXT\n                                       macro IRRPIDID                */\n"
+                "      3 FIELD FIXED(8);\n",
+                0, &nw);
+    CHECK_MSG(strstr(c, "#macro TR(") != NULL && !strstr(c, "commented out"), "trailer after MEND:\n%s", c);
+    /* a PL/X macro member is not an assembler macro (ERBFITEM) */
+    c = convert("%ERBFITEM:\n     MACRO KEYS(FLOAT               /* Floating point precision      */\n"
+                "               );\n DCL X FIXED;\n %END ERBFITEM;\n",
+                0, &nw);
+    CHECK_MSG(strstr(c, "not an assembler macro") != NULL || strstr(c, "PL/X") != NULL, "PL/X member:\n%s", c);
+}
+
 int main(void) {
     test_equivalence();
     test_shapes();
     test_features();
     test_post();
+    test_maclib_forms();
     TEST_MAIN_END();
 }

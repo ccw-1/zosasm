@@ -110,12 +110,12 @@ const char *goff_write_esd(GoffWriter *w, GoffESD *e) {
     e->id = w->nesd;
     memset(h, 0, sizeof h);
     h[0] = (uint8_t)e->type;
-    put32(h + 4 - 3, e->id);
-    put32(h + 8 - 3, e->parent);
-    put32(h + 16 - 3, e->offset);
-    put32(h + 24 - 3, e->length);
-    put32(h + 28 - 3, e->ext_attr_id);
-    put32(h + 32 - 3, e->ext_attr_off);
+    put32(h + (4 - 3), e->id);
+    put32(h + (8 - 3), e->parent);
+    put32(h + (16 - 3), e->offset);
+    put32(h + (24 - 3), e->length);
+    put32(h + (28 - 3), e->ext_attr_id);
+    put32(h + (32 - 3), e->ext_attr_off);
     h[40 - 3] = e->name_space;
     if (e->has_fill) {
         fl |= 0x80;
@@ -126,11 +126,11 @@ const char *goff_write_esd(GoffWriter *w, GoffESD *e) {
     if (e->removable) fl |= 0x10;
     fl |= e->reserved_qwords & 7;
     h[41 - 3] = fl;
-    put32(h + 44 - 3, e->ada_id);
-    put32(h + 48 - 3, e->priority);
+    put32(h + (44 - 3), e->ada_id);
+    put32(h + (48 - 3), e->priority);
     goff_behavior_pack(&e->attr, ba);
-    memcpy(h + 60 - 3, ba, 10);
-    put16(h + 70 - 3, (uint32_t)e->name_len);
+    memcpy(h + (60 - 3), ba, 10);
+    put16(h + (70 - 3), (uint32_t)e->name_len);
     emit(w, GOFF_T_ESD, h, sizeof h, e->name, e->name_len);
     return NULL;
 }
@@ -143,9 +143,9 @@ const char *goff_write_text(GoffWriter *w, uint32_t esdid, uint32_t offset, uint
         uint8_t h[24 - 3];
         memset(h, 0, sizeof h);
         h[0] = style & 0xF;
-        put32(h + 4 - 3, esdid);
-        put32(h + 12 - 3, offset);
-        put16(h + 22 - 3, (uint32_t)k);
+        put32(h + (4 - 3), esdid);
+        put32(h + (12 - 3), offset);
+        put16(h + (22 - 3), (uint32_t)k);
         emit(w, GOFF_T_TXT, h, sizeof h, data, k);
         data += k;
         n -= k;
@@ -210,7 +210,7 @@ const char *goff_write_rld(GoffWriter *w, const GoffReloc *items, size_t n) {
     do {                                                                      \
         if (data.len) {                                                       \
             uint8_t h[6 - 3] = {0};                                           \
-            put16(h + 4 - 3, (uint32_t)data.len);                             \
+            put16(h + (4 - 3), (uint32_t)data.len);                             \
             emit(w, GOFF_T_RLD, h, sizeof h, (const uint8_t *)data.p, data.len); \
             data.len = 0;                                                     \
             prev = NULL;                                                      \
@@ -240,7 +240,7 @@ const char *goff_write_len(GoffWriter *w, const GoffDeferredLen *items, size_t n
     while (n > 0) {
         size_t k = n > per_rec ? per_rec : n, i;
         uint8_t h[8 - 3] = {0}, p[12 * 6];
-        put16(h + 6 - 3, (uint32_t)(k * 12));
+        put16(h + (6 - 3), (uint32_t)(k * 12));
         memset(p, 0, sizeof p);
         for (i = 0; i < k; i++) {
             put32(p + i * 12, items[i].esdid);
@@ -259,13 +259,13 @@ const char *goff_write_end(GoffWriter *w, const GoffEnd *e, const uint8_t **out,
     w->ended = 1;
     h[0] = (uint8_t)(e->kind & 3);
     h[4 - 3] = e->amode;
-    put32(h + 8 - 3, w->logical + 1);
+    put32(h + (8 - 3), w->logical + 1);
     if (e->kind == GOFF_ENTRY_BYID) {
-        put32(h + 12 - 3, e->esdid);
-        put32(h + 20 - 3, e->offset);
+        put32(h + (12 - 3), e->esdid);
+        put32(h + (20 - 3), e->offset);
     } else if (e->kind == GOFF_ENTRY_BYNAME) {
         if (e->name_len == 0) return "goff: entry by name without a name";
-        put16(h + 24 - 3, (uint32_t)e->name_len);
+        put16(h + (24 - 3), (uint32_t)e->name_len);
     }
     emit(w, GOFF_T_END, h, sizeof h, e->kind == GOFF_ENTRY_BYNAME ? e->name : NULL,
          e->kind == GOFF_ENTRY_BYNAME ? e->name_len : 0);

@@ -57,6 +57,14 @@ static int has_ext(const char *n, const char *ext) {
     return l > e && za_streqi(n + l - e, ext);
 }
 
+static void print_names(const char *what, size_t n, char **v) {
+    size_t k;
+    if (!n) return;
+    fprintf(stderr, "hlasm2za:   %s (%lu):", what, (unsigned long)n);
+    for (k = 0; k < n; k++) fprintf(stderr, " %s", v[k]);
+    fprintf(stderr, "\n");
+}
+
 /* every member DIR/NAME.mac -> OUTDIR/NAME.zmac; a summary of what could not be converted */
 static int macro_dir(const char *dir, const char *outdir, const ConvOptions *o, int quiet) {
     DIR *d = opendir(dir);
@@ -64,6 +72,7 @@ static int macro_dir(const char *dir, const char *outdir, const ConvOptions *o, 
     Vec(char *) names = {0};
     size_t k, nmem = 0, nmac = 0, nfail = 0, nwarn = 0;
     int bad = 0; /* a member could not be read or its .zmac not written */
+    Vec(char *) notasm = {0}, nomacro = {0}, failed = {0}; /* member names for the summary */
     if (!d) {
         fprintf(stderr, "hlasm2za: %s: %s\n", dir, strerror(errno));
         return 1;
@@ -102,10 +111,30 @@ static int macro_dir(const char *dir, const char *outdir, const ConvOptions *o, 
         if (wl > 0 && fread(wbuf, 1, (size_t)wl, w) != (size_t)wl) wl = 0;
         wbuf[wl > 0 ? wl : 0] = 0;
         fclose(w);
+        {
+            int is_fail = 0, is_notasm = 0;
+            char *base = xstrndup(names.v[k], strlen(names.v[k]) - 4);
+            for (line = wbuf; *line;) {
+                char *e = strchr(line, '\n');
+                size_t n = e ? (size_t)(e - line) : strlen(line);
+                char *ln = xstrndup(line, n);
+                if (strstr(ln, "macro definition commented out")) is_fail = 1;
+                if (strstr(ln, "not an assembler macro")) is_notasm = 1;
+                if (!e) break;
+                line = e + 1;
+            }
+            if (is_fail) {
+                nfail++;
+                vec_push(&failed, base);
+            } else if (is_notasm) {
+                vec_push(&notasm, base);
+            } else if (!strstr(res, "#macro ")) {
+                vec_push(&nomacro, base);
+            }
+        }
         for (line = wbuf; *line;) {
             char *e = strchr(line, '\n');
             size_t n = e ? (size_t)(e - line) : strlen(line);
-            if (strstr(line, "macro definition commented out") && (!e || strstr(line, "commented out") < e)) nfail++;
             if (!quiet) fprintf(stderr, "%.*s\n", (int)n, line);
             if (!e) break;
             line = e + 1;
@@ -128,9 +157,12 @@ static int macro_dir(const char *dir, const char *outdir, const ConvOptions *o, 
             }
         }
     }
-    fprintf(stderr, "hlasm2za: %lu members, %lu macros converted, %lu not converted, %lu warnings\n",
+    fprintf(stderr, "hlasm2za: %lu members, %lu macros converted, %lu members failed, %lu warnings\n",
             (unsigned long)nmem, (unsigned long)nmac, (unsigned long)nfail, (unsigned long)nwarn);
-    return bad;
+    print_names("not assembler macros (PL/X)", notasm.n, notasm.v);
+    print_names("no macro definition", nomacro.n, nomacro.v);
+    print_names("FAILED", failed.n, failed.v);
+    return bad || nfail > 0;
 }
 
 int main(int argc, char **argv) {

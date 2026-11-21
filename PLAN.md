@@ -193,7 +193,7 @@ mis-split comments), 3 x `declaration has no &` (accepted), 1 x `*PROCESS`.
 
 ### Work items
 
-- [ ] **4.1 comment continuation (IXGCON)**. In `src/convert.c` all three places that
+- [x] **4.1 comment continuation (IXGCON)**. In `src/convert.c` all three places that
       take a comment line without looking at column 72 (`collect_stmts` ~l.501/504,
       the open-code loop ~l.685/692, `raw_comment` ranges at l.578/661) must swallow
       the following records while `has_cont_mark()` is true, and put them into the
@@ -202,7 +202,7 @@ mis-split comments), 3 x `declaration has no &` (accepted), 1 x `*PROCESS`.
       (no change expected). Test: tests for `*` and `.*` with 1, 2 and 3 marked
       records, a marked record at EOF (existing warning), mark on a `.*` inside a
       macro, and the IXGCON macro converts and compiles.
-- [ ] **4.2 MNOTE**. Parse MNOTE operands like HLASM: operand field ends at the first
+- [x] **4.2 MNOTE**. Parse MNOTE operands like HLASM: operand field ends at the first
       blank outside quotes; when the message operand is missing or not a quoted
       string, convert the statement as a plain model line (it is emitted into the
       output, as HLASM does) and warn "MNOTE with an unquoted message: HLASM gives
@@ -211,19 +211,19 @@ mis-split comments), 3 x `declaration has no &` (accepted), 1 x `*PROCESS`.
       diagnostic, not crash. Re-check the 7 "text after the MNOTE message is ignored"
       sites with the same rule. Test: probes u2 and the `MNOTE 4, 'text'` form
       expand to the same output text as HLASM.
-- [ ] **4.3 declarations**. `declare_list`: accept `@ # $ _` as first character of a
+- [x] **4.3 declarations**. `declare_list`: accept `@ # $ _` as first character of a
       bare name (warn as now). Test: `LCLB @X` then `&X SETB 1`.
-- [ ] **4.4 prototype operands**. `parse_proto`: an operand that is not `&name`
+- [x] **4.4 prototype operands**. `parse_proto`: an operand that is not `&name`
       or `&name=default` is dropped with the warning "ignored (HLASM ASMA025S)"
       instead of failing the macro; the remark after it stays a remark. Test:
       IGWRMRCD converts and expands.
-- [ ] **4.5 trailers after MEND (IRRPICRX, CBRSMF)**. In member mode (`c->o.member`)
+- [x] **4.5 trailers after MEND (IRRPICRX, CBRSMF)**. In member mode (`c->o.member`)
       a MACRO statement after a completed macro that reaches the end of the member
       without a MEND is "trailer text": do not count it as a failure, report it
       as a note ("text after the last MEND ignored from line N"). Do NOT stop at the
       first MEND: CBDZPARS, IGGENC, IEWBIND2... legitimately hold several top-level
       macros (inline-source members).
-- [ ] **4.6 classification and an honest summary**. `hlasm2za -macro-dir` detects
+- [x] **4.6 classification and an honest summary**. `hlasm2za -macro-dir` detects
       PL/X macro members (first non-comment line `%NAME:`/`MACRO NAME(...` with `/*`
       comments, no assembler statements) and members without any MACRO statement,
       and prints "converted M macros from X members; not assembler: ERBFITEM,
@@ -231,11 +231,11 @@ mis-split comments), 3 x `declaration has no &` (accepted), 1 x `*PROCESS`.
       failed: none". Exit code 1 only for real failures. `make test-maclib` checks the
       numbers (expected after 4.1-4.5: 2214 macros = 2210 + IXGCON, IHBRDWRA, CPF, IGWRMRCD; 0 failed) and each
       listed non-assembler member by name so a new one cannot hide.
-- [ ] **4.7 regression**. Rerun `ZASM_MACLIB=../maclib_utf8 make test-maclib` (compile all,
+- [x] **4.7 regression**. Rerun `ZASM_MACLIB=../maclib_utf8 make test-maclib` (compile all,
       flat == structured, `#goto` count not worse than the 0 of the dispatch form),
       gcc + clang + ASan/UBSan (clean first, Makefile ignores flag changes), guide 16.4,
       DESIGN 16.1, wiki zosasm.md 11, STATUS numbers.
-- [ ] **4.8 (beyond "converted": equivalence)**. Nothing so far shows that a converted
+- [-] **4.8 (beyond "converted": equivalence)**. Nothing so far shows that a converted
       macro expands like HLASM; the structured/flat check only compares two
       conversions of the same macro. Oracle run on igor: for a sample of macros
       (all 2214 would need arguments), assemble `M args` with HLASM `as -a` using
@@ -247,3 +247,15 @@ mis-split comments), 3 x `declaration has no &` (accepted), 1 x `*PROCESS`.
 
 Order: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6 (small, independent, each with tests), 4.7, then
 4.8 as its own milestone. Expected effort: 4.1-4.6 about one session; 4.8 open-ended.
+
+Result (2026-11-21): `hlasm2za -macro-dir` on SYS1.MACLIB = 2080 members, 2214
+macros converted, 0 members failed, 122 warnings; not assembler (PL/X): ERBSTSGT
+ERBFITEM; no macro definition: 46 copybooks. `make test-maclib`: compile failures
+0, 4286 expansions compared, 0 differences, 0 `#goto`; `make test` gcc and
+clang+ASan+UBSan clean (the clang run also showed `h + 70 - 3` pointer arithmetic
+past a 69 byte array in `src/goff.c`, now `h + (70 - 3)`, no behaviour change).
+4.8 so far: the expansions of IXGCON (169 statements), IGWRMRCD (397), IHBRDWRA
+(34, with the OPTCD MNOTEs) and CPF (17, MF=L/E forms) equal HLASM R6.0's on igor
+(`tools/oracle_macro_cmp.py`: name, operation and first operand of every generated
+statement). The CPF branch with `MNOTE 4, 'text'` was not reached by those calls.
+Still open in 4.8: a systematic run over more macros.
