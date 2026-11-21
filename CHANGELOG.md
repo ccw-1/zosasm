@@ -6,6 +6,17 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 
 ## Unreleased
 
+* `hlasm2za` converts all of SYS1.MACLIB (2080 members, 2214 macros, 0 failed; was
+  2210 and 8 failed). Fixed: a comment line with a non-blank column 72 continues
+  on the next record (HLASM rule, `IXGCON`); `MNOTE` with a blank after the comma
+  or an unquoted message is passed on as a model statement (HLASM ASMA163W, no
+  message; `CPF`, `IHBRDWRA`); `LCLx @NAME` without `&` is accepted; a prototype
+  operand that is not a symbolic parameter is ignored with a warning (`IGWRMRCD`);
+  text after the last `MEND` of a member no longer counts as a failed macro
+  (`IRRPICRX`, `CBRSMF`). `-macro-dir` lists PL/X members, members without a
+  macro and failures separately, and exits 1 only for failures. Expansions of
+  `IXGCON`, `IGWRMRCD`, `IHBRDWRA` and `CPF` equal HLASM R6.0's
+  (`tools/oracle_macro_cmp.py`); the rest of the library is not compared (PLAN.md 4.8).
 * `-elf -g` writes the DWARF 4 into the ELF64 object as `.debug_*` sections
   with RELA relocations against the `.text.NAME` sections (`src/dbg_dwarf.c`,
   `dbg_build_elf`, `module_emit_elf_dbg`). Checked with readelf, ld and gdb

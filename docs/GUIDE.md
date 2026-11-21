@@ -1975,7 +1975,7 @@ a bad command line.
 | columns: names in column 1, continuation mark in column 72, sequence numbers in 73-80 | free form: the columns are cut, continued statements are joined and written again with a trailing comma where they are long |
 | `ICTL begin,end,continue` | honoured for the rest of the file, then dropped (the continuation column must lie between `begin` and `end`, otherwise the `ICTL` is ignored with a warning) |
 | lower case source | names, operations and operands in upper case; quoted strings stay as written; the digits of `X'..'` are upper cased |
-| `* comment`, `.* comment` | `* comment` |
+| `* comment`, `.* comment` | `* comment`; a comment whose column 72 is not blank continues on the next record(s), which stay part of the comment (as in HLASM) |
 | remark after an operation without operands (`CSECT`, `LTORG`, `PR`...) | a `* remark` comment line before the statement (zosasm would read it as operands) |
 | `YREGS` | `R0 EQU %r0` ... `R15 EQU %r15` |
 | `R12 EQU 12`, `BASE EQU R12` | `R12 EQU %r12`, `BASE EQU %r12` (see 16.2) |

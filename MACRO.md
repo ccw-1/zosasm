@@ -422,7 +422,7 @@ Only the **semantics** are carried over. Statement by statement:
 
 | HLASM | zosasm |
 |---|---|
-| `MACRO` / prototype / `MEND` | `#macro NAME(params) {` / `#}`; `&NAME` -> `name:` binding or `sys.label`; `&K=v` -> keyword parameter with default; stops at `MEND`, drops columns 73-80 and what follows `MEND` |
+| `MACRO` / prototype / `MEND` | `#macro NAME(params) {` / `#}`; `&NAME` -> `name:` binding or `sys.label`; `&K=v` -> keyword parameter with default; stops at `MEND`, drops columns 73-80; text after the last `MEND` of a library member (PL/X trailers) is not read |
 | `LCLA/B/C &X(n)` | `#let x = 0` / `0` / `""`, `#let x = list()` for arrays |
 | `GBLx` | `#global x = 0` / `""` (the first declaration's initial value) |
 | `&X SETA e`, `SETB`, `SETC` | `#x = e` (declared with `#let` where first assigned in the block) |
@@ -433,7 +433,10 @@ Only the **semantics** are carried over. Statement by statement:
 | `&NAME  DS 0H` | `&sys.label:  DS 0H` |
 | model statement with label `L1  LA ...` | `L1:  LA ...` (colon) |
 | `.* text` comment | `// text` |
-| `MNOTE sev,'text'` | `#note`, `#warning`, `#error` |
+| `MNOTE sev,'text'` | `#note`, `#warning`, `#error`; `MNOTE 4, 'text'` (blank after the comma) or an unquoted message: kept as a model statement, HLASM gives ASMA163W and no message (probed on HLASM R6.0) |
+| prototype operand that is not `&name[=default]` (`IGWRMRCD ... !`) | ignored with a warning (HLASM: ASMA025S, the macro is still defined) |
+| `LCLB @NAME` (no `&`) | read as `&@NAME` with a warning (HLASM accepts it silently) |
+| comment line (`*`, `.*`) with a non-blank column 72 | continues over the following records (HLASM rule; `IXGCON` has a `Macro` word in such a continuation) |
 | `&SYSNDX`, `&SYSECT`, `&SYSLIST(n)` | `sys.ndx`, `sys.sect`, `sys.args[n-1]` |
 | `ACTR` | dropped (the step limit replaces it) |
 | `AREAD`, `AINSERT`, `COPY`, `MACRO` inside a macro, `&SYSDATE`...`&SYSPARM` | `aread()`, `#insert`, inlined member, a macro of its own, `sys.*` |
