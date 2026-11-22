@@ -55,7 +55,9 @@ test-maclib: build/zosasm build/hlasm2za
 
 # MCP server leak check: build the test harness against src/mcp.c+util.c with
 # ASan/UBSan and require leak detection. Separate from core tests because
-# assembler-core process-lifetime allocations are intentional.
+# assembler-core process-lifetime allocations are intentional (one-shot CLI).
+# MCP is long-lived, so per-request/request-scope leaks are bugs; process-
+# lifetime caches (guide/tools_json/workspace strings) are reset in locate_reset().
 test-mcp-asan: build/zosasm-mcp
 	$(CC) $(STD) $(WARN) -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
 		-DZA_MCP_NO_MAIN -Isrc -I. -o build/test_mcp_asan tests/test_mcp.c src/util.c -lm \

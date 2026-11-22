@@ -92,6 +92,11 @@ through typed tools and read the user's guide (`docs/GUIDE.md`) through the
 `initialize` reply tells the agent where the guide is. Details: guide
 chapter 18, `DESIGN.md` section 18.
 
+`make test-mcp-asan` runs the MCP harness with ASan/UBSan+LSan
+(`detect_leaks=1`). Core assembler tests use `ASAN_OPTIONS=detect_leaks=0`
+because one-shot CLI allocations are intentional; MCP is long-lived, so
+request-scope leaks are treated as bugs.
+
 ## Regenerating the instruction table (developers only)
 
 You only need this to change or refresh the instruction set.
