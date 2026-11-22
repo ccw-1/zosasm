@@ -1423,7 +1423,7 @@ static void tool_preprocess(const J *args, Buf *out) {
     w_key(&st, &first, "preprocessed");
     w_str(&st, r.out.p ? r.out.p : "", r.out.len > MAX_TEXT ? MAX_TEXT : r.out.len);
     w_key(&st, &first, "diagnostics");
-    w_str(&st, r.err.p ? r.err.p : "", r.err.len);
+    w_str(&st, r.err.p ? r.err.p : "", r.err.len > MAX_TEXT ? MAX_TEXT : r.err.len);
     buf_putc(&st, '}');
     tool_result(out, buf_cstr(&text), text.len, buf_cstr(&st), r.status != 0);
 done:
@@ -1491,7 +1491,7 @@ static void simple_result(Buf *out, const char *what, Run *r, const char *key, T
     w_key(&st, &first, key);
     w_str(&st, r->out.p ? r->out.p : "", r->out.len > MAX_TEXT ? MAX_TEXT : r->out.len);
     w_key(&st, &first, "diagnostics");
-    w_str(&st, r->err.p ? r->err.p : "", r->err.len);
+    w_str(&st, r->err.p ? r->err.p : "", r->err.len > MAX_TEXT ? MAX_TEXT : r->err.len);
     buf_putc(&st, '}');
     tool_result(out, buf_cstr(&text), text.len, buf_cstr(&st), r->status != 0);
     free(text.p);
@@ -1969,7 +1969,6 @@ static int list_examples(ArgVec *names) {
 static void resources_list(Buf *out) {
     ArgVec ex = {0};
     size_t i;
-    int first = 1;
     buf_puts(out, "{\"resources\":[");
     buf_puts(out,
              "{\"uri\":\"zosasm://guide\",\"name\":\"guide\",\"title\":\"zosasm user's guide\","
@@ -1977,11 +1976,12 @@ static void resources_list(Buf *out) {
              "recipes, HLASM conversion, ELF output.\",\"mimeType\":\"text/markdown\"}");
     list_examples(&ex);
     for (i = 0; i < ex.n; i++) {
+        char *uri = xasprintf("zosasm://examples/%s", ex.v[i]);
+        int first = 1;
         buf_putc(out, ',');
-        first = 1;
         buf_putc(out, '{');
         w_key(out, &first, "uri");
-        w_cstr(out, xasprintf("zosasm://examples/%s", ex.v[i]));
+        w_cstr(out, uri);
         w_key(out, &first, "name");
         w_cstr(out, ex.v[i]);
         w_key(out, &first, "description");
@@ -1989,7 +1989,10 @@ static void resources_list(Buf *out) {
         w_key(out, &first, "mimeType");
         w_cstr(out, "text/plain");
         buf_putc(out, '}');
+        free(uri);
+        free(ex.v[i]);
     }
+    free(ex.v);
     buf_puts(out, "]}");
 }
 
@@ -2032,7 +2035,7 @@ static int resource_read(const char *uri, Buf *out) {
     if (!strcmp(uri, "zosasm://guide")) {
         size_t i;
         g = load_guide();
-        if (!g) return 0;
+        if (!g) { free(text.p); return 0; }
         for (i = 0; i < g->lines.n; i++) {
             buf_puts(&text, g->lines.v[i]);
             buf_putc(&text, '\n');
@@ -2042,21 +2045,25 @@ static int resource_read(const char *uri, Buf *out) {
         char *q = url_decode(uri + 23);
         int amb, hi;
         g = load_guide();
-        if (!g) return 0;
+        if (!g) { free(q); free(text.p); return 0; }
         hi = find_heading(g, q, &amb);
-        if (hi < 0) return 0;
+        free(q);
+        if (hi < 0) { free(text.p); return 0; }
         guide_section(g, hi, &text);
         mime = "text/markdown";
     } else if (!strncmp(uri, "zosasm://examples/", 18)) {
         const char *name = uri + 18;
         char *path, *t;
         size_t n;
-        if (!plain_name(name)) return 0;
+        if (!plain_name(name)) { free(text.p); return 0; }
         path = xasprintf("%s/examples/%s", g_docdir, name);
         t = read_whole(path, &n);
-        if (!t) return 0;
+        free(path);
+        if (!t) { free(text.p); return 0; }
         buf_write(&text, t, n);
+        free(t);
     } else {
+        free(text.p);
         return 0;
     }
     buf_puts(out, "{\"contents\":[{");
@@ -2069,8 +2076,10 @@ static int resource_read(const char *uri, Buf *out) {
         Buf shown = {0};
         text_cap(&shown, text.p ? text.p : "", text.len);
         w_str(out, shown.p ? shown.p : "", shown.len);
+        free(shown.p);
     }
     buf_puts(out, "}]}");
+    free(text.p);
     return 1;
 }
 
@@ -2167,8 +2176,11 @@ static void dispatch(const J *msg, Buf *r) {
     } else if (!strcmp(method, "ping")) {
         reply_result(id, "{}");
     } else if (!strcmp(method, "tools/list")) {
-        buf_printf(r, "{\"tools\":%s}", tools_json());
-        reply_result(id, buf_cstr(r));
+        {
+            const char *tj = tools_json();
+            if (strlen(tj) > MAX_TEXT) reply_error(id, -32603, "tool list too large");
+            else { buf_printf(r, "{\"tools\":%s}", tj); reply_result(id, buf_cstr(r)); }
+        }
     } else if (!strcmp(method, "tools/call")) {
         const char *name = params ? jstr(params, "name") : NULL;
         J *args = params ? jget(params, "arguments") : NULL;
@@ -2190,7 +2202,8 @@ static void dispatch(const J *msg, Buf *r) {
         }
     } else if (!strcmp(method, "resources/list")) {
         resources_list(r);
-        reply_result(id, buf_cstr(r));
+        if (r->len > MAX_TEXT) { r->len = 0; reply_error(id, -32603, "resource list too large"); }
+        else reply_result(id, buf_cstr(r));
     } else if (!strcmp(method, "resources/templates/list")) {
         resources_templates(r);
         reply_result(id, buf_cstr(r));
@@ -2200,6 +2213,9 @@ static void dispatch(const J *msg, Buf *r) {
             reply_error(id, -32602, "resources/read needs a uri");
         } else if (!resource_read(uri, r)) {
             reply_error(id, -32002, "resource not found");
+        } else if (r->len > MAX_TEXT) {
+            r->len = 0;
+            reply_error(id, -32603, "resource too large");
         } else {
             reply_result(id, buf_cstr(r));
         }

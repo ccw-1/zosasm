@@ -1240,7 +1240,10 @@ void dir_dc(Asm *a, Stmt *st) {
             int64_t l = vals.n > 0 ? (int64_t)vals.v[0].n : 0;
             Symbol *ls = asm_define_label(a, st, l, sp.typ);
             if (ls) {
-                ls->count = sp.dup * (int64_t)vals.n;
+                uint64_t lcount = (uint64_t)sp.dup * (uint64_t)vals.n;
+                if (sp.dup < 0 || (vals.n != 0 && lcount / (uint64_t)vals.n != (uint64_t)sp.dup) || lcount > (uint64_t)INT64_MAX)
+                    lcount = (uint64_t)INT64_MAX;
+                ls->count = (int64_t)lcount;
                 ls->align = sp.has_len ? 1 : (int)dc_alignment(&sp);
                 if (sp.has_scale) ls->scale = (int)sp.scale;
             }
