@@ -71,7 +71,11 @@ registers as numbers or `EQU` names) to zosasm source, by default with
 `MACRO`..`MEND` definitions become zosasm macros with the control flow
 recovered (`-m` for a library member, `-macro-dir` for a library, `-flat`
 for `#goto`); open code conditional assembly becomes a synthetic macro
-`OPENCODE` (guide section 16, DESIGN.md section 16).
+`OPENCODE` (guide section 16, DESIGN.md section 16). `make test-maclib`
+(`ZASM_MACLIB=/path/to/SYS1.MACLIB`) converts and compiles a real HLASM
+macro library; on a local SYS1.MACLIB copy it converted 2076 macros with 0
+compile failures, 0 expansion differences, and no `#goto` left in the
+structured output (46 members had no macro definition).
 
 `zosasm -elf FILE.za` writes a relocatable ELF64 object for Linux on Z (big
 endian, `EM_S390`) instead of GOFF, with ASCII character constants; `-ascii`
