@@ -566,7 +566,9 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "zosasm: %s: %s\n", dbgname, strerror(errno));
                 if (df) fclose(df);
                 remove(tmpdbg);
+                free(tmpdbg);
                 remove(tmpobj);
+                free(tmpobj);
                 return 1;
             }
         }
@@ -575,28 +577,33 @@ int main(int argc, char **argv) {
             fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
             if (f) fclose(f);
             remove(tmpobj);
-            if (tmpdbg) remove(tmpdbg);
+            free(tmpobj);
+            if (tmpdbg) { remove(tmpdbg); free(tmpdbg); }
             return 1;
         }
         if (rename(tmpobj, outname) != 0) {
             fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
             remove(tmpobj);
-            if (tmpdbg) remove(tmpdbg);
+            free(tmpobj);
+            if (tmpdbg) { remove(tmpdbg); free(tmpdbg); }
             return 1;
         }
         if (tmpdbg && rename(tmpdbg, dbgname) != 0) {
             fprintf(stderr, "zosasm: %s: %s\n", dbgname, strerror(errno));
             remove(tmpdbg);
+            free(tmpdbg);
+            free(tmpobj);
             return 1;
         }
+        free(tmpobj);
+        free(tmpdbg);
     } else if (strcmp(outname, "/dev/null") == 0) {
         f = fopen(outname, "wb");
-        if (!f || fwrite(obj, 1, olen, f) != olen) {
+        if (!f || fwrite(obj, 1, olen, f) != olen || fclose(f) != 0) {
             fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
             if (f) fclose(f);
             return 1;
         }
-        fclose(f);
     } else {
         char *tmpobj = xasprintf("%s.tmp.%d", outname, (int)getpid());
         f = fopen(tmpobj, "wb");
