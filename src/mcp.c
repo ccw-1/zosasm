@@ -1690,9 +1690,14 @@ static void tool_guide(const J *args, Buf *out) {
         } else {
             int amb, hi = find_heading(g, sec, &amb);
             if (hi < 0) {
+                Buf shown = {0};
                 buf_printf(&text, "no section \"%s\". Contents:\n", sec);
                 guide_contents(g, &text);
-                tool_result(out, buf_cstr(&text), text.len, NULL, 1);
+                text_cap(&shown, text.p ? text.p : "", text.len);
+                tool_result(out, buf_cstr(&shown), shown.len, NULL, 1);
+                free(shown.p);
+                free(text.p);
+                free(st.p);
                 return;
             }
             if (amb) buf_printf(&text, "[%s matches several headings; showing the first, give a section number to be exact]\n\n", sec);
@@ -1713,12 +1718,12 @@ static void tool_guide(const J *args, Buf *out) {
     buf_putc(&st, '{');
     w_key(&st, &first, "guide_path");
     w_cstr(&st, g_guide);
-    w_key(&st, &first, "text");
-    w_str(&st, text.p ? text.p : "", text.len > MAX_TEXT ? MAX_TEXT : text.len);
-    buf_putc(&st, '}');
     {
         Buf shown = {0};
         text_cap(&shown, text.p ? text.p : "", text.len);
+        w_key(&st, &first, "text");
+        w_str(&st, shown.p ? shown.p : "", shown.len);
+        buf_putc(&st, '}');
         tool_result(out, buf_cstr(&shown), shown.len, buf_cstr(&st), 0);
         free(shown.p);
     }
