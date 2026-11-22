@@ -231,15 +231,20 @@ static int do_disasm(const char *path, const char *out, int generic) {
     if (out && strcmp(out, "/dev/null") != 0) {
         char *tmp = xasprintf("%s.tmp.%d", out, (int)getpid());
         f = fopen(tmp, "wb");
-        if (!f || fwrite(text, 1, tlen, f) != tlen || fclose(f) != 0) {
-            fprintf(stderr, "zosasm: %s: %s\n", out, strerror(errno));
-            if (f) fclose(f);
-            remove(tmp);
-            return 1;
+        {
+            int ok = f != NULL && fwrite(text, 1, tlen, f) == tlen;
+            if (f && fclose(f) != 0) ok = 0;
+            if (!ok) {
+                fprintf(stderr, "zosasm: %s: %s\n", out, strerror(errno));
+                remove(tmp);
+                free(tmp);
+                return 1;
+            }
         }
         if (rename(tmp, out) != 0) {
             fprintf(stderr, "zosasm: %s: %s\n", out, strerror(errno));
             remove(tmp);
+            free(tmp);
             return 1;
         }
         free(tmp);
