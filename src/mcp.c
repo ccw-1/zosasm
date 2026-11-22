@@ -566,7 +566,13 @@ static int tmp_open(Tmp *t) {
     if (!base || !*base) base = "/tmp";
     tpl = xasprintf("%s/zosasm-mcp-XXXXXX", base);
     t->dir = mkdtemp(tpl);
-    return t->dir != NULL;
+    if (t->dir) {
+        t->dir = tpl;
+        return 1;
+    }
+    free(tpl);
+    t->dir = NULL;
+    return 0;
 }
 
 static char *tmp_path(Tmp *t, const char *name) {

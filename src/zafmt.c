@@ -50,11 +50,15 @@ static int write_out(const char *path, const char *s) {
             free(tmp);
             return 0;
         }
-        if ((n && fwrite(s, 1, n, f) != n) || fclose(f) != 0) {
-            fprintf(stderr, "zafmt: %s: write error\n", path);
-            remove(tmp);
-            free(tmp);
-            return 0;
+        {
+            int ok = n == 0 || fwrite(s, 1, n, f) == n;
+            if (fclose(f) != 0) ok = 0;
+            if (!ok) {
+                fprintf(stderr, "zafmt: %s: %s\n", path, strerror(errno));
+                remove(tmp);
+                free(tmp);
+                return 0;
+            }
         }
         if (rename(tmp, path) != 0) {
             fprintf(stderr, "zafmt: %s: %s\n", path, strerror(errno));

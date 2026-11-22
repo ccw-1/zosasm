@@ -490,10 +490,12 @@ int main(int argc, char **argv) {
             if (fclose(f) != 0) { fprintf(stderr, "zosasm: %s: %s\n", listfile, strerror(errno)); return 1; }
         } else {
             char *tmp = xasprintf("%s.tmp.%d", listfile, (int)getpid());
+            int ok;
             f = fopen(tmp, "wb");
             if (!f) { fprintf(stderr, "zosasm: %s: %s\n", listfile, strerror(errno)); free(tmp); return 1; }
             listing_write(f, mod, &lines, &events, rep, &lo);
-            if (fclose(f) != 0) { fprintf(stderr, "zosasm: %s: %s\n", listfile, strerror(errno)); remove(tmp); free(tmp); return 1; }
+            ok = fclose(f) == 0;
+            if (!ok) { fprintf(stderr, "zosasm: %s: %s\n", listfile, strerror(errno)); remove(tmp); free(tmp); return 1; }
             if (rename(tmp, listfile) != 0) { fprintf(stderr, "zosasm: %s: %s\n", listfile, strerror(errno)); remove(tmp); free(tmp); return 1; }
             free(tmp);
         }
