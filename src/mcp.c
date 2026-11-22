@@ -1716,9 +1716,7 @@ static void tool_guide(const J *args, Buf *out) {
                 text_cap(&shown, text.p ? text.p : "", text.len);
                 tool_result(out, buf_cstr(&shown), shown.len, NULL, 1);
                 free(shown.p);
-                free(text.p);
-                free(st.p);
-                return;
+                goto done;
             }
             if (amb) buf_printf(&text, "[%s matches several headings; showing the first, give a section number to be exact]\n\n", sec);
             guide_section(g, hi, &text);
@@ -1747,6 +1745,7 @@ static void tool_guide(const J *args, Buf *out) {
         tool_result(out, buf_cstr(&shown), shown.len, buf_cstr(&st), 0);
         free(shown.p);
     }
+done:
     free(text.p);
     free(st.p);
 }
