@@ -302,7 +302,21 @@ static void excerpt(const Reporter *r, FILE *w, Span sp, const char *label, Seve
     cnt = (col + n <= tlen) ? (int)utf8_count(text + col, n) : (int)n;
     if (cnt < 1) cnt = 1;
     fprintf(w, "%*s | ", npad, "");
-    for (i = 0; i < col; i++) fputc(text[i] == '\t' ? '\t' : ' ', w);
+    {
+        size_t bi = 0;
+        while (bi < col && bi < tlen) {
+            unsigned char c = (unsigned char)text[bi];
+            size_t sl = 1;
+            if (c == '\t') { fputc('\t', w); bi++; continue; }
+            if (c < 0x80) sl = 1;
+            else if (c < 0xE0) sl = 2;
+            else if (c < 0xF0) sl = 3;
+            else sl = 4;
+            if (bi + sl > tlen) sl = tlen - bi;
+            fputc(' ', w);
+            bi += sl;
+        }
+    }
     paint_on(w, color, sev_color(sev));
     for (i = 0; i < (size_t)cnt; i++) fputc('^', w);
     if (label && *label) fprintf(w, " %s", label);
