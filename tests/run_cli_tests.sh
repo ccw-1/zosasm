@@ -1,6 +1,5 @@
 #!/bin/sh
 # Command line tests of build/zosasm.
-set -e
 X=build/zosasm
 T=build/cli_tmp
 fail=0
