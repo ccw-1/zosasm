@@ -1260,32 +1260,51 @@ void dir_dc(Asm *a, Stmt *st) {
                           "use a byte length, for example `AL4`");
                 continue;
             }
-            if (sp.dup > 0 && vals.n > 0 &&
-                (uint64_t)sp.dup * (uint64_t)vals.n * (uint64_t)sp.bits / 8 >
-                    (uint64_t)ZA_MAX_LOC) {
-                diag_help(dc_err(a, st, "ZA2087", sp.off, sp.n,
-                                 "DC would need %llu bytes of bit storage; the limit for one "
-                                 "section is %lld bytes",
-                                 (unsigned long long)((uint64_t)sp.dup * (uint64_t)vals.n *
-                                                      (uint64_t)sp.bits / 8),
-                                 (long long)ZA_MAX_LOC),
-                          "GOFF stores class lengths and text offsets in 32 bits");
-                continue;
+            if (sp.dup > 0 && vals.n > 0) {
+                uint64_t items = (uint64_t)sp.dup * (uint64_t)vals.n;
+                uint64_t bits = items * (uint64_t)sp.bits;
+                uint64_t bytes = bits / 8;
+                if ((vals.n != 0 && items / (uint64_t)vals.n != (uint64_t)sp.dup) ||
+                    (items != 0 && bits / items != (uint64_t)sp.bits) ||
+                    bytes > (uint64_t)ZA_MAX_LOC) {
+                    diag_help(dc_err(a, st, "ZA2087", sp.off, sp.n,
+                                     "DC would need %llu bytes of bit storage; the limit for one "
+                                     "section is %lld bytes",
+                                     (unsigned long long)bytes,
+                                     (long long)ZA_MAX_LOC),
+                              "GOFF stores class lengths and text offsets in 32 bits");
+                    continue;
+                }
+                if (!is_ds && bytes > (uint64_t)(1u << 30)) {
+                    rep_errorf(a->rep, "ZA2087", st->op_span, "DC expansion is too large");
+                    continue;
+                }
             }
             for (r = 0; r < sp.dup; r++)
                 for (j = 0; j < vals.n; j++) bits_add(&acc, &vals.v[j], sp.bits, left);
             continue;
         }
         for (j = 0; j < vals.n; j++) total += (int64_t)vals.v[j].n;
-        if (sp.dup > 0 && total > 0 && (uint64_t)total * (uint64_t)sp.dup > (uint64_t)ZA_MAX_LOC) {
-            diag_help(dc_err(a, st, "ZA2087", sp.off, sp.n,
-                             "%s would need %llu bytes of storage; the limit for one section is "
-                             "%lld bytes",
-                             is_ds ? "DS" : "DC",
-                             (unsigned long long)total * (unsigned long long)sp.dup,
-                             (long long)ZA_MAX_LOC),
-                      "GOFF stores class lengths and text offsets in 32 bits");
+        if (sp.dup < 0 || (vals.n != 0 && (uint64_t)sp.dup > (uint64_t)INT64_MAX / (uint64_t)(vals.n ? vals.n : 1))) {
+            rep_errorf(a->rep, "ZA2087", st->op_span, "DC duplication factor is too large");
             continue;
+        }
+        if (sp.dup > 0 && total > 0) {
+            uint64_t bytes = (uint64_t)total * (uint64_t)sp.dup;
+            if (bytes / (uint64_t)sp.dup != (uint64_t)total || bytes > (uint64_t)ZA_MAX_LOC) {
+                diag_help(dc_err(a, st, "ZA2087", sp.off, sp.n,
+                                 "%s would need %llu bytes of storage; the limit for one section is "
+                                 "%lld bytes",
+                                 is_ds ? "DS" : "DC",
+                                 (unsigned long long)bytes > (unsigned long long)ZA_MAX_LOC ? (unsigned long long)bytes : (unsigned long long)bytes,
+                                 (long long)ZA_MAX_LOC),
+                          "GOFF stores class lengths and text offsets in 32 bits");
+                continue;
+            }
+            if (!is_ds && bytes > (uint64_t)(1u << 30)) {
+                rep_errorf(a->rep, "ZA2087", st->op_span, "DC expansion is too large");
+                continue;
+            }
         }
         if (is_ds) {
             asm_advance(a, total * sp.dup);
