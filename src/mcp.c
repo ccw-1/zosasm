@@ -496,13 +496,19 @@ static unsigned char *read_binary(const char *path, size_t *len) {
 }
 
 static int write_whole(const char *path, const void *data, size_t n) {
-    FILE *f = fopen(path, "wb");
-    if (!f) return 0;
+    char *tmp = xasprintf("%s.tmp.%d", path, (int)getpid());
+    FILE *f = fopen(tmp, "wb");
+    if (!f) { free(tmp); return 0; }
     if (n && fwrite(data, 1, n, f) != n) {
         fclose(f);
+        remove(tmp);
+        free(tmp);
         return 0;
     }
-    return fclose(f) == 0;
+    if (fclose(f) != 0) { remove(tmp); free(tmp); return 0; }
+    if (rename(tmp, path) != 0) { remove(tmp); free(tmp); return 0; }
+    free(tmp);
+    return 1;
 }
 
 static const char b64chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -246,14 +247,28 @@ int zsrc_unpack(const ZSrc *z, const char *dir, FILE *out) {
             char *path = safe_path(base, x->name);
             FILE *f;
             if (!make_dirs(path)) return -1;
-            f = fopen(path, "wb");
-            if (!f) {
-                fprintf(stderr, "zosasm: %s: %s\n", path, strerror(errno));
-                return -1;
-            }
-            if ((x->len && fwrite(x->data, 1, x->len, f) != x->len) || fclose(f) != 0) {
-                fprintf(stderr, "zosasm: %s: %s\n", path, strerror(errno));
-                return -1;
+            {
+                char *tmp = xasprintf("%s.tmp.%d", path, (int)getpid());
+                f = fopen(tmp, "wb");
+                if (!f) {
+                    fprintf(stderr, "zosasm: %s: %s\n", path, strerror(errno));
+                    free(tmp);
+                    return -1;
+                }
+                if ((x->len && fwrite(x->data, 1, x->len, f) != x->len) || fclose(f) != 0) {
+                    fprintf(stderr, "zosasm: %s: %s\n", path, strerror(errno));
+                    fclose(f);
+                    remove(tmp);
+                    free(tmp);
+                    return -1;
+                }
+                if (rename(tmp, path) != 0) {
+                    fprintf(stderr, "zosasm: %s: %s\n", path, strerror(errno));
+                    remove(tmp);
+                    free(tmp);
+                    return -1;
+                }
+                free(tmp);
             }
             if (out) fprintf(out, "%s\n", path);
             count++;
