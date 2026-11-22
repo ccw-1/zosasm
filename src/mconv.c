@@ -1412,6 +1412,7 @@ char *mconv_macro(const MHStmtVec *st, const MConvOptions *o, char **why) {
     for (first = 0; first < st->n && st->v[first].kind != MH_STMT; first++) {}
     if (first >= st->n) {
         if (why) *why = xstrdup("the macro has no prototype statement");
+        free(out.p); free(body.p); free(inner.p);
         return NULL;
     }
     m.line = st->v[first].line;
@@ -1441,9 +1442,14 @@ char *mconv_macro(const MHStmtVec *st, const MConvOptions *o, char **why) {
             itext = mconv_macro(&sub, o, &iwhy);
             if (!itext) {
                 fail(&m, "the nested macro is not converted (%s)", iwhy ? iwhy : "?");
+                free(iwhy);
+                free(sub.v);
                 break;
             }
             buf_puts(&inner, itext);
+            free(itext);
+            free(iwhy);
+            free(sub.v);
             k = e;
             continue;
         }
@@ -1469,11 +1475,15 @@ char *mconv_macro(const MHStmtVec *st, const MConvOptions *o, char **why) {
                 n->text = xasprintf("#error %s", msg);
             else
                 n->text = xasprintf("#if (%s) {\n    #error %s\n#}", n->cond, msg);
+            free(msg);
             n->k = N_CODE;
         }
     }
     if (m.why) {
         if (why) *why = xasprintf("line %d: %s", m.line, m.why);
+        free(out.p);
+        free(body.p);
+        free(inner.p);
         return NULL;
     }
     for (pre = 0; pre < first; pre++) {
@@ -1498,9 +1508,16 @@ char *mconv_macro(const MHStmtVec *st, const MConvOptions *o, char **why) {
         }
         if (mflow_write(&body, &m.nodes, o->flat ? MF_FLAT : o->keep_goto ? MF_KEEPGOTO : MF_STRUCT, pc) < 0 && o->warn)
             o->warn(o->user, m.line, "flow could not be structured, written with #goto");
+        free(pc);
     }
     buf_puts(&out, buf_cstr(&body));
     buf_puts(&out, "#}\n");
     if (why) *why = NULL;
-    return xstrdup(buf_cstr(&out));
+    {
+        char *res = xstrdup(buf_cstr(&out));
+        free(out.p);
+        free(body.p);
+        free(inner.p);
+        return res;
+    }
 }
