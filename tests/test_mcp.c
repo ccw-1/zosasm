@@ -256,6 +256,11 @@ static void test_requests(void) {
     CHECK_MSG(strstr(r, "isError") != NULL, "bad base64");
     free(r);
 
+    /* missing file path is an error, not a crash */
+    r = rpc("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_assemble\",\"arguments\":{\"path\":\"no-such-file.za\"}}}");
+    CHECK_MSG(strstr(r, "isError") != NULL || strstr(r, "error") != NULL, "missing path");
+    free(r);
+
     r = rpc("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"prompts/list\"}");
     CHECK_MSG(strstr(r, "\"prompts\"") != NULL, "prompts/list");
     free(r);

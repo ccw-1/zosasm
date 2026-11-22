@@ -3,6 +3,24 @@
 A cross assembler for an HLASM-like language that writes z/OS GOFF object
 files. Portable C99; it needs only a C compiler and `make`.
 
+Two workflows are supported:
+
+* **Assemble zosasm source** (`.za`) directly into a GOFF object.
+* **Convert existing HLASM source** (`.asm`) into zosasm source with
+  `hlasm2za`, then assemble it — including HLASM `MACRO`..`MEND` definitions,
+  which are recovered as zosasm macros.
+
+## Quick start: convert HLASM to a GOFF object
+
+```sh
+make                              # build zosasm,hlasm2za,zafmt,zosasm-mcp
+
+build/hlasm2za old.asm            # HLASM source -> old.za (zosasm source)
+build/zosasm -o old.o old.za      # assemble old.za -> GOFF object
+build/zosasm -dump old.o          # print the GOFF structure (ESD/TXT/RLD/END)
+build/zosasm -disasm old.o -o back.za   # GOFF object -> zosasm source
+```
+
 ## Building
 
 ```sh
@@ -15,7 +33,32 @@ Any C99 compiler works (`make CC=clang`). No generator, python or other tool
 is run at build time: the instruction table (`src/isa_tab.c`) and the EBCDIC
 tables (`src/ebcdic_tab.c`) are generated files that are checked in.
 
-## Using it
+## Converting from HLASM (`hlasm2za`)
+
+`hlasm2za FILE.asm` reads HLASM source (card columns, upper case, `COPY`,
+registers as numbers or `EQU` names) and writes zosasm source, by default
+with `%r1` registers so that the result assembles with `-strict-registers`.
+
+Key conversions:
+
+* `MACRO`..`MEND` definitions become zosasm macros (`#macro ... #}`) with
+  the control flow recovered — `IF/AGO` branches are turned into structured
+  `#if/#while/#switch` plus a dispatch loop, so no `#goto` is left in the
+  structured output (`-keep-goto` preserves the old form).
+* Open-code conditional assembly (`AIF`, `AGO`, `ANOP`, `LCL`, `GBL`, `SETA`,
+  `SETB`, `SETC`) becomes a synthetic macro `OPENCODE`.
+* `COPY` becomes `#insert`; `&SYS*` symbols map to `sys.loc|date|datc|time|parm`.
+
+Library options: `-m` (single library member), `-macro-dir` (whole library),
+`-flat` (`#goto` form), `-copy-dir`, `-sysparm STR`. `make test-maclib`
+(`ZASM_MACLIB=/path/to/SYS1.MACLIB`) converts and compiles a real HLASM macro
+library; on a local SYS1.MACLIB copy it converted 2076 macros with 0 compile
+failures, 0 expansion differences, and no `#goto` left in the structured
+output (46 members had no macro definition).
+
+Guide: `docs/GUIDE.md` section 16; `DESIGN.md` section 16.
+
+## Using zosasm
 
 ```sh
 build/zosasm -o hello.o testdata/hello.za   # assemble
@@ -23,7 +66,6 @@ build/zosasm -dump hello.o                  # print the GOFF structure
 build/zosasm -disasm hello.o -o back.za     # GOFF object -> zosasm source
 build/zosasm -E prog.za                     # show the preprocessed source
 build/zosasm -l prog.lst -o prog.o prog.za  # assemble and write a listing
-build/hlasm2za old.asm                      # HLASM source -> zosasm source (old.za)
 build/zosasm -elf -o prog.o prog.za         # ELF64 s390x object for Linux on Z
 build/zafmt -i prog.za                      # format the source (guide chapter 20)
 build/zosasm -g -gdir /u/me -o prog.o prog.za  # debug info for LLDB inside prog.o (chapter 21); -gside adds prog.dbg for dbx
@@ -61,26 +103,13 @@ Registers can be written as numbers, as names you defined (`R1 EQU 1`; a bare
 `-strict-registers` only the GNU style and names made with `NAME EQU %r12`
 are accepted in register positions (guide section 6.1).
 
-Macros: a C-like macro language (`#macro NAME(a, b = 1) {` ... `#}`, `#if`,
-`#for`, `#switch`, `&name` substitution, library lookup with `-M`) gives the
-power of HLASM conditional assembly (guide chapter 19, `MACRO.md`).
+## HLASM macros
 
-`hlasm2za FILE.asm` converts HLASM source (card columns, upper case, `COPY`,
-registers as numbers or `EQU` names) to zosasm source, by default with
-`%r1` registers so that the result assembles with `-strict-registers`.
-`MACRO`..`MEND` definitions become zosasm macros with the control flow
-recovered (`-m` for a library member, `-macro-dir` for a library, `-flat`
-for `#goto`); open code conditional assembly becomes a synthetic macro
-`OPENCODE` (guide section 16, DESIGN.md section 16). `make test-maclib`
-(`ZASM_MACLIB=/path/to/SYS1.MACLIB`) converts and compiles a real HLASM
-macro library; on a local SYS1.MACLIB copy it converted 2076 macros with 0
-compile failures, 0 expansion differences, and no `#goto` left in the
-structured output (46 members had no macro definition).
-
-`zosasm -elf FILE.za` writes a relocatable ELF64 object for Linux on Z (big
-endian, `EM_S390`) instead of GOFF, with ASCII character constants; `-ascii`
-and `-charset ascii|ebcdic` choose the character set separately (guide
-section 17, DESIGN.md section 17).
+zosasm's macro language (`#macro NAME(a, b = 1) {` ... `#}`, `#if`, `#for`,
+`#switch`, `&name` substitution, library lookup with `-M`) gives the power of
+HLASM conditional assembly (guide chapter 19, `MACRO.md`). `hlasm2za` converts
+existing HLASM `MACRO`..`MEND` definitions into these zosasm macros, recovering
+the control flow so the result is structured (`-m`, `-macro-dir`, `-flat`).
 
 ## For AI agents
 

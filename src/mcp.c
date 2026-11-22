@@ -23,6 +23,7 @@
 
 #define PROTOCOL_LATEST "2025-06-18"
 #define MAX_TEXT (1024 * 1024) /* longest text returned in one result */
+#define MAX_READ (8 * 1024 * 1024) /* max file read into MCP memory */
 #define MAX_REQUEST (16 * 1024 * 1024) /* longest JSON-RPC line read */
 
 /* ====================================================================
