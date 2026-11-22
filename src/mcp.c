@@ -1750,11 +1750,13 @@ static void tool_guide(const J *args, Buf *out) {
     "\"macro_steps\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"Stop a macro expansion " \
     "after this many statements (-macro-steps, default 1000000).\"}"
 
+static char *g_tools_json;
 static const char *tools_json(void) {
-    static char *s;
     char *g, *tmp;
-    Buf b = {0};
-    if (s) return s;
+    Buf b = {0}, o = {0}, gp = {0};
+    const char *p;
+    size_t gl;
+    if (g_tools_json) return g_tools_json;
     g = g_guide;
     buf_puts(&b, "[");
     /* zosasm_assemble */
@@ -1906,25 +1908,25 @@ static const char *tools_json(void) {
         "\"annotations\":{\"readOnlyHint\":true,\"openWorldHint\":false}}");
     buf_puts(&b, "]");
     tmp = xstrdup(buf_cstr(&b));
+    free(b.p);
     /* @GUIDE@ -> the guide's path, escaped for JSON */
-    {
-        Buf o = {0}, gp = {0};
-        const char *p = tmp;
-        size_t gl;
-        w_cstr(&gp, g);
-        /* w_cstr adds the quotes; strip them */
-        gl = gp.len - 2;
-        while (*p) {
-            if (!strncmp(p, "@GUIDE@", 7)) {
-                buf_write(&o, gp.p + 1, gl);
-                p += 7;
-            } else {
-                buf_putc(&o, *p++);
-            }
+    w_cstr(&gp, g);
+    /* w_cstr adds the quotes; strip them */
+    gl = gp.len >= 2 ? gp.len - 2 : 0;
+    p = tmp;
+    while (*p) {
+        if (!strncmp(p, "@GUIDE@", 7)) {
+            buf_write(&o, gp.p + 1, gl);
+            p += 7;
+        } else {
+            buf_putc(&o, *p++);
         }
-        s = xstrdup(buf_cstr(&o));
     }
-    return s;
+    free(gp.p);
+    free(tmp);
+    g_tools_json = xstrdup(buf_cstr(&o));
+    free(o.p);
+    return g_tools_json;
 }
 
 static void tool_call(const char *name, const J *args, Buf *out) {
@@ -1953,10 +1955,11 @@ static int list_examples(ArgVec *names) {
     DIR *d = opendir(dir);
     struct dirent *e;
     size_t i, j;
-    if (!d) return 0;
+    if (!d) { free(dir); return 0; }
     while ((e = readdir(d)) != NULL)
         if (e->d_name[0] != '.') vec_push(names, xstrdup(e->d_name));
     closedir(d);
+    free(dir);
     for (i = 1; i < names->n; i++) /* insertion sort */
         for (j = i; j > 0 && strcmp(names->v[j - 1], names->v[j]) > 0; j--) {
             char *t = names->v[j];
@@ -2013,6 +2016,7 @@ static int hexval(int c) {
 
 static char *url_decode(const char *s) {
     Buf b = {0};
+    char *r;
     for (; *s; s++) {
         if (*s == '%' && hexval(s[1]) >= 0 && hexval(s[2]) >= 0) {
             buf_putc(&b, hexval(s[1]) * 16 + hexval(s[2]));
@@ -2023,7 +2027,9 @@ static char *url_decode(const char *s) {
             buf_putc(&b, *s);
         }
     }
-    return xstrdup(buf_cstr(&b));
+    r = xstrdup(buf_cstr(&b));
+    free(b.p);
+    return r;
 }
 
 /* returns 1 and fills the result, or 0 when the uri is unknown */
@@ -2206,7 +2212,8 @@ static void dispatch(const J *msg, Buf *r) {
         else reply_result(id, buf_cstr(r));
     } else if (!strcmp(method, "resources/templates/list")) {
         resources_templates(r);
-        reply_result(id, buf_cstr(r));
+        if (r->len > MAX_TEXT) { r->len = 0; reply_error(id, -32603, "resource templates too large"); }
+        else reply_result(id, buf_cstr(r));
     } else if (!strcmp(method, "resources/read")) {
         const char *uri = params ? jstr(params, "uri") : NULL;
         if (!uri) {
