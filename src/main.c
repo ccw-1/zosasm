@@ -570,14 +570,17 @@ int main(int argc, char **argv) {
             FILE *df;
             tmpdbg = xasprintf("%s.tmp.%d", dbgname, (int)getpid());
             df = fopen(tmpdbg, "wb");
-            if (!df || fwrite(dr.elf, 1, dr.elf_len, df) != dr.elf_len || fclose(df) != 0) {
-                fprintf(stderr, "zosasm: %s: %s\n", dbgname, strerror(errno));
-                if (df) fclose(df);
-                remove(tmpdbg);
-                free(tmpdbg);
-                remove(tmpobj);
-                free(tmpobj);
-                return 1;
+            {
+                int ok = df != NULL && fwrite(dr.elf, 1, dr.elf_len, df) == dr.elf_len;
+                if (df && fclose(df) != 0) ok = 0;
+                if (!ok) {
+                    fprintf(stderr, "zosasm: %s: %s\n", dbgname, strerror(errno));
+                    remove(tmpdbg);
+                    free(tmpdbg);
+                    remove(tmpobj);
+                    free(tmpobj);
+                    return 1;
+                }
             }
         }
         f = fopen(tmpobj, "wb");
