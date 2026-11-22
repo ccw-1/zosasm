@@ -255,6 +255,27 @@ static void test_requests(void) {
     r = rpc("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_dump\",\"arguments\":{\"object_base64\":\"not-base64!\"}}}");
     CHECK_MSG(strstr(r, "isError") != NULL, "bad base64");
     free(r);
+
+    r = rpc("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"prompts/list\"}");
+    CHECK_MSG(strstr(r, "\"prompts\"") != NULL, "prompts/list");
+    free(r);
+
+    r = rpc("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"nope\"}");
+    CHECK_MSG(strstr(r, "-32601") != NULL, "method not found");
+    free(r);
+
+    /* oversized request is rejected (MAX_REQUEST) */
+    {
+        char *big = xmalloc(MAX_REQUEST + 200);
+        size_t n = 0;
+        n += sprintf(big + n, "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_guide\",\"arguments\":{\"search\":\"");
+        while (n < MAX_REQUEST + 50) big[n++] = 'a';
+        n += sprintf(big + n, "\"}}}");
+        r = rpc(big);
+        CHECK_MSG(strstr(r, "-32600") != NULL || strstr(r, "error") != NULL, "oversized request");
+        free(r);
+        free(big);
+    }
     r = rpc("{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_assemble\","
             "\"arguments\":{\"source\":42}}}");
     CHECK_MSG(strstr(r, "\"isError\":true") != NULL, "source of the wrong type");
