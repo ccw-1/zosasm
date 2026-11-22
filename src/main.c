@@ -581,13 +581,16 @@ int main(int argc, char **argv) {
             }
         }
         f = fopen(tmpobj, "wb");
-        if (!f || fwrite(obj, 1, olen, f) != olen || fwrite(dr.mod2, 1, dr.mod2_len, f) != dr.mod2_len || fclose(f) != 0) {
-            fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
-            if (f) fclose(f);
-            remove(tmpobj);
-            free(tmpobj);
-            if (tmpdbg) { remove(tmpdbg); free(tmpdbg); }
-            return 1;
+        {
+            int ok = f != NULL && fwrite(obj, 1, olen, f) == olen && fwrite(dr.mod2, 1, dr.mod2_len, f) == dr.mod2_len;
+            if (f && fclose(f) != 0) ok = 0;
+            if (!ok) {
+                fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
+                remove(tmpobj);
+                free(tmpobj);
+                if (tmpdbg) { remove(tmpdbg); free(tmpdbg); }
+                return 1;
+            }
         }
         if (rename(tmpobj, outname) != 0) {
             fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
