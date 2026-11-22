@@ -1276,7 +1276,9 @@ void dir_dc(Asm *a, Stmt *st) {
                     continue;
                 }
                 if (!is_ds && bytes > (uint64_t)(1u << 30)) {
-                    rep_errorf(a->rep, "ZA2087", st->op_span, "DC expansion is too large");
+                    diag_help(dc_err(a, st, "ZA2087", sp.off, sp.n,
+                                     "DC expansion is too large (%llu bytes)", (unsigned long long)bytes),
+                              "reduce the duplication factor or split the constant");
                     continue;
                 }
             }

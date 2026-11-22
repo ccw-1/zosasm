@@ -1361,10 +1361,12 @@ static void tool_assemble(const J *args, Buf *out) {
             w_cstr(&st, dwarf_out);
         }
         if (jbool(args, "dwarf_base64", 0)) {
-            Buf b64 = {0};
+            Buf b64 = {0}, bcap = {0};
             b64_encode(&b64, dbg, dbglen);
+            text_cap(&bcap, b64.p ? b64.p : "", b64.len);
             w_key(&st, &first, "dwarf_base64");
-            w_str(&st, b64.p ? b64.p : "", b64.len);
+            w_str(&st, bcap.p ? bcap.p : "", bcap.len);
+            free(bcap.p);
             free(b64.p);
         }
     }

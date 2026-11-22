@@ -292,7 +292,21 @@ static void put_carets(L *l, const Diag *d, const char *src) {
     n = d->span.len < 1 ? 1 : (size_t)d->span.len;
     if (col + n > tl && tl > col) n = tl - col;
     for (i = 0; i < (size_t)l->lw + 30; i++) buf_putc(&b, ' ');
-    for (i = 0; i < col; i++) buf_putc(&b, src[i] == '\t' ? '\t' : ' ');
+    {
+        size_t bi = 0;
+        while (bi < col && bi < tl) {
+            unsigned char c = (unsigned char)src[bi];
+            size_t sl = 1;
+            if (c == '\t') { buf_putc(&b, '\t'); bi++; continue; }
+            if (c < 0x80) sl = 1;
+            else if (c < 0xE0) sl = 2;
+            else if (c < 0xF0) sl = 3;
+            else sl = 4;
+            if (bi + sl > tl) sl = tl - bi;
+            buf_putc(&b, ' ');
+            bi += sl;
+        }
+    }
     for (i = 0; i < (col + n <= tl ? utf8_count(src + col, n) : n); i++) buf_putc(&b, '^');
     if (d->label && *d->label) buf_printf(&b, " %s", d->label);
     put(l, buf_cstr(&b));
