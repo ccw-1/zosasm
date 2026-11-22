@@ -246,33 +246,43 @@ int zsrc_unpack(const ZSrc *z, const char *dir, FILE *out) {
             const ZSrcFile *x = &b->files.v[i];
             char *path = safe_path(base, x->name);
             FILE *f;
-            if (!make_dirs(path)) return -1;
+            if (!make_dirs(path)) { free(path); free(base); return -1; }
             {
                 char *tmp = xasprintf("%s.tmp.%d", path, (int)getpid());
+                int ok;
                 f = fopen(tmp, "wb");
                 if (!f) {
                     fprintf(stderr, "zosasm: %s: %s\n", path, strerror(errno));
                     free(tmp);
+                    free(path);
+                    free(base);
                     return -1;
                 }
-                if ((x->len && fwrite(x->data, 1, x->len, f) != x->len) || fclose(f) != 0) {
+                ok = (x->len == 0 || fwrite(x->data, 1, x->len, f) == x->len);
+                if (fclose(f) != 0) ok = 0;
+                if (!ok) {
                     fprintf(stderr, "zosasm: %s: %s\n", path, strerror(errno));
-                    fclose(f);
                     remove(tmp);
                     free(tmp);
+                    free(path);
+                    free(base);
                     return -1;
                 }
                 if (rename(tmp, path) != 0) {
                     fprintf(stderr, "zosasm: %s: %s\n", path, strerror(errno));
                     remove(tmp);
                     free(tmp);
+                    free(path);
+                    free(base);
                     return -1;
                 }
                 free(tmp);
             }
             if (out) fprintf(out, "%s\n", path);
+            free(path);
             count++;
         }
+        free(base);
     }
     return count;
 }
