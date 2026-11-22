@@ -247,7 +247,8 @@ static J *jp_value(JP *p) {
         p->p++;
         j = jnew(J_STR);
         j->s = jp_string(p, &j->n);
-        return j->s ? j : NULL;
+        if (!j->s) { free(j); return NULL; }
+        return j;
     case 't':
         if (p->end - p->p >= 4 && !strncmp(p->p, "true", 4)) {
             p->p += 4;
@@ -814,6 +815,7 @@ static char *ws_resolve(const char *p, const char *what, const char **msg) {
         if (!rd) {
             snprintf(g_ws_err, sizeof g_ws_err, "%s \"%s\": the directory does not exist", what, p);
             *msg = g_ws_err;
+            free(b.p);
         } else {
             buf_puts(&b, rd);
             free(rd);
@@ -836,6 +838,7 @@ static char *ws_resolve(const char *p, const char *what, const char **msg) {
                 if (full[i] == '/') i++; /* skip the separator, not the end of the string */
             }
             real = xstrdup(buf_cstr(&b));
+            free(b.p);
         }
         free(dir);
     }
@@ -1479,6 +1482,7 @@ static char *object_file(Tmp *t, const J *args, const char **msg) {
         }
         p = tmp_path(t, "input.o");
         if (!write_whole(p, d, n)) {
+            free(d);
             *msg = "cannot write the temporary object file";
             return NULL;
         }
@@ -1677,15 +1681,14 @@ static void tool_guide(const J *args, Buf *out) {
         if (!hits) buf_puts(&text, "no match\n");
     } else if (sec && *sec) {
         if (!strcmp(sec, "all")) {
-            text_cap(&text, g->text, g->len);
-            /* the lines were NUL terminated in place; rebuild */
-            text.len = 0;
-            {
-                size_t i;
-                for (i = 0; i < g->lines.n; i++) {
-                    buf_puts(&text, g->lines.v[i]);
-                    buf_putc(&text, '\n');
+            size_t i;
+            for (i = 0; i < g->lines.n; i++) {
+                if (text.len + strlen(g->lines.v[i]) + 1 > MAX_TEXT) {
+                    buf_printf(&text, "\n[... guide truncated at %zu bytes ...]\n", MAX_TEXT);
+                    break;
                 }
+                buf_puts(&text, g->lines.v[i]);
+                buf_putc(&text, '\n');
             }
         } else {
             int amb, hi = find_heading(g, sec, &amb);
