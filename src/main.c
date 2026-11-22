@@ -228,10 +228,28 @@ static int do_disasm(const char *path, const char *out, int generic) {
         rc = check_text(m, b, n, skip_z, nskip, text, &rep, &at);
     }
     tlen = strlen(text);
-    f = out ? fopen(out, "wb") : stdout;
-    if (!f || fwrite(text, 1, tlen, f) != tlen || (out && fclose(f) != 0)) {
-        fprintf(stderr, "zosasm: %s: %s\n", out ? out : "stdout", strerror(errno));
-        return 1;
+    if (out && strcmp(out, "/dev/null") != 0) {
+        char *tmp = xasprintf("%s.tmp.%d", out, (int)getpid());
+        f = fopen(tmp, "wb");
+        if (!f || fwrite(text, 1, tlen, f) != tlen || fclose(f) != 0) {
+            fprintf(stderr, "zosasm: %s: %s\n", out, strerror(errno));
+            if (f) fclose(f);
+            remove(tmp);
+            return 1;
+        }
+        if (rename(tmp, out) != 0) {
+            fprintf(stderr, "zosasm: %s: %s\n", out, strerror(errno));
+            remove(tmp);
+            return 1;
+        }
+        free(tmp);
+    } else {
+        f = out ? fopen(out, "wb") : stdout;
+        if (!f || fwrite(text, 1, tlen, f) != tlen || (out && fclose(f) != 0)) {
+            fprintf(stderr, "zosasm: %s: %s\n", out ? out : "stdout", strerror(errno));
+            if (f && out) fclose(f);
+            return 1;
+        }
     }
     if (rc == 1) {
         fprintf(stderr, "zosasm: warning: the generated source does not assemble\n");
@@ -454,17 +472,23 @@ int main(int argc, char **argv) {
     if (listfile) {
         /* the listing is written whatever happened */
         mod = asm_assemble_all(lines.v, lines.n, in, rep);
-        f = !strcmp(listfile, "-") ? stdout : fopen(listfile, "wb");
-        if (!f) {
-            fprintf(stderr, "zosasm: %s: %s\n", listfile, strerror(errno));
-            return 1;
+        if (!strcmp(listfile, "-")) {
+            listing_write(stdout, mod, &lines, &events, rep, &lo);
+            fflush(stdout);
+        } else if (!strcmp(listfile, "/dev/null")) {
+            f = fopen(listfile, "wb");
+            if (!f) { fprintf(stderr, "zosasm: %s: %s\n", listfile, strerror(errno)); return 1; }
+            listing_write(f, mod, &lines, &events, rep, &lo);
+            if (fclose(f) != 0) { fprintf(stderr, "zosasm: %s: %s\n", listfile, strerror(errno)); return 1; }
+        } else {
+            char *tmp = xasprintf("%s.tmp.%d", listfile, (int)getpid());
+            f = fopen(tmp, "wb");
+            if (!f) { fprintf(stderr, "zosasm: %s: %s\n", listfile, strerror(errno)); free(tmp); return 1; }
+            listing_write(f, mod, &lines, &events, rep, &lo);
+            if (fclose(f) != 0) { fprintf(stderr, "zosasm: %s: %s\n", listfile, strerror(errno)); remove(tmp); free(tmp); return 1; }
+            if (rename(tmp, listfile) != 0) { fprintf(stderr, "zosasm: %s: %s\n", listfile, strerror(errno)); remove(tmp); free(tmp); return 1; }
+            free(tmp);
         }
-        listing_write(f, mod, &lines, &events, rep, &lo);
-        if (f != stdout && fclose(f) != 0) {
-            fprintf(stderr, "zosasm: %s: %s\n", listfile, strerror(errno));
-            return 1;
-        }
-        if (f == stdout) fflush(f);
     } else {
         mod = rep_error_count(rep) > 0 ? NULL : asm_assemble(lines.v, lines.n, in, rep);
     }
