@@ -338,6 +338,15 @@ static void skipb(XP *p) {
 }
 
 static E parse_or(XP *p);
+static int xp_depth(XP *p) {
+    if (p->depth >= MCONV_MAX_DEPTH) {
+        fail(p->m, "expression nested too deeply");
+        return -1;
+    }
+    p->depth++;
+    return 0;
+}
+static void xp_undepth(XP *p) { if (p->depth > 0) p->depth--; }
 static E parse_add(XP *p);
 static E parse_prim(XP *p);
 
@@ -651,10 +660,7 @@ static E parse_prim(XP *p) {
             return str_tail(p, s);
         } else {
             E e;
-            if (++p->depth > MCONV_MAX_DEPTH) {
-                fail(m, "expression nested too deeply (depth %d)", p->depth);
-                return dummy_str();
-            }
+            if (xp_depth(p)) return dummy_str();
             p->i++;
             {
                 static const char *const OPS[] = {"UPPER", "LOWER", "DOUBLE", NULL};
@@ -667,7 +673,7 @@ static E parse_prim(XP *p) {
                         else fail(m, "missing ) after (%s ...", OPS[k]);
                         e = e_make(xasprintf("%s(%s)", k == 0 ? "upper" : k == 1 ? "lower" : "double", a.txt), P_ATOM, T_STR);
                         e.charctx = 1;
-                        p->depth--;
+                        xp_undepth(p);
                         return e;
                     }
             }
@@ -675,11 +681,11 @@ static E parse_prim(XP *p) {
             skipb(p);
             if (p->s[p->i] != ')') {
                 fail(m, "missing ) in an expression");
-                p->depth--;
+                xp_undepth(p);
                 return e;
             }
             p->i++;
-            p->depth--;
+            xp_undepth(p);
             return e;
         }
     }

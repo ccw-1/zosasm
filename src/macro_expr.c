@@ -6,6 +6,7 @@
 #include "ebcdic.h"
 
 #define MAX_PARSE_DEPTH 200
+#define MAX_EVAL_DEPTH 200
 
 /* ---- lexer ---------------------------------------------------------------- */
 
@@ -247,7 +248,12 @@ static MExpr *parse_primary(Parser *ps) {
             ps_next(ps);
             if (ps->tk != ')') {
                 for (;;) {
-                    MExpr *a = parse_cond(ps);
+                    MExpr *a;
+                    if (ps->depth > MAX_PARSE_DEPTH) {
+                        ps_error(ps, "ZA4100", "expression nested too deeply");
+                        break;
+                    }
+                    a = parse_cond(ps);
                     vec_push(&args, a);
                     if (ps->err) break;
                     if (ps->tk == ',') {
@@ -627,12 +633,16 @@ static MVal ex_eval_depth(Ctx *c, const MExpr *e, int depth) {
         const Fn *fn = fn_find(e->s);
         MVal *a;
         int i;
+        MVal r;
         if (!fn) return v_str("");
         if (!strcmp(e->s, "defined") && e->nargs == 1 && e->args[0]->k == X_VAR)
             return ex_defined_arg(c, e->args[0]);
+        if (depth + 1 > MAX_EVAL_DEPTH) { ma_err(c, "ZA4100", "expression nested too deeply"); return v_int(0); }
         a = xcalloc(((size_t)e->nargs + 1) * sizeof *a);
         for (i = 0; i < e->nargs; i++) a[i] = ex_eval_depth(c, e->args[i], depth + 1);
-        return fn->fn(c, a, e->nargs);
+        r = fn->fn(c, a, e->nargs);
+        free(a);
+        return r;
     }
     }
     return v_str("");
