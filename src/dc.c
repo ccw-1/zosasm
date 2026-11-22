@@ -1304,9 +1304,10 @@ void dir_dc(Asm *a, Stmt *st) {
                           "GOFF stores class lengths and text offsets in 32 bits");
                 continue;
             }
-            if (!is_ds && bytes > (uint64_t)(1u << 30)) {
+            if (!is_ds && bytes > ((uint64_t)64 << 20)) {
                 diag_help(dc_err(a, st, "ZA2087", sp.off, sp.n,
-                                 "DC expansion is too large (%llu bytes)", (unsigned long long)bytes),
+                                 "DC expansion is too large (%llu bytes); the limit is 64 MiB",
+                                 (unsigned long long)bytes),
                           "reduce the duplication factor or split the constant");
                 continue;
             }
