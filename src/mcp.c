@@ -689,6 +689,7 @@ static char *g_guide;   /* path of GUIDE.md; process-lifetime, not a per-request
 static char *g_docdir;  /* its directory (examples/ is below it) */
 static char *g_server_dir; /* the directory of the server binary (the workspace) */
 static char *g_tools_json; /* process-lifetime tools/list cache */
+static char *g_workspace;
 
 static int file_exists(const char *p) {
     struct stat st;
@@ -708,6 +709,7 @@ static void locate_reset(void) {
     free(g_docdir); g_docdir = NULL;
     free(g_server_dir); g_server_dir = NULL;
     free(g_tools_json); g_tools_json = NULL;
+    free(g_workspace); g_workspace = NULL;
 }
 
 static void locate(const char *argv0) {
@@ -775,7 +777,6 @@ static void locate(const char *argv0) {
  * ZOSASM_UNRESTRICTED (set to a non-empty value) lifts the limit: any file
  * name is allowed, relative to the working directory, as before. */
 
-static char *g_workspace;
 static int g_unrestricted;
 static char g_ws_err[512]; /* the error of the last ws_resolve failure; the
                             * server is serial, tool_fail copies it at once */

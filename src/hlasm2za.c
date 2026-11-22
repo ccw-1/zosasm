@@ -277,11 +277,16 @@ int main(int argc, char **argv) {
                 free(tmp);
                 return 1;
             }
-            if (fwrite(res, 1, strlen(res), f) != strlen(res) || fclose(f) != 0) {
-                fprintf(stderr, "hlasm2za: %s: write error\n", out);
-                remove(tmp);
-                free(tmp);
-                return 1;
+            {
+                size_t rlen = strlen(res);
+                int ok = rlen == 0 || fwrite(res, 1, rlen, f) == rlen;
+                if (fclose(f) != 0) ok = 0;
+                if (!ok) {
+                    fprintf(stderr, "hlasm2za: %s: write error\n", out);
+                    remove(tmp);
+                    free(tmp);
+                    return 1;
+                }
             }
             if (rename(tmp, out) != 0) {
                 fprintf(stderr, "hlasm2za: %s: %s\n", out, strerror(errno));
