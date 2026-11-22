@@ -151,11 +151,19 @@ static int macro_dir(const char *dir, const char *outdir, const ConvOptions *o, 
             size_t n = strlen(names.v[k]) - 4;
             char *op = xasprintf("%s/%.*s.zmac", outdir ? outdir : dir, (int)n, names.v[k]);
             FILE *f = fopen(op, "wb");
-            if (!f || fwrite(res, 1, strlen(res), f) != strlen(res) || fclose(f) != 0) {
+            size_t rlen = strlen(res);
+            int ok = f != NULL;
+            if (ok && rlen && fwrite(res, 1, rlen, f) != rlen) ok = 0;
+            if (f && fclose(f) != 0) ok = 0;
+            if (!ok) {
                 fprintf(stderr, "hlasm2za: %s: write error\n", op);
                 bad = 1;
             }
+            free(op);
         }
+        free(res);
+        free(wbuf);
+        free(path);
     }
     fprintf(stderr, "hlasm2za: %lu members, %lu macros converted, %lu members failed, %lu warnings\n",
             (unsigned long)nmem, (unsigned long)nmac, (unsigned long)nfail, (unsigned long)nwarn);
