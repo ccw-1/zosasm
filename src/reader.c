@@ -398,10 +398,13 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
         const char *line = lines[i].text;
         const char *file = lines[i].file;
         int ln = lines[i].line;
+        const int *plines = lines[i].plines;
+        size_t nplines = lines[i].nplines;
         Stmt *st;
         size_t p = 0, q;
         const char *cur;
         int cur_ln;
+        size_t cur_pseg = 0;
         Buf ops = {0};
         Vec(Seg) segs = {0};
         int co; /* columns before the text read as column 1 (the '^' anchor) */
@@ -467,47 +470,99 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
         /* operand field (may continue on following lines) */
         cur = line;
         cur_ln = ln;
+        cur_pseg = 0;
         for (;;) {
-            size_t end, len = strlen(cur);
-            const char *rest;
+            size_t end;
+            const char *rest, *nl;
             Seg sg;
-            if (!scan_operand_end(cur, p, &end)) {
-                diag_help(rep_errorf(rep, "ZA0002", span_make(file, cur_ln, (int)p + 1 + co, (int)(len - p)),
+            char *seg = NULL;
+            size_t slen, base_off = 0;
+            const size_t *poffs = lines[i].poffs;
+            if (plines && poffs && cur_pseg < nplines) {
+                size_t next = (cur_pseg + 1 < nplines) ? poffs[cur_pseg + 1] : strlen(lines[i].text);
+                base_off = poffs[cur_pseg];
+                slen = next - base_off;
+                seg = xstrndup(lines[i].text + base_off, slen);
+                cur_ln = plines[cur_pseg];
+            } else {
+                nl = strchr(cur, '\n');
+                slen = nl ? (size_t)(nl - cur) : strlen(cur);
+                seg = xstrndup(cur, slen);
+                if (plines && cur_pseg < nplines) cur_ln = plines[cur_pseg];
+            }
+            if (!scan_operand_end(seg, p, &end)) {
+                diag_help(rep_errorf(rep, "ZA0002", span_make(file, cur_ln, (int)p + 1 + co, (int)(slen - p)),
                                      "unterminated quoted string or unbalanced parenthesis in the "
                                      "operand field"),
                           "a quote (') must be closed on the same line; write two quotes ('') for a "
                           "quote inside a string");
                 st->bad = 1;
-                end = len;
+                end = slen;
             }
             sg.off = (int)ops.len;
             sg.line = cur_ln;
             sg.col = (int)p + 1 + co;
             vec_push(&segs, sg);
-            buf_write(&ops, cur + p, end - p);
-            rest = cur + end;
+            buf_write(&ops, seg + p, end - p);
+            rest = seg + end;
             while (*rest == ' ' || *rest == '\t') rest++;
-            if (end > p && cur[end - 1] == ',' && !st->bad && i + 1 < n) {
-                /* continuation */
-                i++;
-                cur = lines[i].text;
-                cur_ln = lines[i].line;
-                {
-                    const char *cr = caret_rest(cur);
-                    co = (int)(cr - cur);
+            if (end > p && seg[end - 1] == ',') {
+                if (plines && poffs && cur_pseg + 1 < nplines) {
+                    free(seg);
+                    cur_pseg++;
+                    cur_ln = plines[cur_pseg];
+                    p = 0; co = 0;
+                    {
+                        const char *ns = lines[i].text + poffs[cur_pseg];
+                        size_t nlen = ((cur_pseg + 1 < nplines) ? poffs[cur_pseg + 1] : strlen(lines[i].text)) - poffs[cur_pseg];
+                        while (p < nlen && is_blank((unsigned char)ns[p])) p++;
+                        if (p >= nlen) {
+                            rep_errorf(rep, "ZA0003", span_make(file, cur_ln, 1, 1),
+                                       "the previous line ends with a comma but this continuation line is empty");
+                            st->bad = 1; break;
+                        }
+                    }
+                    continue;
                 }
-                p = co;
-                while (cur[p] && is_blank((unsigned char)cur[p])) p++;
-                if (!cur[p]) {
-                    rep_errorf(rep, "ZA0003", span_make(file, cur_ln, 1, 1),
-                               "the previous line ends with a comma but this continuation line is "
-                               "empty");
-                    st->bad = 1;
-                    break;
+                nl = strchr(cur, '\n');
+                if (nl) {
+                    free(seg);
+                    cur = nl + 1;
+                    cur_pseg++;
+                    cur_ln = (plines && cur_pseg < nplines) ? plines[cur_pseg] : ln;
+                    p = 0; co = 0;
+                    while (cur[p] && cur[p] != '\n' && is_blank((unsigned char)cur[p])) p++;
+                    if (!cur[p] || cur[p] == '\n') {
+                        rep_errorf(rep, "ZA0003", span_make(file, cur_ln, 1, 1),
+                                   "the previous line ends with a comma but this continuation line is empty");
+                        st->bad = 1; break;
+                    }
+                    continue;
                 }
-                continue;
+                if (!st->bad && i + 1 < n) {
+                    free(seg);
+                    i++;
+                    cur = lines[i].text;
+                    cur_ln = lines[i].line;
+                    plines = lines[i].plines;
+                    nplines = lines[i].nplines;
+                    cur_pseg = 0;
+                    {
+                        const char *cr = caret_rest(cur);
+                        co = (int)(cr - cur);
+                    }
+                    p = co;
+                    while (cur[p] && is_blank((unsigned char)cur[p])) p++;
+                    if (!cur[p]) {
+                        rep_errorf(rep, "ZA0003", span_make(file, cur_ln, 1, 1),
+                                   "the previous line ends with a comma but this continuation line is empty");
+                        st->bad = 1; break;
+                    }
+                    continue;
+                }
             }
             st->remark = xstrdup(rest);
+            free(seg);
             break;
         }
         st->operands = xstrdup(buf_cstr(&ops));

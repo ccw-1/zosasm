@@ -268,9 +268,12 @@ uint8_t *module_emit_elf(Module *m, size_t *len, char *err, size_t errsz);
  * file reader): text without the line end, in UTF-8. */
 typedef struct {
     const char *file;
-    int line; /* 1-based */
+    int line; /* 1-based physical line of the first segment */
     const char *text;
     const char *orig; /* the line as written when block comments were blanked in text, else NULL */
+    const int *plines; /* physical line per segment, or NULL when 1:1 */
+    const size_t *poffs; /* byte offset in text per segment, or NULL */
+    size_t nplines;
 } SrcLine;
 
 typedef Vec(SrcLine) SrcVec;

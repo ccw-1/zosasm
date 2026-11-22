@@ -1207,7 +1207,8 @@ static void do_macro_call(Pp *pp, const char *name, const char *op, const char *
     if (pp->mdepth == 0) flush_inserts(pp);
 }
 
-static void emit_line(Pp *pp, const char *text);
+static void emit_line(Pp *pp, const char *text, int first_line, const int *plines, const size_t *poffs, size_t nplines);
+static void emit_part(Pp *pp, const char *part, int line);
 
 /* the records queued by #insert are read after the outermost macro: they are rescanned like
  * generated lines (so a macro call or a macro definition in them works only as a call) */
@@ -1216,12 +1217,12 @@ static void flush_inserts(Pp *pp) {
         char *t = pp->ains.v[0];
         memmove(pp->ains.v, pp->ains.v + 1, (pp->ains.n - 1) * sizeof *pp->ains.v);
         pp->ains.n--;
-        emit_line(pp, t);
+        emit_line(pp, t, pp->line, NULL, NULL, 0);
     }
 }
 
 /* a statement made of several physical lines (continuation lines joined by '\n') */
-static void emit_multi(Pp *pp, const char *text) {
+static void emit_multi(Pp *pp, const char *text, int first_line, const int *plines, const size_t *poffs, size_t nplines) {
     StrVec parts = {0};
     const char *p = text, *nl;
     size_t i;
@@ -1242,12 +1243,36 @@ static void emit_multi(Pp *pp, const char *text) {
             buf_write(&b, c, end);
         }
         do_macro_call(pp, f.name, f.op, buf_cstr(&b));
+        free(b.p);
+        for (i = 0; i < parts.n; i++) free(parts.v[i]);
+        free(parts.v);
         return;
     }
-    for (i = 0; i < parts.n; i++) emit_line(pp, parts.v[i]);
+    if (plines && nplines == parts.n) {
+        /* keep as one logical SrcLine; reader uses plines/poffs for physical attribution */
+        emit_part(pp, text, first_line);
+        {
+            SrcLine *sl = &pp->out->v[pp->out->n - 1];
+            int *pl = xmalloc(sizeof(int) * nplines);
+            size_t *po = xmalloc(sizeof(size_t) * nplines);
+            size_t off = 0;
+            memcpy(pl, plines, sizeof(int) * nplines);
+            if (poffs) memcpy(po, poffs, sizeof(size_t) * nplines);
+            else for (i = 0; i < nplines; i++) { po[i] = off; off += strlen(parts.v[i]); if (i + 1 < nplines) off++; }
+            sl->plines = pl;
+            sl->poffs = po;
+            sl->nplines = nplines;
+        }
+        for (i = 0; i < parts.n; i++) free(parts.v[i]);
+        free(parts.v);
+        return;
+    }
+    for (i = 0; i < parts.n; i++) emit_part(pp, parts.v[i], first_line + (int)i);
+    for (i = 0; i < parts.n; i++) free(parts.v[i]);
+    free(parts.v);
 }
 
-static void emit_part(Pp *pp, const char *part) {
+static void emit_part(Pp *pp, const char *part, int line) {
     SrcLine l;
     {
         StmtFields f;
@@ -1278,11 +1303,14 @@ static void emit_part(Pp *pp, const char *part) {
         }
     }
     l.file = pp->file;
-    l.line = pp->line;
+    l.line = line;
     l.text = xstrdup(part);
-    l.orig = pp->cur_orig && !strcmp(part, pp->cur_text) ? pp->cur_orig : NULL;
+    l.orig = pp->cur_orig && pp->line == line && !strcmp(part, pp->cur_text) ? pp->cur_orig : NULL;
+    l.plines = NULL;
+    l.poffs = NULL;
+    l.nplines = 0;
     vec_push(pp->out, l);
-    check_comma(pp, part, pp->line);
+    check_comma(pp, part, line);
 }
 
 /* name OPSYN op where a macro is involved: the preprocessor keeps the alias and the
@@ -1304,27 +1332,27 @@ static int opsyn_macro(Pp *pp, const StmtFields *f) {
     return 0;
 }
 
-static void emit_part_or_call(Pp *pp, const char *part) {
+static void emit_part_or_call(Pp *pp, const char *part, int line) {
     StmtFields f;
     if (!pp->comma && stmt_fields(part, &f) && !za_strncmpi(f.op, "OPSYN", 6) && opsyn_macro(pp, &f)) return;
     if (!pp->comma && stmt_fields(part, &f) && is_macro_op(pp, f.op)) {
         do_macro_call(pp, f.name, f.op, f.operands);
         return;
     }
-    emit_part(pp, part);
+    emit_part(pp, part, line);
 }
 
-static void emit_line(Pp *pp, const char *text) {
+static void emit_line(Pp *pp, const char *text, int first_line, const int *plines, const size_t *poffs, size_t nplines) {
     size_t rs;
     char *head, *exp, *full, *p, *nl;
     int changed;
     if (strchr(text, '\n')) {
-        emit_multi(pp, text);
+        emit_multi(pp, text, first_line, plines, poffs, nplines);
         return;
     }
     rs = remark_start(text);
     if (rs == 0) { /* comment line */
-        emit_part(pp, text);
+        emit_part(pp, text, first_line);
         return;
     }
     head = xstrndup(text, rs);
@@ -1341,11 +1369,32 @@ static void emit_line(Pp *pp, const char *text) {
         rep_add_expansion(pp->rep, pp->file, pp->line, first_line, pp->first->name, pp->first->def);
         free(first_line);
     }
-    for (p = full;; p = nl + 1) {
-        nl = strchr(p, '\n');
-        if (nl) *nl = 0;
-        emit_part_or_call(pp, p);
-        if (!nl) break;
+    {
+        int pline = first_line;
+        size_t segi = 0;
+        size_t first_out = pp->out->n;
+        for (p = full;; p = nl + 1) {
+            nl = strchr(p, '\n');
+            if (nl) *nl = 0;
+            {
+                int this_line = (plines && segi < nplines) ? plines[segi] : pline;
+                emit_part_or_call(pp, p, this_line);
+            }
+            pline++;
+            segi++;
+            if (!nl) break;
+        }
+        if (plines && nplines > 0 && pp->out->n == first_out + 1) {
+            SrcLine *sl = &pp->out->v[first_out];
+            if (!sl->plines) {
+                int *pl2 = xmalloc(sizeof(int) * nplines);
+                size_t *po2 = xmalloc(sizeof(size_t) * nplines);
+                memcpy(pl2, plines, sizeof(int) * nplines);
+                if (poffs) memcpy(po2, poffs, sizeof(size_t) * nplines);
+                else for (segi = 0; segi < nplines; segi++) po2[segi] = 0;
+                sl->plines = pl2; sl->poffs = po2; sl->nplines = nplines;
+            }
+        }
     }
     free(head);
     free(exp);
@@ -1370,13 +1419,24 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
         const char *t = lines.v[i].text;
         int ln = lines.v[i].line;
         size_t n = strlen(t), k = i;
-        const char *dir, *rest;
+        const char *dir, *rest = NULL;
         /* a backslash at the end of a line joins it with the next one */
+        char *joined_bs = NULL;
+        int *joined_pl = NULL;
+        size_t *joined_po = NULL;
+        size_t joined_pn = 0;
         if (n > 0 && t[n - 1] == '\\' && k + 1 < lines.n) {
             Buf b = {0};
+            size_t cap = 4;
+            joined_pl = xmalloc(sizeof(int) * cap);
+            joined_po = xmalloc(sizeof(size_t) * cap);
             for (;;) {
                 const char *u = lines.v[k].text;
                 size_t un = strlen(u);
+                if (joined_pn == cap) { cap *= 2; joined_pl = xrealloc(joined_pl, sizeof(int) * cap); joined_po = xrealloc(joined_po, sizeof(size_t) * cap); }
+                joined_pl[joined_pn] = lines.v[k].line;
+                joined_po[joined_pn] = b.len;
+                joined_pn++;
                 if (un > 0 && u[un - 1] == '\\' && k + 1 < lines.n) {
                     buf_write(&b, u, un - 1);
                     k++;
@@ -1385,7 +1445,9 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
                     break;
                 }
             }
-            t = xstrdup(buf_cstr(&b));
+            joined_bs = xstrdup(buf_cstr(&b));
+            free(b.p);
+            t = joined_bs;
         }
         pp->line = ln;
         pp->cur_text = lines.v[i].text;
@@ -1463,17 +1525,19 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
                     cont = 1;
                 }
                 if (cont) t = xstrdup(buf_cstr(&b));
+                free(b.p);
             }
         }
         {
             PpEvent ev;
             size_t ei = 0;
             int rec = pp->opt->events != NULL;
+            char *joined_t = (t != lines.v[i].text) ? (char *)t : NULL;
             ev.file = file;
             ev.line = ln;
             ev.line_end = lines.v[k].line;
             ev.depth = pp->depth;
-            ev.text = t == lines.v[i].text && lines.v[i].orig ? lines.v[i].orig : t;
+            ev.text = joined_t ? t : (lines.v[i].orig ? lines.v[i].orig : t);
             ev.first = pp->out->n;
             ev.n = 0;
             if (dir) {
@@ -1497,11 +1561,39 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
                                          "statement is open"),
                               "a macro #if/#while/#for/#switch needs its \"{\" on the same "
                               "line; the block ends with #}");
-                else
-                    emit_line(pp, t);
+                else {
+                    if (joined_t || joined_pl) {
+                        int *pl = joined_pl ? joined_pl : xmalloc(sizeof(int) * (k - i + 1));
+                        size_t *po = joined_po ? joined_po : NULL;
+                        size_t pn = joined_pn;
+                        if (!joined_pl) {
+                            size_t pj, off = 0; pn = 0;
+                            po = xmalloc(sizeof(size_t) * (k - i + 1));
+                            for (pj = i; pj <= k; pj++) { pl[pn] = lines.v[pj].line; po[pn] = off; off += strlen(lines.v[pj].text) + 1; pn++; }
+                        }
+                        /* emit with plines/poffs */
+                        emit_line(pp, t, ln, pl, po, pn);
+                        {
+                            SrcLine *sl = &pp->out->v[pp->out->n - 1];
+                            if (sl->nplines == 0 && pn > 0) {
+                                int *pl2 = xmalloc(sizeof(int)*pn); size_t *po2 = xmalloc(sizeof(size_t)*pn);
+                                memcpy(pl2, pl, sizeof(int)*pn); memcpy(po2, po, sizeof(size_t)*pn);
+                                sl->plines = pl2; sl->poffs = po2; sl->nplines = pn;
+                            }
+                        }
+                        if (!joined_pl) { free(pl); free(po); }
+                    } else {
+                        emit_line(pp, t, ln, NULL, NULL, 0);
+                    }
+                }
             }
             if (rec && ev.kind == PE_LINE) pp->opt->events->v[ei].n = pp->out->n - ev.first;
+            if (joined_t == joined_bs) joined_bs = NULL;
+            free(joined_t);
         }
+        free(joined_bs);
+        free(joined_pl);
+        free(joined_po);
         i = nxt;
     }
     while (pp->conds.n > base) {
@@ -1530,7 +1622,7 @@ static void host_emit_cb(void *user, const char *text, int srcline) {
         rep_add_expansion(pp->rep, pp->file, pp->line, first, pp->exp_macro, pp->exp_def);
         pp->exp_done = 1;
     }
-    emit_line(pp, text);
+    emit_line(pp, text, srcline > 0 ? srcline : pp->line, NULL, NULL, 0);
     pp->line = save;
 }
 
