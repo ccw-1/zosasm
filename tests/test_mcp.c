@@ -242,6 +242,15 @@ static void test_requests(void) {
             "\"arguments\":{\"source\":\"T CSECT\\n\",\"macro_steps\":\"many\"}}}");
     CHECK_MSG(strstr(r, "\"isError\":true") != NULL && strstr(r, "macro_steps") != NULL, "bad macro_steps");
     free(r);
+    r = rpc("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_assemble\",\"arguments\":\"bad\"}}");
+    CHECK_MSG(strstr(r, "-32602") != NULL, "arguments must be object");
+    free(r);
+    r = rpc("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{}}");
+    CHECK_MSG(strstr(r, "-32602") != NULL, "missing tool name");
+    free(r);
+    r = rpc("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"resources/read\",\"params\":{}}");
+    CHECK_MSG(strstr(r, "-32602") != NULL, "missing resource uri");
+    free(r);
     r = rpc("{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_assemble\","
             "\"arguments\":{\"source\":42}}}");
     CHECK_MSG(strstr(r, "\"isError\":true") != NULL, "source of the wrong type");

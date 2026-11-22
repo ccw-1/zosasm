@@ -709,7 +709,14 @@ static char *dir_of(const char *path) {
     return xstrndup(path, (size_t)(slash - path));
 }
 
+typedef struct Guide Guide;
+static Guide *load_guide_cache(void);
+static void guide_free(Guide *g);
+extern int g_guide_tried; /* defined with guide cache */
 static void locate_reset(void) {
+    Guide *g = load_guide_cache();
+    guide_free(g);
+    g_guide_tried = 0;
     free(g_bindir); g_bindir = NULL;
     free(g_guide); g_guide = NULL;
     free(g_docdir); g_docdir = NULL;
@@ -882,37 +889,49 @@ typedef struct {
     char *text;    /* the heading without the #s */
 } Heading;
 
-typedef struct {
+struct Guide {
     char *text;
     size_t len;
     Vec(char *) lines; /* pointers into a copy, NUL terminated lines */
     Vec(Heading) heads;
-} Guide;
+};
+
+static Guide g_guide_cache;
+int g_guide_tried;
+static Guide *load_guide_cache(void) { return &g_guide_cache; }
+static void guide_free(Guide *g) {
+    size_t i;
+    if (!g) return;
+    for (i = 0; i < g->heads.n; i++) free(g->heads.v[i].text);
+    free(g->heads.v);
+    free(g->lines.v);
+    free(g->text);
+    memset(g, 0, sizeof *g);
+}
 
 /* Process-lifetime cache: the guide is loaded once on demand and retained for
  * the server lifetime. This is intentional, not a per-request leak. */
 static Guide *load_guide(void) {
-    static Guide g;
-    static int tried;
+    Guide *g = &g_guide_cache;
     size_t n, i;
     char *t, *start;
     int in_code = 0;
-    if (tried) return g.text ? &g : NULL;
-    tried = 1;
+    if (g_guide_tried) return g->text ? g : NULL;
+    g_guide_tried = 1;
     t = read_whole(g_guide, &n);
     if (!t) return NULL;
-    g.text = t;
-    g.len = n;
+    g->text = t;
+    g->len = n;
     start = t;
     for (i = 0; i <= n; i++) {
         if (i == n || t[i] == '\n') {
             t[i] = 0;
-            vec_push(&g.lines, start);
+            vec_push(&g->lines, start);
             start = t + i + 1;
         }
     }
-    for (i = 0; i < g.lines.n; i++) {
-        const char *l = g.lines.v[i];
+    for (i = 0; i < g->lines.n; i++) {
+        const char *l = g->lines.v[i];
         int lv = 0;
         if (!strncmp(l, "```", 3)) in_code = !in_code;
         if (in_code) continue;
@@ -922,10 +941,10 @@ static Guide *load_guide(void) {
             h.level = lv;
             h.line = i;
             h.text = xstrdup(l + lv + 1);
-            vec_push(&g.heads, h);
+            vec_push(&g->heads, h);
         }
     }
-    return &g;
+    return g;
 }
 
 /* the heading a query names: "6", "6.1", "17", or part of a title */
