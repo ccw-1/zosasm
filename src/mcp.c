@@ -1514,10 +1514,20 @@ static char *object_file(Tmp *t, const J *args, const char **msg) {
     }
     {
         size_t n;
-        unsigned char *d = b64_decode(b64, strlen(b64), &n);
+        unsigned char *d;
         char *p;
+        if (strlen(b64) > (size_t)MAX_TEXT * 2) {
+            *msg = "'object_base64' is too large";
+            return NULL;
+        }
+        d = b64_decode(b64, strlen(b64), &n);
         if (!d) {
             *msg = "'object_base64' is not valid base64";
+            return NULL;
+        }
+        if (n > (size_t)MAX_TEXT * 2) {
+            free(d);
+            *msg = "'object_base64' decodes to an object that is too large";
             return NULL;
         }
         p = tmp_path(t, "input.o");
@@ -2149,7 +2159,9 @@ static int resource_read(const char *uri, Buf *out) {
         t = read_whole(path, &n);
         free(path);
         if (!t) { free(text.p); return 0; }
+        if (n > MAX_TEXT) n = MAX_TEXT;
         buf_write(&text, t, n);
+        if (n == (size_t)MAX_TEXT) buf_printf(&text, "\n[... example truncated at %zu bytes ...]\n", (size_t)MAX_TEXT);
         free(t);
     } else {
         free(text.p);

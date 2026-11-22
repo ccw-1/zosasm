@@ -251,6 +251,10 @@ static void test_requests(void) {
     r = rpc("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"resources/read\",\"params\":{}}");
     CHECK_MSG(strstr(r, "-32602") != NULL, "missing resource uri");
     free(r);
+
+    r = rpc("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_dump\",\"arguments\":{\"object_base64\":\"not-base64!\"}}}");
+    CHECK_MSG(strstr(r, "isError") != NULL, "bad base64");
+    free(r);
     r = rpc("{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_assemble\","
             "\"arguments\":{\"source\":42}}}");
     CHECK_MSG(strstr(r, "\"isError\":true") != NULL, "source of the wrong type");
