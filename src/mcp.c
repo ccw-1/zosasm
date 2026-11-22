@@ -1329,7 +1329,7 @@ static void tool_assemble(const J *args, Buf *out) {
     w_key(&st, &first, "format");
     w_cstr(&st, is_elf ? "elf" : "goff");
     w_key(&st, &first, "diagnostics");
-    w_str(&st, r.err.p ? r.err.p : "", r.err.len > MAX_TEXT ? MAX_TEXT : r.err.len);
+    { Buf tcap={0}; text_cap(&tcap, r.err.p ? r.err.p : "", r.err.len); w_str(&st, tcap.p ? tcap.p : "", tcap.len); free(tcap.p); }
     if (obj) {
         w_key(&st, &first, "object_size");
         buf_printf(&st, "%zu", objlen);
@@ -1341,7 +1341,7 @@ static void tool_assemble(const J *args, Buf *out) {
             Buf b64 = {0};
             b64_encode(&b64, obj, objlen);
             w_key(&st, &first, "object_base64");
-            w_str(&st, b64.p ? b64.p : "", b64.len > MAX_TEXT ? MAX_TEXT : b64.len);
+            { Buf bcap={0}; text_cap(&bcap, b64.p ? b64.p : "", b64.len); w_str(&st, bcap.p ? bcap.p : "", bcap.len); free(bcap.p); }
             free(b64.p);
         }
     }
@@ -1362,7 +1362,7 @@ static void tool_assemble(const J *args, Buf *out) {
     }
     if (listing) {
         w_key(&st, &first, "listing");
-        w_str(&st, lbuf.p ? lbuf.p : "", lbuf.len > MAX_TEXT ? MAX_TEXT : lbuf.len);
+        { Buf lcap={0}; text_cap(&lcap, lbuf.p ? lbuf.p : "", lbuf.len); w_str(&st, lcap.p ? lcap.p : "", lcap.len); free(lcap.p); }
     }
     buf_putc(&st, '}');
     tool_result(out, buf_cstr(&text), text.len, buf_cstr(&st), r.status != 0);
@@ -1423,9 +1423,9 @@ static void tool_preprocess(const J *args, Buf *out) {
     w_key(&st, &first, "exit_code");
     buf_printf(&st, "%d", r.status);
     w_key(&st, &first, "preprocessed");
-    w_str(&st, r.out.p ? r.out.p : "", r.out.len > MAX_TEXT ? MAX_TEXT : r.out.len);
+    { Buf ocap={0}; text_cap(&ocap, r.out.p ? r.out.p : "", r.out.len); w_str(&st, ocap.p ? ocap.p : "", ocap.len); free(ocap.p); }
     w_key(&st, &first, "diagnostics");
-    w_str(&st, r.err.p ? r.err.p : "", r.err.len > MAX_TEXT ? MAX_TEXT : r.err.len);
+    { Buf tcap={0}; text_cap(&tcap, r.err.p ? r.err.p : "", r.err.len); w_str(&st, tcap.p ? tcap.p : "", tcap.len); free(tcap.p); }
     buf_putc(&st, '}');
     tool_result(out, buf_cstr(&text), text.len, buf_cstr(&st), r.status != 0);
 done:
@@ -1491,9 +1491,9 @@ static void simple_result(Buf *out, const char *what, Run *r, const char *key, T
     w_key(&st, &first, "exit_code");
     buf_printf(&st, "%d", r->status);
     w_key(&st, &first, key);
-    w_str(&st, r->out.p ? r->out.p : "", r->out.len > MAX_TEXT ? MAX_TEXT : r->out.len);
+    { Buf ocap={0}; text_cap(&ocap, r->out.p ? r->out.p : "", r->out.len); w_str(&st, ocap.p ? ocap.p : "", ocap.len); free(ocap.p); }
     w_key(&st, &first, "diagnostics");
-    w_str(&st, r->err.p ? r->err.p : "", r->err.len > MAX_TEXT ? MAX_TEXT : r->err.len);
+    { Buf ecap={0}; text_cap(&ecap, r->err.p ? r->err.p : "", r->err.len); w_str(&st, ecap.p ? ecap.p : "", ecap.len); free(ecap.p); }
     buf_putc(&st, '}');
     tool_result(out, buf_cstr(&text), text.len, buf_cstr(&st), r->status != 0);
     free(text.p);
