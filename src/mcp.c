@@ -99,7 +99,9 @@ static char *jp_string(JP *p, size_t *len) {
         if (c == '"') {
             char *r;
             if (len) *len = b.len;
-            r = xstrdup(buf_cstr(&b));
+            buf_putc(&b, 0);
+            r = xmalloc(b.len);
+            memcpy(r, b.p, b.len);
             free(b.p);
             return r;
         }
@@ -140,6 +142,11 @@ static char *jp_string(JP *p, size_t *len) {
                 }
             }
             if (u >= 0xD800 && u < 0xE000) u = 0xFFFD;
+            if (u == 0) {
+                p->err = "string contains NUL";
+                free(b.p);
+                return NULL;
+            }
             put_utf8(&b, u);
             break;
         }
@@ -313,6 +320,7 @@ static J *json_parse(const char *s, size_t n, const char **err) {
         jp_ws(&p);
         if (p.p != p.end) {
             p.err = "trailing characters";
+            jfree(j);
             j = NULL;
         }
     }
@@ -408,7 +416,7 @@ static void w_str(Buf *b, const char *str, size_t n) {
     buf_putc(b, '"');
 }
 
-static void w_cstr(Buf *b, const char *s) { w_str(b, s, strlen(s)); }
+static void w_cstr(Buf *b, const char *s) { w_str(b, s, s ? strlen(s) : 0); }
 
 static void w_key(Buf *b, int *first, const char *key) {
     if (!*first) buf_putc(b, ',');
@@ -521,9 +529,12 @@ static unsigned char *b64_decode(const char *s, size_t n, size_t *len) {
     for (i = 0; i < n; i++) {
         const char *q;
         unsigned c = (unsigned char)s[i];
-        if (c == '=' || c == '\n' || c == '\r' || c == ' ') continue;
+        if (c == '=' || c == '\n' || c == '\r' || c == ' ' || c == '\t') continue;
         q = strchr(b64chars, (int)c);
-        if (!q || !c) return NULL;
+        if (!q || !c) {
+            free(out);
+            return NULL;
+        }
         acc = (acc << 6) | (unsigned)(q - b64chars);
         bits += 6;
         if (bits >= 8) {
@@ -621,14 +632,22 @@ static void run_prog(Tmp *t, const char *prog, char *const *args, size_t nargs, 
         free(cmd.p);
         return;
     }
-    while ((n = fread(tmp, 1, sizeof tmp, p)) > 0) buf_write(&r->out, tmp, n);
+    while ((n = fread(tmp, 1, sizeof tmp, p)) > 0) {
+        if (r->out.len < MAX_TEXT) {
+            size_t take = n;
+            if (r->out.len + take > MAX_TEXT) take = MAX_TEXT - r->out.len;
+            buf_write(&r->out, tmp, take);
+        }
+    }
     st = pclose(p);
     r->status = WIFEXITED(st) ? WEXITSTATUS(st) : 128 + (WIFSIGNALED(st) ? WTERMSIG(st) : 0);
     {
         size_t el = 0;
         char *e = read_whole(errfile, &el);
         if (e) {
-            buf_write(&r->err, e, el);
+            size_t take = el;
+            if (take > MAX_TEXT) take = MAX_TEXT;
+            buf_write(&r->err, e, take);
             free(e);
         }
     }
@@ -997,6 +1016,8 @@ static size_t str_array(const J *args, const char *key, char ***out, int *bad) {
     *out = xmalloc((a->n + 1) * sizeof **out);
     for (i = 0; i < a->n; i++) {
         if (a->v[i]->t != J_STR) {
+            free(*out);
+            *out = NULL;
             *bad = 1;
             return 0;
         }
@@ -1091,26 +1112,29 @@ static const char *common_options(ArgVec *a, const J *args, Tmp *t, int *is_elf)
     if (jbool(args, "strict_registers", 0)) add_arg(a, "-strict-registers");
     n = str_array(args, "defines", &list, &bad);
     if (bad) return "'defines' must be an array of strings such as [\"NAME\",\"DEBUG=1\"]";
-    for (i = 0; i < n; i++) {
-        vec_push(a, xasprintf("-D%s", list[i]));
-    }
+    for (i = 0; i < n; i++) vec_push(a, xasprintf("-D%s", list[i]));
+    free(list);
     n = str_array(args, "include_dirs", &list, &bad);
     if (bad) return "'include_dirs' must be an array of directory names";
     for (i = 0; i < n; i++) {
         const char *wm = NULL;
         char *rp = ws_resolve(list[i], "'include_dirs'", &wm);
-        if (!rp) return wm;
+        if (!rp) { free(list); return wm; }
         vec_push(a, xasprintf("-I%s", rp));
+        free(rp);
     }
+    free(list);
     if (jget(args, "files")) vec_push(a, xasprintf("-I%s", t->dir));
     n = str_array(args, "macro_dirs", &list, &bad);
     if (bad) return "'macro_dirs' must be an array of directory names";
     for (i = 0; i < n; i++) {
         const char *wm = NULL;
         char *rp = ws_resolve(list[i], "'macro_dirs'", &wm);
-        if (!rp) return wm;
+        if (!rp) { free(list); return wm; }
         vec_push(a, xasprintf("-M%s", rp));
+        free(rp);
     }
+    free(list);
     if (jget(args, "files")) vec_push(a, xasprintf("-M%s", t->dir));
     if (jstr(args, "sysparm")) {
         add_arg(a, "-sysparm");
@@ -1216,6 +1240,7 @@ static void tool_assemble(const J *args, Buf *out) {
         }
         nm = str_array(args, "dwarf_map", &maps, &bad);
         if (bad) {
+            free(maps);
             tool_fail(out, "'dwarf_map' must be an array of \"FROM=TO\" strings");
             goto done;
         }
@@ -1223,6 +1248,7 @@ static void tool_assemble(const J *args, Buf *out) {
             add_arg(&a, "-gmap");
             add_arg(&a, maps[k]);
         }
+        free(maps);
     }
     if (jbool(args, "werror", 0)) add_arg(&a, "-Werror");
     if (jbool(args, "reproducible", 0)) add_arg(&a, "-reproducible");
@@ -1301,7 +1327,7 @@ static void tool_assemble(const J *args, Buf *out) {
     w_key(&st, &first, "format");
     w_cstr(&st, is_elf ? "elf" : "goff");
     w_key(&st, &first, "diagnostics");
-    w_str(&st, r.err.p ? r.err.p : "", r.err.len);
+    w_str(&st, r.err.p ? r.err.p : "", r.err.len > MAX_TEXT ? MAX_TEXT : r.err.len);
     if (obj) {
         w_key(&st, &first, "object_size");
         buf_printf(&st, "%zu", objlen);
@@ -1313,7 +1339,7 @@ static void tool_assemble(const J *args, Buf *out) {
             Buf b64 = {0};
             b64_encode(&b64, obj, objlen);
             w_key(&st, &first, "object_base64");
-            w_str(&st, b64.p ? b64.p : "", b64.len);
+            w_str(&st, b64.p ? b64.p : "", b64.len > MAX_TEXT ? MAX_TEXT : b64.len);
             free(b64.p);
         }
     }
@@ -1333,10 +1359,8 @@ static void tool_assemble(const J *args, Buf *out) {
         }
     }
     if (listing) {
-        if (lbuf.len) {
-            w_key(&st, &first, "listing");
-            w_str(&st, lbuf.p, lbuf.len > MAX_TEXT ? MAX_TEXT : lbuf.len);
-        }
+        w_key(&st, &first, "listing");
+        w_str(&st, lbuf.p ? lbuf.p : "", lbuf.len > MAX_TEXT ? MAX_TEXT : lbuf.len);
     }
     buf_putc(&st, '}');
     tool_result(out, buf_cstr(&text), text.len, buf_cstr(&st), r.status != 0);
@@ -2152,16 +2176,18 @@ static void dispatch(const J *msg, Buf *r) {
             reply_error(id, -32602, "tools/call needs a tool name");
             return;
         }
-        if (strncmp(name, "zosasm_", 7) != 0) {
-            reply_error(id, -32602, "unknown tool");
-            return;
-        }
         if (args && args->t != J_OBJ) {
             reply_error(id, -32602, "'arguments' must be an object");
             return;
         }
-        tool_call(name, args, r);
-        reply_result(id, buf_cstr(r));
+        if (!strcmp(name, "zosasm_assemble") || !strcmp(name, "zosasm_preprocess") ||
+            !strcmp(name, "zosasm_dump") || !strcmp(name, "zosasm_disasm") ||
+            !strcmp(name, "zosasm_convert_hlasm") || !strcmp(name, "zosasm_guide")) {
+            tool_call(name, args, r);
+            reply_result(id, buf_cstr(r));
+        } else {
+            reply_error(id, -32602, "unknown tool");
+        }
     } else if (!strcmp(method, "resources/list")) {
         resources_list(r);
         reply_result(id, buf_cstr(r));
@@ -2236,6 +2262,10 @@ int main(int argc, char **argv) {
     while ((n = getline(&line, &cap, stdin)) != -1) {
         const char *err = NULL;
         J *msg;
+        if (n > 0 && line[n - 1] != '\n') {
+            int ch;
+            while ((ch = fgetc(stdin)) != EOF && ch != '\n') n++;
+        }
         while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) n--;
         if (n == 0) continue;
         if ((size_t)n > MAX_REQUEST) {

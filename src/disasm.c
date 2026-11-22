@@ -473,14 +473,35 @@ static int xcon_reloc(Ctx *x, const GoffReloc *r, DRel *d) {
     return 1;
 }
 
-/* is there a subtracting item for the same field as r? */
-static int has_sub_at(const GoffModule *m, const GoffReloc *r) {
+/* is there a subtracting item for the same field as r that can be merged? */
+static int has_accepted_sub_at(Ctx *x, const GoffReloc *r, const DClass *c) {
+    const GoffModule *m = x->m;
     size_t k;
     for (k = 0; k < m->relocs.n; k++) {
         const GoffReloc *o = &m->relocs.v[k];
-        if (o->action == GOFF_ACTION_SUB && o->pid == r->pid && o->offset == r->offset &&
-            o->length == r->length)
-            return 1;
+        const IdInfo *t;
+        int n = o->length;
+        int32_t at;
+        DRel *p;
+        if (o->action != GOFF_ACTION_SUB || o->pid != r->pid || o->offset != r->offset ||
+            o->length != r->length)
+            continue;
+        t = o->rid && o->rid <= m->esds.n ? &x->by_id[o->rid] : NULL;
+        if (!t || (t->kind != 'E' && t->kind != 'C' && t->kind != 'L')) continue;
+        if (o->store || o->reference != GOFF_REF_ADDRESS || o->bit_length || o->bit_offset ||
+            o->cond_seq || !(n == 3 || n == 4 || n == 8))
+            continue;
+        if ((uint64_t)o->offset + (uint64_t)n > c->len) continue;
+        at = c->rel_at[o->offset];
+        p = at ? &c->rels[at - 1] : NULL;
+        if (p) {
+            if (!p->ri && !p->xk && p->len == n && !p->hassub && !p->vcon) return 1;
+        } else {
+            size_t b;
+            for (b = 0; b < (size_t)n; b++)
+                if (c->occ[o->offset + b]) break;
+            if (b == (size_t)n) return 1;
+        }
     }
     return 0;
 }
@@ -609,10 +630,14 @@ static int load_relocs(Ctx *x) {
             } else {
                 d.val = sv + d.base;
                 d.vcon = 0;
-                if ((d.val < 0 || d.val > (int64_t)d.cls->len) && !has_sub_at(m, r)) {
-                    warnf(x, "address constant at %s+%u points outside class %s; relocation ignored",
-                          c->name, r->offset, d.cls->name);
-                    continue;
+                if (d.val < 0 || d.val > (int64_t)d.cls->len) {
+                    if (has_accepted_sub_at(x, r, c)) {
+                        /* a SUB relocation will adjust this value in pass 2 */
+                    } else {
+                        warnf(x, "address constant at %s+%u points outside class %s; relocation ignored",
+                              c->name, r->offset, d.cls->name);
+                        continue;
+                    }
                 }
             }
         }
@@ -640,8 +665,12 @@ static void mark_adcon_targets(Ctx *x) {
         DClass *c = x->classes.v[ci];
         for (k = 0; k < c->nrels; k++) {
             const DRel *r = &c->rels[k];
-            if (!r->ri && r->cls && c->rel_at[r->off]) r->cls->lab[r->hassub ? 0 : r->val] |= 8;
-            if (!r->ri && r->cls2 && c->rel_at[r->off]) r->cls2->lab[0] |= 8;
+            if (r->ri || !c->rel_at[r->off]) continue;
+            if (r->cls) {
+                uint64_t v = r->hassub ? 0 : (uint64_t)r->val;
+                if (v <= r->cls->len) r->cls->lab[v] |= 8;
+            }
+            if (r->cls2) r->cls2->lab[0] |= 8;
         }
     }
 }
@@ -873,7 +902,12 @@ static const DName *first_name(const DClass *c, int64_t off, size_t *idx) {
 }
 
 static char *label_ref(Ctx *x, const DClass *c, int64_t off) {
-    const DName *n = first_name(c, off, NULL);
+    const DName *n;
+    if (!c || off < 0 || off > (int64_t)c->len) {
+        warnf(x, "address constant refers outside a class; 0 written");
+        return xstrdup("0");
+    }
+    n = first_name(c, off, NULL);
     return n ? xstrdup(n->name) : gen_name(x, c, off);
 }
 

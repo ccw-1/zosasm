@@ -366,22 +366,47 @@ void rep_print(Reporter *r, FILE *w, int color) {
     }
 }
 
+static int json_utf8(const char *s, unsigned *out) {
+    unsigned char c = (unsigned char)s[0];
+    if (c < 0x80) { *out = c; return 1; }
+    if (c >= 0xC2 && c <= 0xDF && (s[1] & 0xC0) == 0x80) {
+        *out = ((c & 0x1F) << 6) | (s[1] & 0x3F);
+        return 2;
+    }
+    if (c >= 0xE0 && c <= 0xEF && (s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80) {
+        unsigned cp = ((c & 0x0F) << 12) | ((s[1] & 0x3F) << 6) | (s[2] & 0x3F);
+        if (cp >= 0x800 && (cp < 0xD800 || cp > 0xDFFF)) { *out = cp; return 3; }
+    }
+    if (c >= 0xF0 && c <= 0xF4 && (s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80 &&
+        (s[3] & 0xC0) == 0x80) {
+        unsigned cp = ((c & 0x07) << 18) | ((s[1] & 0x3F) << 12) | ((s[2] & 0x3F) << 6) |
+                      (s[3] & 0x3F);
+        if (cp >= 0x10000 && cp <= 0x10FFFF) { *out = cp; return 4; }
+    }
+    *out = c;
+    return 0;
+}
+
 static void json_str(FILE *w, const char *s) {
     fputc('"', w);
-    for (; s && *s; s++) {
+    for (; s && *s; ) {
         unsigned char c = (unsigned char)*s;
-        if (c == '"' || c == '\\')
-            fprintf(w, "\\%c", c);
-        else if (c == '\n')
-            fputs("\\n", w);
-        else if (c == '\t')
-            fputs("\\t", w);
-        else if (c < 0x20 || c >= 0x80)
-            /* bytes >= 0x80 (EBCDIC text in a message) become \u00xx, so the
-             * document is valid JSON whatever the message holds */
-            fprintf(w, "\\u%04x", c);
-        else
-            fputc(c, w);
+        unsigned cp;
+        int n;
+        if (c == '"' || c == '\\') { fprintf(w, "\\%c", c); s++; continue; }
+        if (c == '\n') { fputs("\\n", w); s++; continue; }
+        if (c == '\t') { fputs("\\t", w); s++; continue; }
+        if (c == '\r') { fputs("\\r", w); s++; continue; }
+        if (c == '\b') { fputs("\\b", w); s++; continue; }
+        if (c == '\f') { fputs("\\f", w); s++; continue; }
+        if (c < 0x20) { fprintf(w, "\\u%04x", c); s++; continue; }
+        n = json_utf8(s, &cp);
+        if (n > 0) {
+            while (n--) fputc(*s++, w);
+        } else {
+            fprintf(w, "\\u%04x", cp);
+            s++;
+        }
     }
     fputc('"', w);
 }

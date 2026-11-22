@@ -490,10 +490,13 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
             if (end > p && cur[end - 1] == ',' && !st->bad && i + 1 < n) {
                 /* continuation */
                 i++;
-                co = 0;
                 cur = lines[i].text;
                 cur_ln = lines[i].line;
-                p = 0;
+                {
+                    const char *cr = caret_rest(cur);
+                    co = (int)(cr - cur);
+                }
+                p = co;
                 while (cur[p] && is_blank((unsigned char)cur[p])) p++;
                 if (!cur[p]) {
                     rep_errorf(rep, "ZA0003", span_make(file, cur_ln, 1, 1),

@@ -71,7 +71,8 @@ Value value_add(Value a, Value b, int sign) {
     Value r;
     int i, n;
     Term *ts;
-    r.abs = a.abs + (int64_t)sign * b.abs;
+    r.abs = sign < 0 ? (int64_t)((uint64_t)a.abs - (uint64_t)b.abs)
+                     : (int64_t)((uint64_t)a.abs + (uint64_t)b.abs);
     r.defined = a.defined && b.defined;
     ts = xmalloc((size_t)(a.nterms + b.nterms + 1) * sizeof *ts);
     n = a.nterms;
@@ -85,7 +86,7 @@ Value value_add(Value a, Value b, int sign) {
 Value value_neg(Value v) {
     Value r = v;
     int i;
-    r.abs = -v.abs;
+    r.abs = (int64_t)(0 - (uint64_t)v.abs);
     if (v.nterms) {
         r.terms = xmalloc((size_t)v.nterms * sizeof(Term));
         for (i = 0; i < v.nterms; i++) {
@@ -106,6 +107,7 @@ typedef struct {
     Reporter *rep;
     int err;
     int minus; /* the term follows a unary minus: 2147483648 is allowed */
+    int depth;
 } EP;
 
 static Expr *mk(ExprKind k, Span sp) {
@@ -139,6 +141,10 @@ static void ep_skip(EP *p) {
 static Expr *parse_add(EP *p);
 static Expr *parse_or(EP *p);
 
+#ifndef MAX_EXPR_DEPTH
+#define MAX_EXPR_DEPTH 200
+#endif
+
 static Expr *bin(EP *p, char op, size_t start, Expr *l, Expr *r) {
     Expr *e = mk(EX_BIN, ep_span(p, start));
     e->op = op;
@@ -155,10 +161,13 @@ static Expr *parse_unary(EP *p) {
         char op = p->s[p->pos];
         size_t start = p->pos;
         Expr *x, *e;
+        if (++p->depth > MAX_EXPR_DEPTH)
+            return ep_fail(p, "ZA1004", start, 1, "expression nested too deeply");
         p->pos++;
         p->minus = op == '-';
         x = parse_unary(p);
         p->minus = 0;
+        p->depth--;
         if (p->err) return NULL;
         e = mk(EX_UN, ep_span(p, start));
         e->op = op;
@@ -507,8 +516,11 @@ static Expr *parse_primary(EP *p) {
     start = p->pos;
     c = (unsigned char)p->s[p->pos];
     if (c == '(') {
+        if (++p->depth > MAX_EXPR_DEPTH)
+            return ep_fail(p, "ZA1004", start, 1, "expression nested too deeply");
         p->pos++;
         e = parse_or(p);
+        p->depth--;
         if (p->err) return NULL;
         ep_skip(p);
         if (p->pos >= p->len || p->s[p->pos] != ')')

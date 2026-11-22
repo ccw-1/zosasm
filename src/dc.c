@@ -790,10 +790,12 @@ static int dc_addr(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
         Expr *e;
         Value v;
         DcVal val;
+        memset(&val, 0, sizeof val);
         it.off += sp->nom_off;
         e = asm_expr(a, st, it);
         if (!e) {
             good = 0;
+            push_val(out, zeros((size_t)n), (size_t)n);
             continue;
         }
         if (!asm_eval(a, st, e, 0, &v)) {
@@ -805,7 +807,11 @@ static int dc_addr(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
             push_val(out, zeros((size_t)n), (size_t)n);
             continue;
         }
-        if (!addr_con(a, st, e, v, n, &val, sp->typ == 'Y')) good = 0;
+        if (!addr_con(a, st, e, v, n, &val, sp->typ == 'Y')) {
+            good = 0;
+            push_val(out, zeros((size_t)n), (size_t)n);
+            continue;
+        }
         vec_push(out, val);
     }
     return good;
@@ -1268,7 +1274,7 @@ void dir_dc(Asm *a, Stmt *st) {
             continue;
         }
         for (j = 0; j < vals.n; j++) total += (int64_t)vals.v[j].n;
-        if (sp.dup > 0 && total > 0 && total > ZA_MAX_LOC / sp.dup) {
+        if (sp.dup > 0 && total > 0 && (uint64_t)total * (uint64_t)sp.dup > (uint64_t)ZA_MAX_LOC) {
             diag_help(dc_err(a, st, "ZA2087", sp.off, sp.n,
                              "%s would need %llu bytes of storage; the limit for one section is "
                              "%lld bytes",

@@ -279,7 +279,12 @@ static MVal f_repeat(Ctx *c, MVal *a, int n) {
     size_t sl = strlen(s);
     Buf b = {0};
     (void)n;
-    if (k < 0 || (sl > 0 && (uint64_t)k > MAX_STR / sl)) {
+    if (k <= 0) {
+        if (k < 0) ma_err(c, "ZA4112", "repeat: count %lld is out of range", (long long)k);
+        return empty_str();
+    }
+    if (sl == 0) return empty_str();
+    if ((uint64_t)k > MAX_STR / sl) {
         ma_err(c, "ZA4112", "repeat: count %lld is out of range", (long long)k);
         return empty_str();
     }

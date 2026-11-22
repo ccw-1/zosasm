@@ -65,7 +65,10 @@ typedef struct {
     MC *m;
     const char *s;
     size_t i;
+    int depth;
 } XP;
+
+#define MCONV_MAX_DEPTH 1024
 
 static void fail(MC *m, const char *fmt, ...) {
     va_list ap;
@@ -354,6 +357,7 @@ static int parse_subs(XP *p, E *subs, int max, int *star) {
     q.m = p->m;
     q.s = xstrndup(p->s + p->i + 1, (size_t)e - p->i - 1);
     q.i = 0;
+    q.depth = p->depth;
     for (;;) {
         skipb(&q);
         if (q.s[q.i] == '*' && star && n > 0) {
@@ -647,6 +651,10 @@ static E parse_prim(XP *p) {
             return str_tail(p, s);
         } else {
             E e;
+            if (++p->depth > MCONV_MAX_DEPTH) {
+                fail(m, "expression nested too deeply (depth %d)", p->depth);
+                return dummy_str();
+            }
             p->i++;
             {
                 static const char *const OPS[] = {"UPPER", "LOWER", "DOUBLE", NULL};
@@ -659,6 +667,7 @@ static E parse_prim(XP *p) {
                         else fail(m, "missing ) after (%s ...", OPS[k]);
                         e = e_make(xasprintf("%s(%s)", k == 0 ? "upper" : k == 1 ? "lower" : "double", a.txt), P_ATOM, T_STR);
                         e.charctx = 1;
+                        p->depth--;
                         return e;
                     }
             }
@@ -666,9 +675,11 @@ static E parse_prim(XP *p) {
             skipb(p);
             if (p->s[p->i] != ')') {
                 fail(m, "missing ) in an expression");
+                p->depth--;
                 return e;
             }
             p->i++;
+            p->depth--;
             return e;
         }
     }
@@ -676,9 +687,18 @@ static E parse_prim(XP *p) {
         return parse_ref(p);
     }
     if (za_isdigit((unsigned char)c)) {
-        int64_t v = 0;
-        while (za_isdigit((unsigned char)p->s[p->i])) v = v * 10 + (p->s[p->i++] - '0');
-        return e_lit(v);
+        uint64_t v = 0;
+        int ov = 0;
+        while (za_isdigit((unsigned char)p->s[p->i])) {
+            unsigned d = (unsigned)(p->s[p->i++] - '0');
+            if (v > (UINT64_MAX - d) / 10) ov = 1;
+            else v = v * 10 + d;
+        }
+        if (ov || v > 0x7FFFFFFFu) {
+            fail(p->m, "SETA constant is out of range (HLASM allows -2147483648..2147483647)");
+            return e_lit(0);
+        }
+        return e_lit((int64_t)v);
     }
     if (za_isalpha((unsigned char)c)) {
         size_t j = p->i;
@@ -823,6 +843,7 @@ static E parse_text(MC *m, const char *s) {
     p.m = m;
     p.s = s;
     p.i = 0;
+    p.depth = 0;
     e = parse_or(&p);
     skipb(&p);
     if (p.s[p.i]) fail(m, "cannot read \"%s\" in a conditional assembly expression", p.s + p.i);
@@ -985,6 +1006,7 @@ static char *model_text(MC *m, const char *s, int nofold) {
                 p.m = m;
                 p.s = s;
                 p.i = i;
+                p.depth = 0;
                 e = parse_ref(&p);
                 i = p.i;
                 c = (unsigned char)s[i];
@@ -1059,6 +1081,7 @@ static void conv_set(MC *m, const MHStmt *s, char kind) {
         p.m = m;
         p.s = s->name;
         p.i = e;
+        p.depth = 0;
         n = parse_subs(&p, subs, 4, NULL);
     }
     split_operands(&ov, s->operands);
@@ -1105,6 +1128,7 @@ static void conv_aif(MC *m, const MHStmt *s) {
         p.m = m;
         p.s = t;
         p.i = 0;
+        p.depth = 0;
         skipb(&p);
         if (t[p.i] != '(') {
             fail(m, "AIF needs (condition).symbol");
@@ -1168,6 +1192,7 @@ static void conv_mnote(MC *m, const MHStmt *s) {
         p.m = m;
         p.s = msg;
         p.i = 0;
+        p.depth = 0;
         e = as_str(parse_or(&p));
         skipb(&p);
         if (p.s[p.i]) warn(m, "text after the MNOTE message is ignored: \"%s\"", p.s + p.i);

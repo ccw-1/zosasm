@@ -239,6 +239,11 @@ static MExpr *parse_primary(Parser *ps) {
             Vec(MExpr *) args = {0};
             e = mk(X_CALL);
             e->s = name;
+            if (++ps->depth > MAX_PARSE_DEPTH) {
+                ps_error(ps, "ZA4100", "expression nested too deeply");
+                ps->depth--;
+                return e;
+            }
             ps_next(ps);
             if (ps->tk != ')') {
                 for (;;) {
@@ -256,6 +261,7 @@ static MExpr *parse_primary(Parser *ps) {
                 ps_error(ps, "ZA4100", "missing ')' after the arguments of %s", name);
             else
                 ps_next(ps);
+            ps->depth--;
             e->args = args.v;
             e->nargs = (int)args.n;
             if (!fn) {
@@ -561,7 +567,11 @@ static MVal ex_defined_arg(Ctx *c, const MExpr *a) {
     return v_int(ma_defined(c, a->s));
 }
 
-MVal ex_eval(Ctx *c, const MExpr *e) {
+static MVal ex_eval_depth(Ctx *c, const MExpr *e, int depth) {
+    if (depth > MAX_PARSE_DEPTH) {
+        ma_err(c, "ZA4100", "expression nested too deeply");
+        return v_int(0);
+    }
     switch (e->k) {
     case X_INT:
         return v_int(e->i);
@@ -584,7 +594,7 @@ MVal ex_eval(Ctx *c, const MExpr *e) {
         return v;
     }
     case X_UN: {
-        MVal a = ex_eval(c, e->a);
+        MVal a = ex_eval_depth(c, e->a, depth + 1);
         int64_t x;
         if (e->op == '!') return v_int(!v_truth(a));
         to_int(c, a, &x);
@@ -593,19 +603,20 @@ MVal ex_eval(Ctx *c, const MExpr *e) {
         return v_int(x);
     }
     case X_BIN:
-        return ex_binop(c, e->op, ex_eval(c, e->a), ex_eval(c, e->b));
+        return ex_binop(c, e->op, ex_eval_depth(c, e->a, depth + 1), ex_eval_depth(c, e->b, depth + 1));
     case X_LAND:
-        return v_int(v_truth(ex_eval(c, e->a)) && v_truth(ex_eval(c, e->b)));
+        return v_int(v_truth(ex_eval_depth(c, e->a, depth + 1)) && v_truth(ex_eval_depth(c, e->b, depth + 1)));
     case X_LOR:
-        return v_int(v_truth(ex_eval(c, e->a)) || v_truth(ex_eval(c, e->b)));
+        return v_int(v_truth(ex_eval_depth(c, e->a, depth + 1)) || v_truth(ex_eval_depth(c, e->b, depth + 1)));
     case X_COND:
-        return v_truth(ex_eval(c, e->a)) ? ex_eval(c, e->b) : ex_eval(c, e->c);
+        return v_truth(ex_eval_depth(c, e->a, depth + 1)) ? ex_eval_depth(c, e->b, depth + 1)
+                                                          : ex_eval_depth(c, e->c, depth + 1);
     case X_INDEX: {
-        MVal b = ex_eval(c, e->a);
-        return at_index(c, b, ex_eval(c, e->b));
+        MVal b = ex_eval_depth(c, e->a, depth + 1);
+        return at_index(c, b, ex_eval_depth(c, e->b, depth + 1));
     }
     case X_IN: {
-        MVal x = ex_eval(c, e->a), l = ex_eval(c, e->b);
+        MVal x = ex_eval_depth(c, e->a, depth + 1), l = ex_eval_depth(c, e->b, depth + 1);
         const MVal *it;
         size_t n = v_items(l, &it), i;
         for (i = 0; i < n; i++)
@@ -620,9 +631,11 @@ MVal ex_eval(Ctx *c, const MExpr *e) {
         if (!strcmp(e->s, "defined") && e->nargs == 1 && e->args[0]->k == X_VAR)
             return ex_defined_arg(c, e->args[0]);
         a = xcalloc(((size_t)e->nargs + 1) * sizeof *a);
-        for (i = 0; i < e->nargs; i++) a[i] = ex_eval(c, e->args[i]);
+        for (i = 0; i < e->nargs; i++) a[i] = ex_eval_depth(c, e->args[i], depth + 1);
         return fn->fn(c, a, e->nargs);
     }
     }
     return v_str("");
 }
+
+MVal ex_eval(Ctx *c, const MExpr *e) { return ex_eval_depth(c, e, 0); }

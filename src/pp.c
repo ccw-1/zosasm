@@ -740,6 +740,8 @@ static int64_t ev_bin(Ev *e, int level) {
                 if (r == 0) {
                     ev_fail(e, "ZA4034", "division by zero in the #if expression");
                     l = 0;
+                } else if (r == -1) {
+                    l = is_div ? (int64_t)(0 - (uint64_t)l) : 0;
                 } else {
                     l = is_div ? l / r : l % r;
                 }
@@ -1067,10 +1069,11 @@ static int is_comment_or_blank(const char *s) {
 static void check_comma(Pp *pp, const char *part, int line) {
     size_t p = 0, end;
     int continuation = pp->comma;
+    const char *raw = part;
+    part = caret_rest(part);
     if (continuation ? (*skip_blanks(part) == 0 || part[0] == '*' || part[0] == ';')
-                     : is_comment_or_blank(part))
+                     : is_comment_or_blank(raw))
         return;
-    if (!continuation) part = caret_rest(part);
     if (pp->comma && !is_blank((unsigned char)part[0]))
         diag_help(rep_warnf(pp->rep, "ZA4070", span_make(pp->file, line, 1, 1),
                             "the previous line ends with a comma, so this line is read as its "

@@ -186,7 +186,9 @@ int main(int argc, char **argv) {
             out = argv[++i];
         } else if (!strcmp(a, "-ictl") && i + 1 < argc) {
             int b, e, c = 16, n = sscanf(argv[++i], "%d,%d,%d", &b, &e, &c);
-            if (n < 2 || b < 1 || e <= b || e > 80) {
+            int ok = n >= 2 && b >= 1 && b <= 40 && e >= 41 && e <= 80 && e >= b + 5;
+            if (ok) ok = n == 3 ? (c >= 2 && c <= 40 && c > b && c < e) : (b < 16 && e > 16);
+            if (!ok) {
                 fprintf(stderr, "hlasm2za: bad -ictl value\n");
                 return 2;
             }

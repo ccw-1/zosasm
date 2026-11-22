@@ -700,7 +700,7 @@ int asm_eval(Asm *a, Stmt *st, const Expr *e, int need, Value *out) {
             return 1;
         }
         if (e->op == '*') {
-            *out = value_abs(l.abs * r.abs);
+            *out = value_abs((int64_t)((uint64_t)l.abs * (uint64_t)r.abs));
             out->defined = l.defined && r.defined;
             return 1;
         }
@@ -712,7 +712,8 @@ int asm_eval(Asm *a, Stmt *st, const Expr *e, int need, Value *out) {
             asm_expr_err(a, st, e->sp, "ZA1014", "division by zero");
             return 0;
         }
-        *out = value_abs(l.abs / r.abs);
+        if (r.abs == -1) *out = value_abs((int64_t)(0 - (uint64_t)l.abs));
+        else *out = value_abs(l.abs / r.abs);
         out->defined = l.defined && r.defined;
         return 1;
     }

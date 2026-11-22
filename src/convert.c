@@ -766,12 +766,11 @@ static void parse(Conv *c) {
         remark = f.remark;
         if (!seen && !strcmp(fp, "ICTL")) {
             int b = 1, e = 71, kk = 16, nn = sscanf(fo, "%d,%d,%d", &b, &e, &kk);
-            /* the continuation column must lie between begin and end, and the
-             * default 16 must too (HLASM rejects an ICTL outside the range) */
-            if (nn >= 2 && b >= 1 && e > b && e <= 80 && (nn == 3 ? (kk >= b && kk <= e) : b <= 16)) {
+            if (nn >= 2 && b >= 1 && b <= 40 && e >= 41 && e <= 80 && e >= b + 5 &&
+                (nn == 3 ? (kk >= 2 && kk <= 40 && kk > b && kk < e) : (b < 16 && e > 16))) {
                 c->o.begin = b;
                 c->o.end = e;
-                c->o.cont = e == 80 ? 0 : (nn >= 3 ? kk : 16);
+                c->o.cont = e == 80 ? 0 : (nn == 3 ? kk : 16);
             } else {
                 warnf(c, line, "ICTL operands not understood: columns unchanged");
             }

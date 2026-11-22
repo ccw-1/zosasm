@@ -478,6 +478,11 @@ uint8_t *module_emit_elf_dbg(Module *m, const DbgElfSec *dbg, size_t ndbg, size_
     for (i = 0; i < nsec; i++)
         if (x.secs.v[i].nrela) nrela_secs++;
     nsh = rela_first + nrela_secs;
+    if (nsh >= 0xFF00 || x.syms.n >= 0xFF00) {
+        snprintf(err, errsz, "too many ELF sections or symbols (%zu sections, %zu symbols); the limit is 65279",
+                 nsh, x.syms.n);
+        return NULL;
+    }
 
     /* layout */
     buf_write(&out, "\x7f" "ELF", 4);
