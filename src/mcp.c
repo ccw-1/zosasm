@@ -1252,8 +1252,10 @@ static void tool_assemble(const J *args, Buf *out) {
     }
     if (jbool(args, "werror", 0)) add_arg(&a, "-Werror");
     if (jbool(args, "reproducible", 0)) add_arg(&a, "-reproducible");
-    mx = jint(args, "max_errors", -1);
-    if (mx >= 0) {
+    if (jget(args, "max_errors")) {
+        if (jget(args, "max_errors")->t != J_NUM) { tool_fail(out, "'max_errors' must be an integer"); goto done; }
+        mx = jint(args, "max_errors", -1);
+        if (mx < 0) { tool_fail(out, "'max_errors' must be a non-negative integer"); goto done; }
         add_arg(&a, "-max-errors");
         vec_push(&a, xasprintf("%ld", mx));
     }
@@ -2257,9 +2259,6 @@ static void usage(void) {
 }
 
 int main(int argc, char **argv) {
-    char *line = NULL;
-    size_t cap = 0;
-    ssize_t n;
     int i;
     for (i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--guide") && i + 1 < argc) {
@@ -2282,33 +2281,39 @@ int main(int argc, char **argv) {
         else
             g_workspace = xstrdup(g_server_dir); /* the directory of the server binary */
     }
-    while ((n = getline(&line, &cap, stdin)) != -1) {
-        const char *err = NULL;
-        J *msg;
-        if (n > 0 && line[n - 1] != '\n') {
-            int ch;
-            while ((ch = fgetc(stdin)) != EOF && ch != '\n') n++;
+    for (;;) {
+        Buf req = {0};
+        int c;
+        while ((c = fgetc(stdin)) != EOF) {
+            if (c == '\n') break;
+            if (req.len < MAX_REQUEST + 1) buf_putc(&req, (char)c);
         }
-        while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) n--;
-        if (n == 0) continue;
-        if ((size_t)n > MAX_REQUEST) {
+        if (c == EOF && req.len == 0) { free(req.p); break; }
+        while (req.len > 0 && (req.p[req.len - 1] == '\n' || req.p[req.len - 1] == '\r')) req.len--;
+        if (req.len == 0) { free(req.p); continue; }
+        if (req.len > MAX_REQUEST) {
             reply_error(NULL, -32600, "request too large");
+            free(req.p);
+            /* if line was longer than buffered, drain to newline */
+            if (c != EOF && c != '\n') while ((c = fgetc(stdin)) != EOF && c != '\n') {}
             continue;
         }
-        msg = json_parse(line, (size_t)n, &err);
-        if (!msg) {
-            reply_error(NULL, -32700, err);
-            continue;
+        {
+            const char *err = NULL;
+            J *msg = json_parse(req.p ? req.p : "", req.len, &err);
+            if (!msg) {
+                reply_error(NULL, -32700, err);
+            } else if (msg->t != J_OBJ) {
+                reply_error(NULL, -32600, "invalid request: not an object");
+                jfree(msg);
+            } else {
+                handle(msg);
+                jfree(msg);
+            }
         }
-        if (msg->t != J_OBJ) {
-            reply_error(NULL, -32600, "invalid request: not an object");
-            jfree(msg);
-            continue;
-        }
-        handle(msg);
-        jfree(msg);
+        free(req.p);
+        if (c == EOF) break;
     }
-    free(line);
     return 0;
 }
 #endif /* ZA_MCP_NO_MAIN */
