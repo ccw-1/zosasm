@@ -1,10 +1,12 @@
 #!/bin/sh
 # Command line tests of build/zosasm.
+set -e
 X=build/zosasm
 T=build/cli_tmp
 fail=0
 P=$(pwd)
-mkdir -p $T
+rm -rf "$T"
+mkdir -p "$T"
 check() { if [ "$2" != "$3" ]; then echo "FAIL cli: $1 (got '$2', want '$3')"; fail=1; fi; }
 
 $X -o $T/hello.o testdata/hello.za 2>$T/err; check "hello exit" $? 0
