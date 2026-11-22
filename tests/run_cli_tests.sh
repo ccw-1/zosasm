@@ -382,7 +382,7 @@ grep -q 'A(4)' $T/m.out; check "mcp preprocess with macro_dirs" $? 0
 mcp '{"jsonrpc":"2.0","id":19,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n GREET\n","files":{"GREET.zmac":"#macro GREET() {\n #emit \"         DC    C\u0027\" + sys.parm + \"\u0027\"\n#}\n"},"sysparm":"HI"}}}' > $T/m.out
 grep -q '"success":true' $T/m.out; check "mcp assemble: macro from files and sysparm" $? 0
 mcp '{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n","macro_steps":0}}}' > $T/m.out
-grep -q 'macro_steps' $T/m.out; check "mcp assemble: bad macro_steps" $? 0
+grep -q '"isError":true' $T/m.out && grep -q 'macro_steps' $T/m.out; check "mcp assemble: bad macro_steps" $? 0
 
 # zafmt: the source formatter
 F=build/zafmt

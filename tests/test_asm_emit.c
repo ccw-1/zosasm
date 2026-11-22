@@ -171,9 +171,9 @@ static void test_quoted_names(void) {
 }
 
 static void test_samples(void) {
-    static const char *const files[] = {"testdata/hello.za", "../hlasm-dwarf/dwemb.asm"};
+    static const char *const files[] = {"testdata/hello.za"};
     size_t i;
-    for (i = 0; i < 2; i++) {
+    for (i = 0; i < sizeof files / sizeof files[0]; i++) {
         size_t n, on;
         char *text = read_file(files[i], &n);
         Reporter *rep;
@@ -181,10 +181,8 @@ static void test_samples(void) {
         char err[256];
         uint8_t *obj;
         const char *perr;
-        if (!text) {
-            printf("skipping %s\n", files[i]);
-            continue;
-        }
+        CHECK_MSG(text != NULL, "missing in-repo sample %s", files[i]);
+        if (!text) continue;
         rep = rep_new(0);
         m = asm_assemble_text(files[i], text, n, rep);
         if (!m) {

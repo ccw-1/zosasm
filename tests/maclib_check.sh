@@ -10,8 +10,11 @@ LIB=${ZASM_MACLIB:?set ZASM_MACLIB to a directory of HLASM macro members (*.mac)
 B=$(cd "$(dirname "$0")/.." && pwd)/build
 T=${ZASM_TMP:-$(mktemp -d)}
 mkdir -p "$T/zm" "$T/zf" "$T/w"
-$B/hlasm2za $ZASM_CONV_FLAGS -macro-dir "$LIB" -o "$T/zm" 2> "$T/conv.log"; tail -1 "$T/conv.log"
-$B/hlasm2za -flat -macro-dir "$LIB" -o "$T/zf" 2> /dev/null
+$B/hlasm2za $ZASM_CONV_FLAGS -macro-dir "$LIB" -o "$T/zm" 2> "$T/conv.log"; rc1=$?
+$B/hlasm2za -flat -macro-dir "$LIB" -o "$T/zf" 2> /dev/null; rc2=$?
+tail -1 "$T/conv.log"
+[ $rc1 -eq 0 ] || { echo "hlasm2za -macro-dir failed: $rc1"; exit 1; }
+[ $rc2 -eq 0 ] || { echo "hlasm2za -flat -macro-dir failed: $rc2"; exit 1; }
 cfail=0; ndiff=0; nrun=0; nskip=0
 filt() { grep -v -E '^ *[0-9]* *[|]' | sed -E "s@$T/z[mf]/@@g; s/[A-Za-z0-9_]+\.zmac:[0-9]+(:[0-9]+)?/Z:N/g; s/:[0-9]+:[0-9]+/:N:N/g; s/line [0-9]+/line N/g" | sort; }
 for f in "$T"/zm/*.zmac; do
@@ -32,7 +35,8 @@ for f in "$T"/zm/*.zmac; do
     cmp -s "$T/w/o_zm" "$T/w/o_zf" || { ndiff=$((ndiff+1)); echo "differs: $b [$args]"; }
   done
 done
-total=$(ls "$T"/zm/*.zmac | wc -l)
+total=$(ls "$T"/zm/*.zmac 2>/dev/null | wc -l)
+[ "$total" -gt 0 ] || { echo "no converted macros found in $T/zm"; exit 1; }
 free=0; gotos=0
 for f in "$T"/zm/*.zmac; do c=$(grep -c '^ *#goto' "$f"); gotos=$((gotos+c)); [ "$c" = 0 ] && free=$((free+1)); done
 echo "converted $total, compile failures $cfail, expansions compared $nrun (skipped $nskip), differences $ndiff"
