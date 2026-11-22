@@ -160,8 +160,7 @@ static int macro_dir(const char *dir, const char *outdir, const ConvOptions *o, 
                 if (f && fclose(f) != 0) ok = 0;
                 if (ok && rename(tmp, op) != 0) ok = 0;
                 if (!ok) {
-                    fprintf(stderr, "hlasm2za: %s: write error\n", op);
-                    if (f) { /* fclose already attempted */ }
+                    fprintf(stderr, "hlasm2za: %s: %s\n", op, strerror(errno));
                     remove(tmp);
                     bad = 1;
                 }
@@ -282,7 +281,7 @@ int main(int argc, char **argv) {
                 int ok = rlen == 0 || fwrite(res, 1, rlen, f) == rlen;
                 if (fclose(f) != 0) ok = 0;
                 if (!ok) {
-                    fprintf(stderr, "hlasm2za: %s: write error\n", out);
+                    fprintf(stderr, "hlasm2za: %s: %s\n", out, strerror(errno));
                     remove(tmp);
                     free(tmp);
                     return 1;
@@ -299,7 +298,7 @@ int main(int argc, char **argv) {
         }
     }
     if (f && (fwrite(res, 1, strlen(res), f) != strlen(res))) {
-        fprintf(stderr, "hlasm2za: %s: write error\n", out);
+        fprintf(stderr, "hlasm2za: %s: %s\n", out, strerror(errno));
         return 1;
     }
     return 0;
