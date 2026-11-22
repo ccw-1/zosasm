@@ -678,7 +678,7 @@ static void scrub(Buf *b, const Tmp *t) {
  * ==================================================================== */
 
 static char *g_bindir;  /* directory of zosasm and hlasm2za */
-static char *g_guide;   /* path of GUIDE.md */
+static char *g_guide;   /* path of GUIDE.md; process-lifetime, not a per-request leak */
 static char *g_docdir;  /* its directory (examples/ is below it) */
 static char *g_server_dir; /* the directory of the server binary (the workspace) */
 
@@ -863,6 +863,8 @@ typedef struct {
     Vec(Heading) heads;
 } Guide;
 
+/* Process-lifetime cache: the guide is loaded once on demand and retained for
+ * the server lifetime. This is intentional, not a per-request leak. */
 static Guide *load_guide(void) {
     static Guide g;
     static int tried;
@@ -1752,14 +1754,21 @@ static void tool_guide(const J *args, Buf *out) {
     "\"macro_steps\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"Stop a macro expansion " \
     "after this many statements (-macro-steps, default 1000000).\"}"
 
+/* Process-lifetime cache: built once, intentionally kept for the server
+ * lifetime. This is not a per-request leak; zosasm-mcp is short/medium lived
+ * and the data is small and immutable for the process. */
 static char *g_tools_json;
 static const char *tools_json(void) {
-    char *g, *tmp;
+    const char *g;
+    Guide *gd;
     Buf b = {0}, o = {0}, gp = {0};
+    char *tmp;
     const char *p;
     size_t gl;
     if (g_tools_json) return g_tools_json;
     g = g_guide;
+    gd = load_guide();
+    (void)gd;
     buf_puts(&b, "[");
     /* zosasm_assemble */
     buf_puts(&b,

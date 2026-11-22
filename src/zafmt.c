@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+#include <unistd.h>
 
 #include "fmt.h"
 #include "util.h"
@@ -32,15 +34,35 @@ static char *read_stdin(size_t *len) {
 }
 
 static int write_out(const char *path, const char *s) {
-    FILE *f = !strcmp(path, "-") ? stdout : fopen(path, "wb");
     size_t n = strlen(s);
-    if (!f) {
-        fprintf(stderr, "zafmt: %s: cannot write\n", path);
-        return 0;
+    if (!strcmp(path, "-")) {
+        if (fwrite(s, 1, n, stdout) != n) {
+            fprintf(stderr, "zafmt: stdout: write error\n");
+            return 0;
+        }
+        return 1;
     }
-    if (fwrite(s, 1, n, f) != n || (f != stdout && fclose(f) != 0)) {
-        fprintf(stderr, "zafmt: %s: write error\n", path);
-        return 0;
+    {
+        char *tmp = xasprintf("%s.tmp.%d", path, (int)getpid());
+        FILE *f = fopen(tmp, "wb");
+        if (!f) {
+            fprintf(stderr, "zafmt: %s: cannot write\n", path);
+            free(tmp);
+            return 0;
+        }
+        if ((n && fwrite(s, 1, n, f) != n) || fclose(f) != 0) {
+            fprintf(stderr, "zafmt: %s: write error\n", path);
+            remove(tmp);
+            free(tmp);
+            return 0;
+        }
+        if (rename(tmp, path) != 0) {
+            fprintf(stderr, "zafmt: %s: %s\n", path, strerror(errno));
+            remove(tmp);
+            free(tmp);
+            return 0;
+        }
+        free(tmp);
     }
     return 1;
 }
