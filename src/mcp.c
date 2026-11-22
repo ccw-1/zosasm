@@ -688,6 +688,7 @@ static char *g_bindir;  /* directory of zosasm and hlasm2za */
 static char *g_guide;   /* path of GUIDE.md; process-lifetime, not a per-request leak */
 static char *g_docdir;  /* its directory (examples/ is below it) */
 static char *g_server_dir; /* the directory of the server binary (the workspace) */
+static char *g_tools_json; /* process-lifetime tools/list cache */
 
 static int file_exists(const char *p) {
     struct stat st;
@@ -701,11 +702,20 @@ static char *dir_of(const char *path) {
     return xstrndup(path, (size_t)(slash - path));
 }
 
+static void locate_reset(void) {
+    free(g_bindir); g_bindir = NULL;
+    free(g_guide); g_guide = NULL;
+    free(g_docdir); g_docdir = NULL;
+    free(g_server_dir); g_server_dir = NULL;
+    free(g_tools_json); g_tools_json = NULL;
+}
+
 static void locate(const char *argv0) {
     char buf[4096];
     ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
     char *exe = NULL;
     const char *env;
+    locate_reset();
     if (n > 0) {
         buf[n] = 0;
         exe = xstrdup(buf);
@@ -1773,7 +1783,6 @@ static void tool_guide(const J *args, Buf *out) {
 /* Process-lifetime cache: built once, intentionally kept for the server
  * lifetime. This is not a per-request leak; zosasm-mcp is short/medium lived
  * and the data is small and immutable for the process. */
-static char *g_tools_json;
 static const char *tools_json(void) {
     const char *g;
     Guide *gd;

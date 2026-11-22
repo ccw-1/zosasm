@@ -15,7 +15,7 @@ LIBSRC := $(filter-out src/main.c src/hlasm2za.c src/mcp.c src/zafmt.c,$(wildcar
 OBJ    := $(LIBSRC:src/%.c=build/%.o)
 TESTS  := $(patsubst tests/%.c,build/%,$(wildcard tests/test_*.c))
 
-.PHONY: all test test-maclib clean isa pdf
+.PHONY: all test test-maclib test-mcp-asan clean isa pdf
 all: build/zosasm build/hlasm2za build/zafmt build/zosasm-mcp
 
 build:
@@ -52,6 +52,15 @@ test: build/zosasm build/hlasm2za build/zafmt build/zosasm-mcp $(TESTS)
 # acceptance run over a real HLASM macro library (local only): ZASM_MACLIB=DIR make test-maclib
 test-maclib: build/zosasm build/hlasm2za
 	tests/maclib_check.sh
+
+# MCP server leak check: build the test harness against src/mcp.c+util.c with
+# ASan/UBSan and require leak detection. Separate from core tests because
+# assembler-core process-lifetime allocations are intentional.
+test-mcp-asan: build/zosasm-mcp
+	$(CC) $(STD) $(WARN) -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+		-DZA_MCP_NO_MAIN -Isrc -I. -o build/test_mcp_asan tests/test_mcp.c src/util.c -lm \
+		-fsanitize=address,undefined
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/test_mcp_asan
 
 # regenerate src/isa_tab.c from isa/isa.json (isa.json itself comes from the
 # Principles of Operation: python3 tools/pop2json.py SA22-7832-14.pdf > isa/isa.json)

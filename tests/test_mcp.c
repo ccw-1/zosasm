@@ -2,7 +2,9 @@
  * directly: the parser, base64, the workspace resolver and whole requests).
  * The server itself is also driven end to end by tests/run_cli_tests.sh. */
 #define _XOPEN_SOURCE 700
+#ifndef ZA_MCP_NO_MAIN
 #define ZA_MCP_NO_MAIN
+#endif
 #include <sys/stat.h>
 #include <unistd.h>
 
