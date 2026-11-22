@@ -250,10 +250,13 @@ static int do_disasm(const char *path, const char *out, int generic) {
         free(tmp);
     } else {
         f = out ? fopen(out, "wb") : stdout;
-        if (!f || fwrite(text, 1, tlen, f) != tlen || (out && fclose(f) != 0)) {
-            fprintf(stderr, "zosasm: %s: %s\n", out ? out : "stdout", strerror(errno));
-            if (f && out) fclose(f);
-            return 1;
+        {
+            int ok = f != NULL && fwrite(text, 1, tlen, f) == tlen;
+            if (f && out && fclose(f) != 0) ok = 0;
+            if (!ok) {
+                fprintf(stderr, "zosasm: %s: %s\n", out ? out : "stdout", strerror(errno));
+                return 1;
+            }
         }
     }
     if (rc == 1) {
@@ -604,25 +607,34 @@ int main(int argc, char **argv) {
         free(tmpdbg);
     } else if (strcmp(outname, "/dev/null") == 0) {
         f = fopen(outname, "wb");
-        if (!f || fwrite(obj, 1, olen, f) != olen || fclose(f) != 0) {
-            fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
-            if (f) fclose(f);
-            return 1;
+        {
+            int ok = f != NULL && fwrite(obj, 1, olen, f) == olen;
+            if (f && fclose(f) != 0) ok = 0;
+            if (!ok) {
+                fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
+                return 1;
+            }
         }
     } else {
         char *tmpobj = xasprintf("%s.tmp.%d", outname, (int)getpid());
         f = fopen(tmpobj, "wb");
-        if (!f || fwrite(obj, 1, olen, f) != olen || fclose(f) != 0) {
-            fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
-            if (f) fclose(f);
-            remove(tmpobj);
-            return 1;
+        {
+            int ok = f != NULL && fwrite(obj, 1, olen, f) == olen;
+            if (f && fclose(f) != 0) ok = 0;
+            if (!ok) {
+                fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
+                remove(tmpobj);
+                free(tmpobj);
+                return 1;
+            }
         }
         if (rename(tmpobj, outname) != 0) {
             fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
             remove(tmpobj);
+            free(tmpobj);
             return 1;
         }
+        free(tmpobj);
     }
     return 0;
 }
