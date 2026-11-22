@@ -299,6 +299,15 @@ static void test_requests(void) {
             r = rpc("{\"jsonrpc\":\"2.0\",\"id\":103,\"method\":\"resources/read\",\"params\":{\"uri\":\"zosasm://guide/section/1\"}}");
             CHECK_MSG(strstr(r, "\"contents\"") != NULL || strstr(r, "error") != NULL, "resource smoke");
             free(r);
+            r = rpc("{\"jsonrpc\":\"2.0\",\"id\":104,\"method\":\"resources/list\"}");
+            CHECK_MSG(strstr(r, "\"resources\"") != NULL, "resources/list smoke");
+            free(r);
+            r = rpc("{\"jsonrpc\":\"2.0\",\"id\":105,\"method\":\"resources/templates/list\"}");
+            CHECK_MSG(strstr(r, "\"resourceTemplates\"") != NULL, "resources/templates/list smoke");
+            free(r);
+            r = rpc("{\"jsonrpc\":\"2.0\",\"id\":106,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_convert_hlasm\",\"arguments\":{\"source\":\"T CSECT\\n BR 14\\n END\\n\"}}}");
+            CHECK_MSG(strstr(r, "\"exit_code\"") != NULL || strstr(r, "isError") != NULL, "convert smoke");
+            free(r);
         }
     }
 }

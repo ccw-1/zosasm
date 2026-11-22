@@ -2220,7 +2220,8 @@ static void dispatch(const J *msg, Buf *r) {
             free(ins.p);
         }
         buf_putc(r, '}');
-        reply_result(id, buf_cstr(r));
+        if (r->len > MAX_TEXT) { r->len = 0; reply_error(id, -32603, "initialize result too large"); }
+        else reply_result(id, buf_cstr(r));
     } else if (!strcmp(method, "ping")) {
         reply_result(id, "{}");
     } else if (!strcmp(method, "tools/list")) {
@@ -2244,7 +2245,8 @@ static void dispatch(const J *msg, Buf *r) {
             !strcmp(name, "zosasm_dump") || !strcmp(name, "zosasm_disasm") ||
             !strcmp(name, "zosasm_convert_hlasm") || !strcmp(name, "zosasm_guide")) {
             tool_call(name, args, r);
-            reply_result(id, buf_cstr(r));
+            if (r->len > MAX_TEXT) { r->len = 0; reply_error(id, -32603, "tool result too large"); }
+            else reply_result(id, buf_cstr(r));
         } else {
             reply_error(id, -32602, "unknown tool");
         }
