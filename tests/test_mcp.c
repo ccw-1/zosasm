@@ -282,6 +282,25 @@ static void test_requests(void) {
         CHECK_MSG(n == 0, "notification answered: %s", out);
         free(out);
     }
+
+    /* request-scoped leak smoke: exercise common tool paths under LSan. */
+    {
+        int i;
+        for (i = 0; i < 20; i++) {
+            r = rpc("{\"jsonrpc\":\"2.0\",\"id\":100,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_assemble\",\"arguments\":{\"source\":\"T CSECT\\n BR 14\\n END\\n\"}}}");
+            CHECK_MSG(strstr(r, "\"exit_code\"") != NULL, "assemble smoke");
+            free(r);
+            r = rpc("{\"jsonrpc\":\"2.0\",\"id\":101,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_preprocess\",\"arguments\":{\"source\":\"#define X 1\\nT CSECT\\n DC F'X'\\n END\\n\"}}}");
+            CHECK_MSG(strstr(r, "\"exit_code\"") != NULL, "preprocess smoke");
+            free(r);
+            r = rpc("{\"jsonrpc\":\"2.0\",\"id\":102,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_guide\",\"arguments\":{\"section\":\"1\"}}}");
+            CHECK_MSG(strstr(r, "\"isError\":false") != NULL, "guide smoke");
+            free(r);
+            r = rpc("{\"jsonrpc\":\"2.0\",\"id\":103,\"method\":\"resources/read\",\"params\":{\"uri\":\"zosasm://guide/section/1\"}}");
+            CHECK_MSG(strstr(r, "\"contents\"") != NULL || strstr(r, "error") != NULL, "resource smoke");
+            free(r);
+        }
+    }
 }
 
 int main(void) {

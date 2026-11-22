@@ -30,6 +30,8 @@ jobs:
             ASAN_OPTIONS=detect_leaks=0 make \
               CFLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -g" \
               test
+            # MCP server is long-lived; run its tests with leak detection.
+            make test-mcp-asan
           else
             make CC=${{ matrix.cc }} test
           fi
