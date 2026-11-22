@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "convert.h"
 #include "util.h"
@@ -150,14 +151,21 @@ static int macro_dir(const char *dir, const char *outdir, const ConvOptions *o, 
         if (res[0]) {
             size_t n = strlen(names.v[k]) - 4;
             char *op = xasprintf("%s/%.*s.zmac", outdir ? outdir : dir, (int)n, names.v[k]);
-            FILE *f = fopen(op, "wb");
-            size_t rlen = strlen(res);
-            int ok = f != NULL;
-            if (ok && rlen && fwrite(res, 1, rlen, f) != rlen) ok = 0;
-            if (f && fclose(f) != 0) ok = 0;
-            if (!ok) {
-                fprintf(stderr, "hlasm2za: %s: write error\n", op);
-                bad = 1;
+            {
+                char *tmp = xasprintf("%s.tmp.%d", op, (int)getpid());
+                FILE *f = fopen(tmp, "wb");
+                size_t rlen = strlen(res);
+                int ok = f != NULL;
+                if (ok && rlen && fwrite(res, 1, rlen, f) != rlen) ok = 0;
+                if (f && fclose(f) != 0) ok = 0;
+                if (ok && rename(tmp, op) != 0) ok = 0;
+                if (!ok) {
+                    fprintf(stderr, "hlasm2za: %s: write error\n", op);
+                    if (f) { /* fclose already attempted */ }
+                    remove(tmp);
+                    bad = 1;
+                }
+                free(tmp);
             }
             free(op);
         }
@@ -261,13 +269,31 @@ int main(int argc, char **argv) {
     if (!strcmp(out, "-")) {
         f = stdout;
     } else {
-        f = fopen(out, "wb");
-        if (!f) {
-            fprintf(stderr, "hlasm2za: %s: %s\n", out, strerror(errno));
-            return 1;
+        {
+            char *tmp = xasprintf("%s.tmp.%d", out, (int)getpid());
+            f = fopen(tmp, "wb");
+            if (!f) {
+                fprintf(stderr, "hlasm2za: %s: %s\n", out, strerror(errno));
+                free(tmp);
+                return 1;
+            }
+            if (fwrite(res, 1, strlen(res), f) != strlen(res) || fclose(f) != 0) {
+                fprintf(stderr, "hlasm2za: %s: write error\n", out);
+                remove(tmp);
+                free(tmp);
+                return 1;
+            }
+            if (rename(tmp, out) != 0) {
+                fprintf(stderr, "hlasm2za: %s: %s\n", out, strerror(errno));
+                remove(tmp);
+                free(tmp);
+                return 1;
+            }
+            free(tmp);
+            f = NULL;
         }
     }
-    if (fwrite(res, 1, strlen(res), f) != strlen(res) || (f != stdout && fclose(f) != 0)) {
+    if (f && (fwrite(res, 1, strlen(res), f) != strlen(res))) {
         fprintf(stderr, "hlasm2za: %s: write error\n", out);
         return 1;
     }
