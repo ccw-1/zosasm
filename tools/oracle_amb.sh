@@ -5,7 +5,7 @@
 # and the decoded listings are diffed. Expected differences: the B_IDRL class
 # and IDRL record of HLASM (shifts the ESDIDs), END record count (HLASM 0).
 # The listings stay in ZORACLE_OUT and are never committed.
-set -e
+set -eu
 name=$1
 [ -n "$name" ] || { echo "usage: $0 NAME" >&2; exit 2; }
 here=$(cd "$(dirname "$0")" && pwd)

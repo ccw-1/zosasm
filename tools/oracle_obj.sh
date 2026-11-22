@@ -4,7 +4,7 @@
 # structurally with `zosasm -dump` (tools/oracle_obj.py). Environment as in
 # oracle.sh. Objects are kept in ZORACLE_OUT (default /tmp/lt/or) as
 # NAME.hl.o and NAME.zo.
-set -e
+set -eu
 src=$1
 [ -f "$src" ] || { echo "usage: $0 SRC.asm" >&2; exit 2; }
 here=$(cd "$(dirname "$0")" && pwd)

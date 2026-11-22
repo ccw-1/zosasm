@@ -9,7 +9,7 @@
 # (default /tmp/lt/or), ZSCP (the z-scp binary).
 # Writes OUT/NAME.tsv (digest of the HLASM listing), OUT/NAME.zlst (zosasm
 # listing) and OUT/NAME.cmp (the comparison, also printed).
-set -e
+set -eu
 src=$1
 [ -f "$src" ] || { echo "usage: $0 SRC.asm" >&2; exit 2; }
 host=${ZORACLE_HOST:-igor}

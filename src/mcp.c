@@ -965,6 +965,10 @@ static void guide_section(const Guide *g, int hi, Buf *out) {
             break;
         }
     for (i = g->heads.v[hi].line; i < end; i++) {
+        if (out->len + strlen(g->lines.v[i]) + 1 > MAX_TEXT) {
+            buf_printf(out, "\n[... section truncated at %zu bytes ...]\n", (size_t)MAX_TEXT);
+            break;
+        }
         buf_puts(out, g->lines.v[i]);
         buf_putc(out, '\n');
     }
@@ -2085,6 +2089,10 @@ static int resource_read(const char *uri, Buf *out) {
         g = load_guide();
         if (!g) { free(text.p); return 0; }
         for (i = 0; i < g->lines.n; i++) {
+            if (text.len + strlen(g->lines.v[i]) + 1 > MAX_TEXT) {
+                buf_printf(&text, "\n[... guide truncated at %zu bytes ...]\n", (size_t)MAX_TEXT);
+                break;
+            }
             buf_puts(&text, g->lines.v[i]);
             buf_putc(&text, '\n');
         }
@@ -2097,7 +2105,21 @@ static int resource_read(const char *uri, Buf *out) {
         hi = find_heading(g, q, &amb);
         free(q);
         if (hi < 0) { free(text.p); return 0; }
-        guide_section(g, hi, &text);
+        {
+            size_t i, end = g->lines.n;
+            int lv = g->heads.v[hi].level;
+            size_t k;
+            for (k = (size_t)hi + 1; k < g->heads.n; k++)
+                if (g->heads.v[k].level <= lv) { end = g->heads.v[k].line; break; }
+            for (i = g->heads.v[hi].line; i < end; i++) {
+                if (text.len + strlen(g->lines.v[i]) + 1 > MAX_TEXT) {
+                    buf_printf(&text, "\n[... section truncated at %zu bytes ...]\n", (size_t)MAX_TEXT);
+                    break;
+                }
+                buf_puts(&text, g->lines.v[i]);
+                buf_putc(&text, '\n');
+            }
+        }
         mime = "text/markdown";
     } else if (!strncmp(uri, "zosasm://examples/", 18)) {
         const char *name = uri + 18;

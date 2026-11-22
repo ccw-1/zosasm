@@ -9,15 +9,15 @@
 #
 # Environment: ZORACLE_HOST (igor), ZORACLE_DIR (/data/ccw/zoracle),
 # ZORACLE_ENV (". /data/ccw/.env"), ZSCP (the z-scp binary).
-set -e
+set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$here/..
 host=${ZORACLE_HOST:-igor}
 dir=${ZORACLE_DIR:-/data/ccw/zoracle}
 envc=${ZORACLE_ENV:-". /data/ccw/.env"}
 zscp=${ZSCP:-$root/../z-scp/z-scp}
-tmp=${TMPDIR:-/tmp}/oracle_ld.$$
-mkdir -p "$tmp"
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/oracle_ld.XXXXXX")
+trap 'rm -rf "$tmp"' EXIT INT TERM
 for f in liba chk; do
     "$root/build/zosasm" -o "$tmp/$f.zo" "$root/testdata/oracle/ld/$f.asm"
     "$zscp" "$root/testdata/oracle/ld/$f.asm" "$host:$dir/ld_$f.asm" > /dev/null
@@ -35,4 +35,3 @@ for a in ld_liba.o ld_libaz.o; do for c in ld_chk.o ld_chkz.o; do
 echo \"== \$a \$c\"; rm -f ld_prog; xlc -o ld_prog ld_main.o \$c \$a 2>&1 | head; ./ld_prog; done; done
 xlc -c -o ld_xsmain.o ld_xsmain.c; as -mgoff -o ld_xs.o ld_xs.asm 2>&1 | tail -5
 for x in ld_xs.o ld_xsz.o; do echo \"== \$x\"; rm -f ld_prog; xlc -o ld_prog ld_xsmain.o \$x 2>&1 | head; ./ld_prog; done"
-rm -rf "$tmp"
