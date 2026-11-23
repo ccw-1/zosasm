@@ -1154,7 +1154,7 @@ static int try_library_dir(Pp *pp, const char *dir, const char *lname) {
         if (src) {
             rep_add_source(pp->rep, path, src, len);
             mac_load_library(pp->mac, path, src, len);
-            free(path);
+            /* path/src live in rep/mac state for diagnostic locations; keep them. */
             return 1;
         }
         free(path);

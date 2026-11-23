@@ -280,7 +280,7 @@ static char *default_output(const char *in) {
     const char *slash = strrchr(in, '/');
     const char *dot = strrchr(in, '.');
     size_t n = strlen(in);
-    if (!strcmp(in, "(stdin)")) return xstrdup("stdin.o");
+    if (!strcmp(in, "(stdin)")) return xstrdup("a.o");
     if (dot && (!slash || dot > slash)) n = (size_t)(dot - in);
     return xasprintf("%.*s.o", (int)n, in);
 }
