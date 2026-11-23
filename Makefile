@@ -15,7 +15,7 @@ LIBSRC := $(filter-out src/main.c src/hlasm2za.c src/mcp.c src/zafmt.c,$(wildcar
 OBJ    := $(LIBSRC:src/%.c=build/%.o)
 TESTS  := $(patsubst tests/%.c,build/%,$(wildcard tests/test_*.c))
 
-.PHONY: all test test-maclib test-mcp-asan clean isa pdf
+.PHONY: all test test-maclib test-mcp-asan clean isa isa-check pdf
 all: build/zosasm build/hlasm2za build/zafmt build/zosasm-mcp
 
 build:
@@ -47,6 +47,7 @@ build/test_%: tests/test_%.c build/libzosasm.a
 test: build/zosasm build/hlasm2za build/zafmt build/zosasm-mcp $(TESTS)
 	@fail=0; for t in $(TESTS); do ./$$t || fail=1; done; \
 	if [ -x tests/run_cli_tests.sh ]; then tests/run_cli_tests.sh || fail=1; fi; \
+	$(MAKE) isa-check || fail=1; \
 	exit $$fail
 
 # acceptance run over a real HLASM macro library (local only): ZASM_MACLIB=DIR make test-maclib
@@ -68,6 +69,19 @@ test-mcp-asan: build/zosasm-mcp
 # Principles of Operation: python3 tools/pop2json.py SA22-7832-14.pdf > isa/isa.json)
 isa: build/isagen
 	build/isagen isa/isa.json > src/isa_tab.c
+
+# self-check: regenerating src/isa_tab.c from isa/isa.json must produce
+# identical output (the checked-in file is the source of truth)
+isa-check: build/isagen
+	@build/isagen isa/isa.json > build/isa_tab.check
+	@if cmp -s build/isa_tab.check src/isa_tab.c; then \
+		echo "isa-check: src/isa_tab.c is in sync with isa/isa.json"; \
+	else \
+		echo "isa-check: src/isa_tab.c differs from regenerated output; run 'make isa'"; \
+		diff src/isa_tab.c build/isa_tab.check | head -20; \
+		exit 1; \
+	fi
+	@rm -f build/isa_tab.check
 
 build/isagen: tools/isagen.c src/util.c src/util.h | build
 	$(CC) $(CFLAGS_ALL) -o $@ tools/isagen.c src/util.c

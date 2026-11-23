@@ -147,13 +147,16 @@ static void test_block_comment_boundaries(void) {
     /* comment that ends exactly at the last line */
     {
         Out o = run_pp(" LR 1,2\n /* closed at eof */\n", NULL, NULL);
-        CHECK_MSG(!strcmp(o.text, " LR 1,2|        "), "comment closed at EOF: %s", o.text);
+        CHECK_MSG(!strcmp(o.text, " LR 1,2|                    "), "comment closed at EOF: %s", o.text);
     }
-    /* block comment spanning the boundary between source and include */
-    put_file("build/pp_inc/bc2.inc", "more */\n LR 3,4\n");
+    /* unclosed comment in an include is reported (ZA4036); it does not
+     * carry over to the including file */
+    put_file("build/pp_inc/bc2.inc", "/* open in include\n");
     {
-        Out o = run_pp("/* start in main\n#include \"bc2.inc\"\n", NULL, incs);
-        CHECK_MSG(!strcmp(o.text, "            | LR    3,4"), "comment spanning include boundary: %s", o.text);
+        Out o = run_pp("#include \"bc2.inc\"\nmore */\n LR 1,2\n", NULL, incs);
+        CHECK_MSG(strstr(o.codes, "ZA4036") != NULL, "ZA4036 for unclosed comment in include: %s", o.codes);
+        /* the main-file text after the include is still processed */
+        CHECK_MSG(strstr(o.text, " LR 1,2") != NULL, "main text after include processed: %s", o.text);
     }
 }
 
