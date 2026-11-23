@@ -99,11 +99,9 @@ static char *jp_string(JP *p, size_t *len) {
         unsigned char c = (unsigned char)*p->p++;
         if (c == '"') {
             char *r;
-            if (len) *len = b.len;
             buf_putc(&b, 0);
-            r = xmalloc(b.len);
-            memcpy(r, b.p, b.len);
-            free(b.p);
+            r = b.p;
+            if (len) *len = b.len - 1;
             return r;
         }
         if (c < 0x20) {
@@ -1511,8 +1509,9 @@ done:
 
 /* the object of dump and disasm: 'path' or 'object_base64' -> file name */
 static char *object_file(Tmp *t, const J *args, const char **msg) {
-    const char *path = jstr(args, "path"), *b64 = jstr(args, "object_base64");
-    if ((path != NULL) == (b64 != NULL)) {
+    const char *path = jstr(args, "path");
+    J *b64j = jget(args, "object_base64");
+    if ((path != NULL) == (b64j && b64j->t == J_STR)) {
         *msg = "give exactly one of 'path' (an object file) or 'object_base64' (its bytes, base64 encoded)";
         return NULL;
     }
@@ -1534,28 +1533,28 @@ static char *object_file(Tmp *t, const J *args, const char **msg) {
         size_t n;
         unsigned char *d;
         char *p;
-        if (strlen(b64) > (size_t)MAX_TEXT * 2) {
+        if (!b64j || b64j->t != J_STR) {
+            *msg = "'object_base64' must be a string";
+            return NULL;
+        }
+        if (b64j->n > (size_t)MAX_TEXT * 2) {
             *msg = "'object_base64' is too large";
             return NULL;
         }
-        d = b64_decode(b64, strlen(b64), &n);
+        d = b64_decode(b64j->s, b64j->n, &n);
         if (!d) {
             *msg = "'object_base64' is not valid base64";
             return NULL;
         }
         if (n > (size_t)MAX_TEXT * 2) {
             free(d);
-            *msg = "'object_base64' decodes to an object that is too large";
+            *msg = "'object_base64' decodes to a file that is too large";
             return NULL;
         }
-        p = tmp_path(t, "input.o");
-        if (!write_whole(p, d, n)) {
-            free(d);
-            *msg = "cannot write the temporary object file";
-            return NULL;
-        }
+        p = tmp_path(t, "object.o");
+        if (!write_whole(p, d, n)) { free(d); *msg = "cannot write the temporary object file"; return NULL; }
         free(d);
-        return xstrdup(p); /* the caller frees; the Tmp copy is freed by tmp_close */
+        return xstrdup(p);
     }
 }
 
@@ -2397,20 +2396,21 @@ int main(int argc, char **argv) {
     for (;;) {
         Buf req = {0};
         int c;
+        int too_big = 0;
         while ((c = fgetc(stdin)) != EOF) {
             if (c == '\n') break;
             if (req.len < MAX_REQUEST + 1) buf_putc(&req, (char)c);
+            else too_big = 1;
         }
         if (c == EOF && req.len == 0) { free(req.p); break; }
-        while (req.len > 0 && (req.p[req.len - 1] == '\n' || req.p[req.len - 1] == '\r')) req.len--;
-        if (req.len == 0) { free(req.p); continue; }
-        if (req.len > MAX_REQUEST) {
+        if (too_big || req.len > MAX_REQUEST) {
             reply_error(NULL, -32600, "request too large");
             free(req.p);
-            /* if line was longer than buffered, drain to newline */
             if (c != EOF && c != '\n') while ((c = fgetc(stdin)) != EOF && c != '\n') {}
             continue;
         }
+        while (req.len > 0 && (req.p[req.len - 1] == '\n' || req.p[req.len - 1] == '\r')) req.len--;
+        if (req.len == 0) { free(req.p); continue; }
         {
             const char *err = NULL;
             J *msg = json_parse(req.p ? req.p : "", req.len, &err);

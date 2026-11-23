@@ -29,12 +29,17 @@ static char *read_stdin(size_t *len) {
     char tmp[4096];
     size_t n;
     while ((n = fread(tmp, 1, sizeof tmp, stdin)) > 0) buf_write(&b, tmp, n);
-    *len = b.len;
-    return xstrdup(buf_cstr(&b));
+    buf_putc(&b, 0);
+    *len = b.len - 1;
+    {
+        char *r = xmalloc(b.len);
+        memcpy(r, b.p, b.len);
+        free(b.p);
+        return r;
+    }
 }
 
-static int write_out(const char *path, const char *s) {
-    size_t n = strlen(s);
+static int write_out(const char *path, const char *s, size_t n) {
     if (!strcmp(path, "-")) {
         if (fwrite(s, 1, n, stdout) != n) {
             fprintf(stderr, "zafmt: stdout: write error\n");
@@ -141,8 +146,8 @@ int main(int argc, char **argv) {
                 rc = rc ? rc : 1;
             }
         } else if (inplace) {
-            if (!same && !write_out(in.v[k], res)) rc = 2;
-        } else if (!write_out(out ? out : "-", res)) {
+            if (!same && !write_out(in.v[k], res, strlen(res))) rc = 2;
+        } else if (!write_out(out ? out : "-", res, strlen(res))) {
             rc = 2;
         }
     }

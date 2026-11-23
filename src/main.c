@@ -445,7 +445,24 @@ int main(int argc, char **argv) {
     }
     za_ascii = charset ? !strcmp(charset, "ascii") : elf;
     ppo.elf = elf;
-    if (dump) return do_dump(dump);
+    if ((dump ? 1 : 0) + (unpack ? 1 : 0) + (disasm ? 1 : 0) + (only_pp ? 1 : 0) > 1) {
+        fprintf(stderr, "zosasm: choose only one of -E, -dump, -disasm or -unpack\n");
+        return 2;
+    }
+    if (dump) {
+        if (in || out || listfile || gflag || gdwarf || gdbgpath || gside || ppo.defines.n || ppo.include_dirs.n ||
+            ppo.macro_dirs.n || ppo.sysparm) {
+            /* dump reads an object; other source/output options do not apply */
+        }
+        for (i = 1; i < argc; i++) {
+            const char *a = argv[i];
+            if (a[0] == '-' && a[1] == '-') a++;
+            if (!strcmp(a, "-dump")) { i++; continue; }
+            fprintf(stderr, "zosasm: -dump takes no other options\n");
+            return 2;
+        }
+        return do_dump(dump);
+    }
     if (unpack) return do_unpack(unpack, out);
     if (disasm) return do_disasm(disasm, out, generic);
     if (!in) {
@@ -542,6 +559,28 @@ int main(int argc, char **argv) {
         return 1;
     }
     outname = out ? xstrdup(out) : default_output(in);
+    if (strcmp(outname, "-") != 0 && strcmp(outname, "/dev/null") != 0) {
+        char *out_r = realpath(outname, NULL);
+        if (out_r) {
+            if (listfile && strcmp(listfile, "-") != 0 && strcmp(listfile, "/dev/null") != 0) {
+                char *lr = realpath(listfile, NULL);
+                if (lr && strcmp(out_r, lr) == 0) {
+                    fprintf(stderr, "zosasm: -o and -l name the same file: %s\n", outname);
+                    free(lr); free(out_r); return 2;
+                }
+                free(lr);
+            }
+            if (gdwarf) {
+                char *gr = realpath(gdwarf, NULL);
+                if (gr && strcmp(out_r, gr) == 0) {
+                    fprintf(stderr, "zosasm: -o and -gdwarf name the same file: %s\n", outname);
+                    free(gr); free(out_r); return 2;
+                }
+                free(gr);
+            }
+            free(out_r);
+        }
+    }
     if (gflag && !elf) {
         DbgResult dr;
         char *dbgname, cwd[4096], *tmpobj = NULL, *tmpdbg = NULL;
