@@ -1149,11 +1149,15 @@ static int try_library_dir(Pp *pp, const char *dir, const char *lname) {
         char *path = join_path(dir, file);
         size_t len;
         char *src = read_file(path, &len);
+        free(base);
+        free(file);
         if (src) {
             rep_add_source(pp->rep, path, src, len);
             mac_load_library(pp->mac, path, src, len);
+            free(path);
             return 1;
         }
+        free(path);
     }
     return 0;
 }

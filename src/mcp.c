@@ -470,7 +470,11 @@ static char *read_whole(const char *path, size_t *len) {
     char tmp[8192];
     size_t n;
     if (!f) return NULL;
-    while ((n = fread(tmp, 1, sizeof tmp, f)) > 0) buf_write(&b, tmp, n);
+    while ((n = fread(tmp, 1, sizeof tmp, f)) > 0) {
+        if (b.len + n > MAX_READ) { fclose(f); free(b.p); errno = EFBIG; return NULL; }
+        buf_write(&b, tmp, n);
+    }
+    if (ferror(f)) { int e = errno; fclose(f); free(b.p); errno = e; return NULL; }
     fclose(f);
     if (len) *len = b.len;
     {
@@ -488,11 +492,15 @@ static unsigned char *read_binary(const char *path, size_t *len) {
     size_t n;
     unsigned char *r;
     if (!f) return NULL;
-    while ((n = fread(tmp, 1, sizeof tmp, f)) > 0) buf_write(&b, tmp, n);
+    while ((n = fread(tmp, 1, sizeof tmp, f)) > 0) {
+        if (b.len + n > MAX_READ) { fclose(f); free(b.p); errno = EFBIG; return NULL; }
+        buf_write(&b, tmp, n);
+    }
+    if (ferror(f)) { int e = errno; fclose(f); free(b.p); errno = e; return NULL; }
     fclose(f);
     r = xmalloc(b.len + 1);
     if (b.len) memcpy(r, b.p, b.len);
-    *len = b.len;
+    if (len) *len = b.len;
     free(b.p);
     return r;
 }
