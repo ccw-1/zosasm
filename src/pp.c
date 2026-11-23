@@ -486,6 +486,8 @@ static void do_define(Pp *pp, const char *p, Span sp) {
     m->def = sp;
     if (is_builtin(m->name) || !strcmp(m->name, "defined")) {
         rep_errorf(pp->rep, "ZA4021", sp, "\"%s\" cannot be defined as a macro", m->name);
+        free(m->name);
+        free(m);
         return;
     }
     p += j;
@@ -503,6 +505,8 @@ static void do_define(Pp *pp, const char *p, Span sp) {
                     diag_help(rep_errorf(pp->rep, "ZA4022", sp, "bad parameter list of macro \"%s\"",
                                          m->name),
                               "parameters are names separated by commas");
+                    { size_t qi; for (qi=0; qi<ps.n; qi++) free(ps.v[qi]); free(ps.v); }
+                    free(m->body); free(m->name); free(m);
                     return;
                 }
                 vec_push(&ps, xstrndup(p, e));
@@ -518,6 +522,8 @@ static void do_define(Pp *pp, const char *p, Span sp) {
             diag_help(rep_errorf(pp->rep, "ZA4022", sp, "bad parameter list of macro \"%s\"",
                                  m->name),
                       "the parameter list must end with ')'");
+            { size_t qi; for (qi=0; qi<ps.n; qi++) free(ps.v[qi]); free(ps.v); }
+            free(m->body); free(m->name); free(m);
             return;
         }
         p++;
