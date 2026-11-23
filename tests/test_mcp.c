@@ -255,6 +255,46 @@ static void test_requests(void) {
     r = rpc("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_dump\",\"arguments\":{\"object_base64\":\"not-base64!\"}}}");
     CHECK_MSG(strstr(r, "isError") != NULL, "bad base64");
     free(r);
+    /* HIGH 1: embedded NUL in JSON string is rejected by parser (no heap overflow) */
+    {
+        const char *line = "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_assemble\",\"arguments\":{\"source\":\"T CSECT\\n BR 14\\u0000\\n END\\n\"}}}";
+        const char *err = NULL;
+        J *msg = json_parse(line, strlen(line), &err);
+        CHECK_MSG(msg == NULL && err != NULL, "embedded NUL rejected by parser");
+        if (msg) jfree(msg);
+    }
+    /* HIGH 2: oversized request line is rejected with -32600 at framing layer */
+    {
+        char *big = xmalloc(MAX_REQUEST + 64);
+        char buf[512];
+        size_t n = 0;
+        const char *pfx = "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_assemble\",\"arguments\":{\"source\":\"";
+        char path[] = "/tmp/zosasm-mcp-big-XXXXXX";
+        int fd = mkstemp(path);
+        n += strlen(pfx); memcpy(big, pfx, n);
+        while (n < MAX_REQUEST + 10) big[n++] = 'A';
+        big[n++] = '\n';
+        CHECK_MSG(fd >= 0, "mkstemp oversized request");
+        if (fd >= 0) {
+            ssize_t wr = write(fd, big, n);
+            FILE *rfd;
+            char cmd[512];
+            close(fd);
+            CHECK_MSG((size_t)wr == n, "write oversized request");
+            snprintf(cmd, sizeof cmd, "build/zosasm-mcp < %s 2>/dev/null", path);
+            rfd = popen(cmd, "r");
+            CHECK_MSG(rfd != NULL, "popen read oversized response");
+            if (rfd) {
+                size_t got = fread(buf, 1, sizeof buf - 1, rfd);
+                buf[got] = 0;
+                pclose(rfd);
+                CHECK_MSG(strstr(buf, "-32600") != NULL && strstr(buf, "request too large") != NULL,
+                          "oversized request rejected: %s", buf);
+            }
+            unlink(path);
+        }
+        free(big);
+    }
 
     /* missing file path is an error, not a crash */
     r = rpc("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_assemble\",\"arguments\":{\"path\":\"no-such-file.za\"}}}");
@@ -322,7 +362,7 @@ static void test_requests(void) {
         free(out);
     }
 
-    /* request-scoped leak smoke: exercise common tool paths under LSan. */
+    /* request-scoped leak smoke: exercise common tool paths and error paths under LSan. */
     {
         int i;
         for (i = 0; i < 20; i++) {
@@ -336,7 +376,7 @@ static void test_requests(void) {
             CHECK_MSG(strstr(r, "\"isError\":false") != NULL, "guide smoke");
             free(r);
             r = rpc("{\"jsonrpc\":\"2.0\",\"id\":103,\"method\":\"resources/read\",\"params\":{\"uri\":\"zosasm://guide/section/1\"}}");
-            CHECK_MSG(strstr(r, "\"contents\"") != NULL || strstr(r, "error") != NULL, "resource smoke");
+            CHECK_MSG(strstr(r, "\"contents\"") != NULL || strstr(r, "\"error\"") != NULL, "resource smoke: %.120s", r);
             free(r);
             r = rpc("{\"jsonrpc\":\"2.0\",\"id\":104,\"method\":\"resources/list\"}");
             CHECK_MSG(strstr(r, "\"resources\"") != NULL, "resources/list smoke");
@@ -346,6 +386,18 @@ static void test_requests(void) {
             free(r);
             r = rpc("{\"jsonrpc\":\"2.0\",\"id\":106,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_convert_hlasm\",\"arguments\":{\"source\":\"T CSECT\\n BR 14\\n END\\n\"}}}");
             CHECK_MSG(strstr(r, "\"exit_code\"") != NULL || strstr(r, "isError") != NULL, "convert smoke");
+            free(r);
+            r = rpc("{\"jsonrpc\":\"2.0\",\"id\":107,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_assemble\",\"arguments\":{\"source\":\"T CSECT\\n BADOP\\n END\\n\"}}}");
+            CHECK_MSG(strstr(r, "\"exit_code\"") != NULL, "assemble error smoke");
+            free(r);
+            r = rpc("{\"jsonrpc\":\"2.0\",\"id\":108,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_dump\",\"arguments\":{\"object_base64\":\"AAAA\"}}}");
+            CHECK_MSG(strstr(r, "isError") != NULL || strstr(r, "error") != NULL, "dump bad base64 smoke");
+            free(r);
+            r = rpc("{\"jsonrpc\":\"2.0\",\"id\":109,\"method\":\"resources/read\",\"params\":{\"uri\":\"zosasm://nope\"}}");
+            CHECK_MSG(strstr(r, "-32002") != NULL || strstr(r, "error") != NULL, "unknown resource smoke");
+            free(r);
+            r = rpc("{\"jsonrpc\":\"2.0\",\"id\":110,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_convert_hlasm\",\"arguments\":{\"path\":\"no-such-file.asm\"}}}");
+            CHECK_MSG(strstr(r, "isError") != NULL, "convert missing path smoke");
             free(r);
         }
     }

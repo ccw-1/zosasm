@@ -1275,12 +1275,21 @@ void dir_dc(Asm *a, Stmt *st) {
                               "GOFF stores class lengths and text offsets in 32 bits");
                     continue;
                 }
-                if (!is_ds && bytes > ((uint64_t)64 << 20)) {
-                    diag_help(dc_err(a, st, "ZA2087", sp.off, sp.n,
-                                     "DC expansion is too large (%llu bytes); the limit is 64 MiB",
-                                     (unsigned long long)bytes),
-                              "reduce the duplication factor or split the constant");
-                    continue;
+                {
+                    uint64_t max_dc = (uint64_t)64 << 20;
+                    const char *env = getenv("ZOSASM_MAX_DC_BYTES");
+                    if (env && *env) {
+                        char *endp = NULL;
+                        unsigned long long v = strtoull(env, &endp, 10);
+                        if (endp != env && *endp == 0 && v > 0) max_dc = (uint64_t)v;
+                    }
+                    if (!is_ds && bytes > max_dc) {
+                        diag_help(dc_err(a, st, "ZA2087", sp.off, sp.n,
+                                         "DC expansion is too large (%llu bytes); the limit is %llu bytes",
+                                         (unsigned long long)bytes, (unsigned long long)max_dc),
+                                  "reduce the duplication factor, split the constant, or set ZOSASM_MAX_DC_BYTES");
+                        continue;
+                    }
                 }
             }
             for (r = 0; r < sp.dup; r++)
@@ -1304,12 +1313,21 @@ void dir_dc(Asm *a, Stmt *st) {
                           "GOFF stores class lengths and text offsets in 32 bits");
                 continue;
             }
-            if (!is_ds && bytes > ((uint64_t)64 << 20)) {
-                diag_help(dc_err(a, st, "ZA2087", sp.off, sp.n,
-                                 "DC expansion is too large (%llu bytes); the limit is 64 MiB",
-                                 (unsigned long long)bytes),
-                          "reduce the duplication factor or split the constant");
-                continue;
+            {
+                uint64_t max_dc = (uint64_t)64 << 20;
+                const char *env = getenv("ZOSASM_MAX_DC_BYTES");
+                if (env && *env) {
+                    char *endp = NULL;
+                    unsigned long long v = strtoull(env, &endp, 10);
+                    if (endp != env && *endp == 0 && v > 0) max_dc = (uint64_t)v;
+                }
+                if (!is_ds && bytes > max_dc) {
+                    diag_help(dc_err(a, st, "ZA2087", sp.off, sp.n,
+                                     "DC expansion is too large (%llu bytes); the limit is %llu bytes",
+                                     (unsigned long long)bytes, (unsigned long long)max_dc),
+                              "reduce the duplication factor, split the constant, or set ZOSASM_MAX_DC_BYTES");
+                    continue;
+                }
             }
         }
         if (is_ds) {

@@ -251,16 +251,31 @@ static int do_disasm(const char *path, const char *out, int generic) {
             return 1;
         }
         free(tmp);
+    } else if (!out) {
+        if (fwrite(text, 1, tlen, stdout) != tlen) {
+            fprintf(stderr, "zosasm: stdout: %s\n", strerror(errno));
+            return 1;
+        }
     } else {
-        f = out ? fopen(out, "wb") : stdout;
+        char *tmp = xasprintf("%s.tmp.%d", out, (int)getpid());
+        f = fopen(tmp, "wb");
         {
             int ok = f != NULL && fwrite(text, 1, tlen, f) == tlen;
-            if (f && out && fclose(f) != 0) ok = 0;
+            if (f && fclose(f) != 0) ok = 0;
             if (!ok) {
-                fprintf(stderr, "zosasm: %s: %s\n", out ? out : "stdout", strerror(errno));
+                fprintf(stderr, "zosasm: %s: %s\n", out, strerror(errno));
+                remove(tmp);
+                free(tmp);
                 return 1;
             }
         }
+        if (rename(tmp, out) != 0) {
+            fprintf(stderr, "zosasm: %s: %s\n", out, strerror(errno));
+            remove(tmp);
+            free(tmp);
+            return 1;
+        }
+        free(tmp);
     }
     if (rc == 1) {
         fprintf(stderr, "zosasm: warning: the generated source does not assemble\n");

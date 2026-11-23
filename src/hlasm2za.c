@@ -121,6 +121,7 @@ static int macro_dir(const char *dir, const char *outdir, const ConvOptions *o, 
                 char *ln = xstrndup(line, n);
                 if (strstr(ln, "macro definition commented out")) is_fail = 1;
                 if (strstr(ln, "not an assembler macro")) is_notasm = 1;
+                free(ln);
                 if (!e) break;
                 line = e + 1;
             }
@@ -131,6 +132,8 @@ static int macro_dir(const char *dir, const char *outdir, const ConvOptions *o, 
                 vec_push(&notasm, base);
             } else if (!strstr(res, "#macro ")) {
                 vec_push(&nomacro, base);
+            } else {
+                free(base);
             }
         }
         for (line = wbuf; *line;) {
@@ -177,6 +180,11 @@ static int macro_dir(const char *dir, const char *outdir, const ConvOptions *o, 
     print_names("not assembler macros (PL/X)", notasm.n, notasm.v);
     print_names("no macro definition", nomacro.n, nomacro.v);
     print_names("FAILED", failed.n, failed.v);
+    for (k = 0; k < names.n; k++) free(names.v[k]);
+    for (k = 0; k < notasm.n; k++) free(notasm.v[k]);
+    for (k = 0; k < nomacro.n; k++) free(nomacro.v[k]);
+    for (k = 0; k < failed.n; k++) free(failed.v[k]);
+    free(names.v); free(notasm.v); free(nomacro.v); free(failed.v);
     return bad || nfail > 0;
 }
 

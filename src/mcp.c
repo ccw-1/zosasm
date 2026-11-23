@@ -855,7 +855,7 @@ static char *ws_resolve(const char *p, const char *what, const char **msg) {
                 while (full[j] && full[j] != '/') j++;
                 if (j > i + 1 || (j == i + 1 && full[i] != '.')) { /* not "." or empty */
                     if (j - i == 2 && full[i] == '.' && full[i + 1] == '.') {
-                        char *last = strrchr(buf_cstr(&b), '/'); /* b starts with '/' */
+                        const char *last = strrchr(buf_cstr(&b), '/'); /* b starts with '/' */
                         if (last && last != b.p) {
                             b.len = (size_t)(last - b.p);
                             b.p[b.len] = 0;
@@ -1004,6 +1004,10 @@ static void guide_contents(const Guide *g, Buf *out) {
     size_t i;
     for (i = 0; i < g->heads.n; i++) {
         const Heading *h = &g->heads.v[i];
+        if (out->len >= MAX_TEXT) {
+            buf_printf(out, "\n[... contents truncated at %zu bytes ...]\n", (size_t)MAX_TEXT);
+            return;
+        }
         if (h->level == 2)
             buf_printf(out, "%s\n", h->text);
         else if (h->level == 3)
@@ -1740,8 +1744,13 @@ static void tool_guide(const J *args, Buf *out) {
             for (k = 0; k + ql <= ll; k++)
                 if (za_strncmpi(l + k, q, ql) == 0) {
                     const char *s = section_of_line(g, i);
-                    buf_printf(&text, "line %zu [%s]: %.160s\n", i + 1, s, l);
-                    hits++;
+                    if (text.len + 256 > MAX_TEXT) {
+                        buf_printf(&text, "\n[... search results truncated at %zu bytes ...]\n", (size_t)MAX_TEXT);
+                        hits = 40;
+                    } else {
+                        buf_printf(&text, "line %zu [%s]: %.160s\n", i + 1, s, l);
+                        hits++;
+                    }
                     break;
                 }
         }
