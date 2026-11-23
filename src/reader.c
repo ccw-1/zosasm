@@ -309,6 +309,9 @@ void src_split(SrcVec *out, const char *file, const char *text, size_t len) {
             l.line = line++;
             l.text = buf + start;
             l.orig = NULL;
+            l.plines = NULL;
+            l.poffs = NULL;
+            l.nplines = 0;
             vec_push(out, l);
             start = i + 1;
         }
