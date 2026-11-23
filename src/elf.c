@@ -179,7 +179,8 @@ static uint32_t add_sym(Ctx *x, const char *name, int bind, int type, uint16_t s
     return (uint32_t)x->syms.n - 1;
 }
 
-/* section header index of an emitted class */
+/* section header index of an emitted class.
+ * The caller must ensure c->esd < 0xFF00 (checked before symbols are added). */
 static uint16_t shndx_of(const Class *c) { return (uint16_t)c->esd; }
 
 static int64_t label_offset(const Symbol *sym) {
@@ -375,9 +376,17 @@ uint8_t *module_emit_elf_dbg(Module *m, const DbgElfSec *dbg, size_t ndbg, size_
         vec_push(&x.secs, e);
     }
 
+    /* ELF section indices are 16-bit; SHN_LORESERVE is 0xFF00.  Guard here,
+     * before any symbol uses shndx_of() or the (uint16_t)(i + 1) cast below. */
+    if (x.secs.n >= 0xFF00) {
+        snprintf(err, errsz, "too many ELF sections (%zu); the limit is 65279", x.secs.n);
+        return NULL;
+    }
+
     /* symbols: null, file, section symbols, local labels, then the globals */
     add_sym(&x, "", STB_LOCAL_, STT_NOTYPE_, 0, 0, 0);
     add_sym(&x, m->name && m->name[0] ? m->name : "zosasm", STB_LOCAL_, STT_FILE_, SHN_ABS_, 0, 0);
+    /* i + 1 <= x.secs.n < 0xFF00 (checked above), so the cast is safe */
     for (i = 0; i < x.secs.n; i++) x.secs.v[i].sym = add_sym(&x, "", STB_LOCAL_, STT_SECTION_, (uint16_t)(i + 1), 0, 0);
     for (i = 0; i < m->sym_order.n; i++) {
         Symbol *sym = m->sym_order.v[i];
@@ -396,6 +405,7 @@ uint8_t *module_emit_elf_dbg(Module *m, const DbgElfSec *dbg, size_t ndbg, size_
         code = class_is_code(sym->piece->cls);
         if (sym->kind == SYM_SECT && sym->piece->cls == sym->piece->cls->sect->classes.v[0])
             size = (uint64_t)sym->piece->cls->len;
+        /* c->esd < 0xFF00 (checked above), so shndx_of() is safe */
         sym->esd = add_sym(&x, sym->name, STB_GLOBAL_, code ? STT_FUNC_ : STT_OBJECT_,
                            shndx_of(sym->piece->cls), (uint64_t)label_offset(sym), size);
     }
