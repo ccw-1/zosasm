@@ -1,5 +1,8 @@
 /* zosasm - a cross assembler for an HLASM-like language that writes z/OS
  * GOFF object files. */
+#ifndef _XOPEN_SOURCE
+#  define _XOPEN_SOURCE 700
+#endif
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
