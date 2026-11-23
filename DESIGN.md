@@ -1264,6 +1264,9 @@ The debugger check was done with gdb under `qemu-s390x` (GUIDE 17).
 
 ## 18. The MCP server (`src/mcp.c`)
 
+One of the purposes of this project is to let AI agents directly generate
+z/OS object code (GOFF, or ELF64 s390x for Linux on Z) from source without
+installing or invoking a compiler, assembler, binder, or any z/OS toolchain.
 `build/zosasm-mcp` is a Model Context Protocol server for AI agents (guide
 chapter 18). It is one C file with its own JSON reader and writer (the rest
 of zosasm has no JSON) and uses POSIX (`popen`, `mkdtemp`, `realpath`,

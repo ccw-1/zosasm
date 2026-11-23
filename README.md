@@ -138,14 +138,23 @@ HLASM conditional assembly (guide chapter 19, `MACRO.md`). `hlasm2za` converts
 existing HLASM `MACRO`..`MEND` definitions into these zosasm macros, recovering
 the control flow so the result is structured (`-m`, `-macro-dir`, `-flat`).
 
-## For AI agents
+## For AI agents: generate z/OS object code without a compiler
 
-`build/zosasm-mcp` is an MCP (Model Context Protocol) server on stdio. An
-agent can assemble, preprocess, dump, disassemble and convert HLASM source
-through typed tools and read the user's guide (`docs/GUIDE.md`) through the
-`zosasm_guide` tool or the `zosasm://guide` resource. Register
-`/path/to/zosasm/build/zosasm-mcp` as a command in the MCP client; the
-`initialize` reply tells the agent where the guide is. Details: guide
+One of the purposes of this project is to let AI agents directly generate
+z/OS object code (GOFF, or ELF64 s390x for Linux on Z) from source —
+without installing or invoking a compiler, assembler, binder, or any z/OS
+toolchain. `build/zosasm-mcp` is an MCP (Model Context Protocol) server on
+stdio that exposes typed tools so an agent can:
+
+* assemble zosasm (`.za`) source into a GOFF object (`zosasm_assemble`),
+* preprocess source (`zosasm_preprocess`),
+* dump the structure of a GOFF object (`zosasm_dump`),
+* turn a GOFF object back into source (`zosasm_disasm`),
+* convert existing HLASM source (`.asm`) to zosasm source (`zosasm_convert_hlasm`),
+* read the user's guide (`zosasm_guide`, `zosasm://guide` resource).
+
+Register `/path/to/zosasm/build/zosasm-mcp` as a command in the MCP client;
+the `initialize` reply tells the agent where the guide is. Details: guide
 chapter 18, `DESIGN.md` section 18.
 
 `make test-mcp-asan` runs the MCP harness with ASan/UBSan+LSan
