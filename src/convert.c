@@ -693,16 +693,20 @@ static void open_finish(Conv *c) {
         for (j = 0; j < c->open.n; j++) vec_push(&all, c->open.v[j]);
         vec_push(&all, e);
         res = mconv_macro(&all, &mo, &why);
+        free(all.v);
     }
     if (res) {
         char *q = res;
         push_comment(c, line, xstrdup("* ---- open code conditional assembly, converted to a macro called below ----"));
         while (*q) {
             char *nl = strchr(q, '\n');
-            push_comment(c, line, xstrndup(q, (size_t)(nl - q)));
+            size_t len = nl ? (size_t)(nl - q) : strlen(q);
+            push_comment(c, line, xstrndup(q, len));
+            if (!nl) break;
             q = nl + 1;
         }
         push_comment(c, line, xstrdup("         OPENCODE"));
+        free(res);
     } else {
         push_comment(c, line, xstrdup("* ---- open code conditional assembly, not converted (see the warning) ----"));
         for (j = c->open_first; j < c->lines.n; j++) {
@@ -715,6 +719,9 @@ static void open_finish(Conv *c) {
         }
         warnf(c, line, "open code conditional assembly commented out: %s", why ? why : "not converted");
     }
+    free(why);
+    free(p.name); free(p.op); free(p.operands); free(p.remark);
+    free(e.name); free(e.op); free(e.operands); free(e.remark);
 }
 
 static void parse(Conv *c) {

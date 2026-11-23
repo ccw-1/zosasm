@@ -6,9 +6,12 @@ files. Portable C99; it needs only a C compiler and `make`.
 Two workflows are supported:
 
 * **Assemble zosasm source** (`.za`) directly into a GOFF object.
-* **Convert existing HLASM source** (`.asm`) into zosasm source with
-  `hlasm2za`, then assemble it — including HLASM `MACRO`..`MEND` definitions,
-  which are recovered as zosasm macros.
+* **Convert existing HLASM source** (`.asm`) to zosasm source with
+  `hlasm2za`, then assemble it. This includes HLASM `MACRO`..`MEND`
+  definitions, which are recovered as structured zosasm macros (`#macro`).
+* **Convert whole HLASM macro libraries**: `hlasm2za -macro-dir` can convert
+  an entire `SYS1.MACLIB`-style library to `.zmac` files for use with
+  `zosasm -Mdir`.
 
 ## Quick start: convert HLASM to a GOFF object
 
@@ -35,26 +38,50 @@ tables (`src/ebcdic_tab.c`) are generated files that are checked in.
 
 ## Converting from HLASM (`hlasm2za`)
 
-`hlasm2za FILE.asm` reads HLASM source (card columns, upper case, `COPY`,
-registers as numbers or `EQU` names) and writes zosasm source, by default
-with `%r1` registers so that the result assembles with `-strict-registers`.
+`hlasm2za` converts existing HLASM source into zosasm source, so you can
+assemble it with `zosasm` and keep using normal source-control and editing
+workflows.
 
-Key conversions:
+```sh
+build/hlasm2za old.asm                 # one source file -> old.za
+build/hlasm2za -m -macro-dir sys1.maclib IHASAVER   # one library member
+build/hlasm2za -macro-dir sys1.maclib -o out_macros  # whole SYS1.MACLIB
+```
 
-* `MACRO`..`MEND` definitions become zosasm macros (`#macro ... #}`) with
-  the control flow recovered — `IF/AGO` branches are turned into structured
-  `#if/#while/#switch` plus a dispatch loop, so no `#goto` is left in the
-  structured output (`-keep-goto` preserves the old form).
-* Open-code conditional assembly (`AIF`, `AGO`, `ANOP`, `LCL`, `GBL`, `SETA`,
-  `SETB`, `SETC`) becomes a synthetic macro `OPENCODE`.
-* `COPY` becomes `#insert`; `&SYS*` symbols map to `sys.loc|date|datc|time|parm`.
+### HLASM source conversion
 
-Library options: `-m` (single library member), `-macro-dir` (whole library),
-`-flat` (`#goto` form), `-copy-dir`, `-sysparm STR`. `make test-maclib`
-(`ZASM_MACLIB=/path/to/SYS1.MACLIB`) converts and compiles a real HLASM macro
-library; on a local SYS1.MACLIB copy it converted 2076 macros with 0 compile
-failures, 0 expansion differences, and no `#goto` left in the structured
-output (46 members had no macro definition).
+* Reads HLASM source (card columns, upper case, `COPY`, registers as numbers
+  or `EQU` names) and writes `.za` source.
+* Converts registers to `%rN` by default so the output assembles with
+  `-strict-registers` (`-relaxed` keeps relaxed register form).
+* Converts `COPY` to `#insert`; maps `&SYS*` symbols to
+  `sys.loc|date|datc|time|parm`.
+* Converts open-code conditional assembly (`AIF`, `AGO`, `ANOP`, `LCL`,
+  `GBL`, `SETA`, `SETB`, `SETC`) into a synthetic `OPENCODE` macro.
+
+### HLASM macro conversion
+
+HLASM `MACRO`..`MEND` definitions are converted into zosasm macros
+(`#macro ... #}`):
+
+* Recovers control flow from `IF/AGO`-style branches into structured
+  `#if/#while/#switch` and dispatch loops, so no `#goto` is left in the
+  structured output.
+* `-flat`/`-keep-goto` preserves the older `#goto`-based form when needed.
+* Handles macro libraries with `-m` (single member), `-macro-dir` (whole
+  library), `-copy-dir`, `-include-extension`, and `-sysparm STR`.
+
+### SYS1.MACLIB conversion
+
+The converter is designed to handle real HLASM macro libraries, not only
+small examples. `make test-maclib` (`ZASM_MACLIB=/path/to/SYS1.MACLIB`)
+converts and compiles a real library. On a local SYS1.MACLIB copy, it:
+
+* converted **2076** macros
+* had **0** compile failures
+* had **0** expansion differences (4286 expansions compared)
+* left **0** `#goto` in structured output
+* reported **46** members with no macro definition
 
 Guide: `docs/GUIDE.md` section 16; `DESIGN.md` section 16.
 

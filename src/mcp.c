@@ -1328,9 +1328,16 @@ static void tool_assemble(const J *args, Buf *out) {
     scrub(&r.out, &t);
 
     obj = r.status == 0 ? read_binary(objfile, &objlen) : NULL;
+    if (r.status == 0 && !obj) {
+        buf_puts(&text, "zosasm reported success but the object file could not be read (too large or missing)\n");
+        r.status = 1;
+    }
     if (obj && dbgfile) {
         dbg = read_binary(dbgfile, &dbglen);
-        if (dbg && dwarf_out && *dwarf_out && !write_whole(dwarf_out, dbg, dbglen)) {
+        if (!dbg) {
+            buf_puts(&text, "zosasm produced a debug file that could not be read (too large or missing)\n");
+            r.status = 1;
+        } else if (dwarf_out && *dwarf_out && !write_whole(dwarf_out, dbg, dbglen)) {
             buf_printf(&text, "zosasm succeeded but the debug file could not be written to %s: %s\n", dwarf_out,
                        strerror(errno));
             dwarf_out = NULL;
@@ -1370,6 +1377,8 @@ static void tool_assemble(const J *args, Buf *out) {
             scrub(&lbuf, &t);
             buf_puts(&text, "--- listing ---\n");
             text_cap(&text, lbuf.p ? lbuf.p : "", lbuf.len);
+        } else if (r.status == 0) {
+            buf_puts(&text, "\n--- listing ---\n(listing could not be read; it may be too large)\n");
         }
     }
 
