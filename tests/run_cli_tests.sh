@@ -423,6 +423,28 @@ $X -g -elf -o $T/g/z.o $T/g/pb.za 2>/dev/null; check "-g with -elf exit" $? 0
 $X -g -gdbgpath /u/me/$(printf 'x%.0s' $(seq 1 210)).dbg -o $T/g/w.o $T/g/pb.za 2>/dev/null; check "-gdbgpath too long" $? 1
 cp $T/g/pb.o $T/g/a.o; cp $T/g/pb.dbg $T/g/a.dbg
 $X -gside -gmap $P/$T/g=/u/me/w -o $T/g/b.o $T/g/pb.za 2>/dev/null; cmp -s $T/g/a.dbg $T/g/b.dbg; check "-gside is reproducible" $? 0
+
+# expression depth/overflow regressions
+printf 'T CSECT\n L 1,%s1%s\n END\n' "$(python3 -c "print('('*205)")" "$(python3 -c "print(')'*205)")" > $T/deep.za
+$X -o $T/deep.o $T/deep.za 2>$T/deep.err; check "expr depth limit: rc" $? 1
+grep -q 'ZA1004' $T/deep.err; check "expr depth limit: diagnostic" $? 0
+printf "T CSECT\n DC A((X'FFFFFFFF'*X'FFFFFFFF')/2)\n END\n" > $T/mul.za
+$X -o $T/mul.o $T/mul.za 2>$T/mul.err; check "expr mul overflow: rc" $? 1
+grep -q 'ZA1014' $T/mul.err; check "expr mul overflow: diagnostic" $? 0
+printf "T CSECT\n DC A((X'80000000'*X'80000000'*2)/-1)\n END\n" > $T/div.za
+$X -o $T/div.o $T/div.za 2>$T/div.err; check "expr INT64_MIN/-1: rc" $? 1
+grep -q 'ZA1014' $T/div.err; check "expr INT64_MIN/-1: diagnostic" $? 0
+
+# ^ column anchor on continuation line
+cat > $T/caret.za <<'ZA'
+         CSECT
+X        DC    A(1),
+      ^ A(2)
+         END
+ZA
+$X -o $T/caret.o $T/caret.za 2>$T/caret.err; check "caret continuation: rc" $? 0
+$X -dump $T/caret.o | grep -q '00 00 00 01 00 00 00 02'; check "caret continuation: bytes" $? 0
+
 mcp '{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n LR 1,1\n","dwarf":true,"dwarf_base64":true,"dwarf_dir":"/u/x"}}}' > $T/m.out
 grep -q '"dwarf_size":' $T/m.out && grep -q '"dwarf_base64":"f0VMR' $T/m.out; check "mcp assemble: dwarf" $? 0
 mcp '{"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n","dwarf":true,"dwarf_output":"x.dbg","format":"elf"}}}' > $T/m.out

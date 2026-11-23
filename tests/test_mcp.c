@@ -195,7 +195,7 @@ static char *rpc(const char *line) {
     fflush(stdout);
     dup2(fileno(cap), 1);
     msg = json_parse(line, strlen(line), &err);
-    CHECK_MSG(msg != NULL, "rpc parse: %s", line);
+    CHECK_MSG(msg != NULL, "rpc parse: %s err=%s", line, err?err:"(null)");
     if (msg) {
         handle(msg);
         jfree(msg);
@@ -375,8 +375,14 @@ static void test_requests(void) {
             r = rpc("{\"jsonrpc\":\"2.0\",\"id\":102,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_guide\",\"arguments\":{\"section\":\"1\"}}}");
             CHECK_MSG(strstr(r, "\"isError\":false") != NULL, "guide smoke");
             free(r);
+            r = rpc("{\"jsonrpc\":\"2.0\",\"id\":1021,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_guide\",\"arguments\":{\"search\":\"USING\"}}}");
+            CHECK_MSG(strstr(r, "\"isError\":false") != NULL, "guide search smoke");
+            free(r);
             r = rpc("{\"jsonrpc\":\"2.0\",\"id\":103,\"method\":\"resources/read\",\"params\":{\"uri\":\"zosasm://guide/section/1\"}}");
-            CHECK_MSG(strstr(r, "\"contents\"") != NULL || strstr(r, "\"error\"") != NULL, "resource smoke: %.120s", r);
+            CHECK_MSG(strstr(r, "\"contents\"") != NULL || strstr(r, "\"error\"") != NULL, "resource smoke: %.200s", r);
+            free(r);
+            r = rpc("{\"jsonrpc\":\"2.0\",\"id\":1031,\"method\":\"resources/read\",\"params\":{\"uri\":\"zosasm://examples/hello.za\"}}");
+            CHECK_MSG(strstr(r, "\"contents\"") != NULL || strstr(r, "-32002") != NULL, "example resource smoke: %.200s", r);
             free(r);
             r = rpc("{\"jsonrpc\":\"2.0\",\"id\":104,\"method\":\"resources/list\"}");
             CHECK_MSG(strstr(r, "\"resources\"") != NULL, "resources/list smoke");
@@ -393,8 +399,11 @@ static void test_requests(void) {
             r = rpc("{\"jsonrpc\":\"2.0\",\"id\":108,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_dump\",\"arguments\":{\"object_base64\":\"AAAA\"}}}");
             CHECK_MSG(strstr(r, "isError") != NULL || strstr(r, "error") != NULL, "dump bad base64 smoke");
             free(r);
+            r = rpc("{\"jsonrpc\":\"2.0\",\"id\":1081,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_disasm\",\"arguments\":{\"object_base64\":\"AAAA\"}}}");
+            CHECK_MSG(strstr(r, "isError") != NULL || strstr(r, "error") != NULL, "disasm bad base64 smoke");
+            free(r);
             r = rpc("{\"jsonrpc\":\"2.0\",\"id\":109,\"method\":\"resources/read\",\"params\":{\"uri\":\"zosasm://nope\"}}");
-            CHECK_MSG(strstr(r, "-32002") != NULL || strstr(r, "error") != NULL, "unknown resource smoke");
+            CHECK_MSG(strstr(r, "-32002") != NULL || strstr(r, "\"error\"") != NULL, "unknown resource smoke: %.200s", r);
             free(r);
             r = rpc("{\"jsonrpc\":\"2.0\",\"id\":110,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_convert_hlasm\",\"arguments\":{\"path\":\"no-such-file.asm\"}}}");
             CHECK_MSG(strstr(r, "isError") != NULL, "convert missing path smoke");

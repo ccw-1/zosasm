@@ -2,6 +2,7 @@
  * location counter handling and layout. */
 #include <stdarg.h>
 #include <stdlib.h>
+#include <limits.h>
 #include <string.h>
 
 #include "asm.h"
@@ -700,7 +701,12 @@ int asm_eval(Asm *a, Stmt *st, const Expr *e, int need, Value *out) {
             return 1;
         }
         if (e->op == '*') {
-            *out = value_abs((int64_t)((uint64_t)l.abs * (uint64_t)r.abs));
+            int64_t z;
+            if (__builtin_mul_overflow(l.abs, r.abs, &z)) {
+                asm_expr_err(a, st, e->sp, "ZA1014", "integer overflow in multiplication");
+                return 0;
+            }
+            *out = value_abs(z);
             out->defined = l.defined && r.defined;
             return 1;
         }
@@ -712,8 +718,11 @@ int asm_eval(Asm *a, Stmt *st, const Expr *e, int need, Value *out) {
             asm_expr_err(a, st, e->sp, "ZA1014", "division by zero");
             return 0;
         }
-        if (r.abs == -1) *out = value_abs((int64_t)(0 - (uint64_t)l.abs));
-        else *out = value_abs(l.abs / r.abs);
+        if (l.abs == INT64_MIN && r.abs == -1) {
+            asm_expr_err(a, st, e->sp, "ZA1014", "integer overflow in division");
+            return 0;
+        }
+        *out = value_abs(l.abs / r.abs);
         out->defined = l.defined && r.defined;
         return 1;
     }

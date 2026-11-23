@@ -1237,7 +1237,7 @@ static void tool_assemble(const J *args, Buf *out) {
     int want_dwarf = jbool(args, "dwarf", 0);
     memset(&r, 0, sizeof r);
 
-    if (!tmp_open(&t)) { tool_fail(out, "cannot create a temporary directory"); return; }
+    if (!tmp_open(&t)) { tool_fail(out, "cannot create a temporary directory"); goto done; }
     if ((e = write_files(&t, args)) != NULL) {
         tool_fail(out, e);
         goto done;
@@ -1464,7 +1464,7 @@ static void tool_preprocess(const J *args, Buf *out) {
     Buf text = {0}, st = {0};
     int first = 1;
     memset(&r, 0, sizeof r);
-    if (!tmp_open(&t)) { tool_fail(out, "cannot create a temporary directory"); return; }
+    if (!tmp_open(&t)) { tool_fail(out, "cannot create a temporary directory"); goto done; }
     if ((e = write_files(&t, args)) != NULL) {
         tool_fail(out, e);
         goto done;
@@ -1591,7 +1591,7 @@ static void tool_dump(const J *args, Buf *out) {
     char *f = NULL, *av[2];
     Run r;
     memset(&r, 0, sizeof r);
-    if (!tmp_open(&t)) { tool_fail(out, "cannot create a temporary directory"); return; }
+    if (!tmp_open(&t)) { tool_fail(out, "cannot create a temporary directory"); goto done; }
     f = object_file(&t, args, &msg);
     if (!f) {
         tool_fail(out, msg);
@@ -1619,7 +1619,7 @@ static void tool_disasm(const J *args, Buf *out) {
     ArgVec a = {0};
     Run r;
     memset(&r, 0, sizeof r);
-    if (!tmp_open(&t)) { tool_fail(out, "cannot create a temporary directory"); return; }
+    if (!tmp_open(&t)) { tool_fail(out, "cannot create a temporary directory"); goto done; }
     f = object_file(&t, args, &msg);
     if (!f) {
         tool_fail(out, msg);
@@ -1652,7 +1652,7 @@ static void tool_convert(const J *args, Buf *out) {
     Run r;
     long w;
     memset(&r, 0, sizeof r);
-    if (!tmp_open(&t)) { tool_fail(out, "cannot create a temporary directory"); return; }
+    if (!tmp_open(&t)) { tool_fail(out, "cannot create a temporary directory"); goto done; }
     if (mdir) {
         const char *wm = NULL;
         /* a whole library: every member of macro_dir (.mac) becomes a .zmac file in output_dir */
