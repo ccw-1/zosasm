@@ -130,6 +130,33 @@ static void test_block_comments(void) {
     expect("not closed", " LR 1,2\n /* open\n LR 3,4\n", " LR 1,2|        |       ", "ZA4036");
 }
 
+static void test_block_comment_boundaries(void) {
+    const char *incs[] = {"build/pp_inc", NULL};
+    CHECK(system("rm -rf build/pp_inc && mkdir -p build/pp_inc") == 0);
+    /* block comment in an #include file: ZA4036 names the include file */
+    put_file("build/pp_inc/bc.inc", "/* open in include\n");
+    {
+        Out o = run_pp("#include \"bc.inc\"\n LR 1,2\n", NULL, incs);
+        CHECK_MSG(strstr(o.codes, "ZA4036") != NULL, "ZA4036 for unclosed comment in include: %s", o.codes);
+    }
+    /* unclosed block comment at EOF */
+    {
+        Out o = run_pp(" LR 1,2\n /* open at eof\n", NULL, NULL);
+        CHECK_MSG(strstr(o.codes, "ZA4036") != NULL, "ZA4036 for unclosed comment at EOF: %s", o.codes);
+    }
+    /* comment that ends exactly at the last line */
+    {
+        Out o = run_pp(" LR 1,2\n /* closed at eof */\n", NULL, NULL);
+        CHECK_MSG(!strcmp(o.text, " LR 1,2|        "), "comment closed at EOF: %s", o.text);
+    }
+    /* block comment spanning the boundary between source and include */
+    put_file("build/pp_inc/bc2.inc", "more */\n LR 3,4\n");
+    {
+        Out o = run_pp("/* start in main\n#include \"bc2.inc\"\n", NULL, incs);
+        CHECK_MSG(!strcmp(o.text, "            | LR    3,4"), "comment spanning include boundary: %s", o.text);
+    }
+}
+
 static void test_conditionals(void) {
     expect("ifdef taken", "#define A\n#ifdef A\n yes\n#else\n no\n#endif\n", " yes", "");
     expect("ifdef not taken", "#ifdef A\n yes\n#else\n no\n#endif\n", " no", "");
@@ -374,6 +401,7 @@ int main(void) {
     test_no_expansion();
     test_anchor();
     test_block_comments();
+    test_block_comment_boundaries();
     test_conditionals();
     test_directives();
     test_comma();
