@@ -126,6 +126,7 @@ def main():
             if msgs:
                 print('warn  %s  %s' % (src, '; '.join(msgs)))
     print('same %d, different %d, hlasm-error %d' % (same, diff, herr))
+    sys.exit(1 if diff or herr else 0)
 
 
 main()

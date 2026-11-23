@@ -240,7 +240,7 @@ static void test_requests(void) {
     /* wrong types for tool fields are errors, not crashes */
     r = rpc("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_assemble\","
             "\"arguments\":{\"source\":\"T CSECT\\n\",\"macro_steps\":\"many\"}}}");
-    CHECK_MSG(strstr(r, "\"isError\":true") != NULL && strstr(r, "macro_steps") != NULL, "bad macro_steps");
+    CHECK_MSG(strstr(r, "\"isError\":true") != NULL && strstr(r, "'macro_steps' must be a positive integer") != NULL, "bad macro_steps");
     free(r);
     r = rpc("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_assemble\",\"arguments\":\"bad\"}}");
     CHECK_MSG(strstr(r, "-32602") != NULL, "arguments must be object");

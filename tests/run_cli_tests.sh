@@ -383,7 +383,7 @@ grep -q 'A(4)' $T/m.out; check "mcp preprocess with macro_dirs" $? 0
 mcp '{"jsonrpc":"2.0","id":19,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n GREET\n","files":{"GREET.zmac":"#macro GREET() {\n #emit \"         DC    C\u0027\" + sys.parm + \"\u0027\"\n#}\n"},"sysparm":"HI"}}}' > $T/m.out
 grep -q '"success":true' $T/m.out; check "mcp assemble: macro from files and sysparm" $? 0
 mcp '{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n","macro_steps":0}}}' > $T/m.out
-grep -q '"isError":true' $T/m.out && grep -q 'macro_steps' $T/m.out; check "mcp assemble: bad macro_steps" $? 0
+grep -q '"isError":true' $T/m.out && grep -q "'macro_steps' must be a positive integer" $T/m.out; check "mcp assemble: bad macro_steps" $? 0
 
 # zafmt: the source formatter
 F=build/zafmt
@@ -455,13 +455,14 @@ mcp '{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"zosasm_ass
 # the workspace: with no ZOSASM_UNRESTRICTED, file names are limited to the
 # directory of the server binary (build/)
 printf 'T CSECT\n LR 1,2\n' > $T/ws.za
-mcp '{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"path":"/etc/passwd"}}}' > $T/m.out
+mcp '{"jsonrpc":"2.0","id":25,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"path":"/etc/passwd"}}}' > $T/m.out
 grep -q '"isError":true' $T/m.out && grep -q 'outside the workspace' $T/m.out; check "mcp path outside the workspace" $? 0
 mcp '{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"path":"cli_tmp/ws.za"}}}' > $T/m.out
 grep -q '"success":true' $T/m.out; check "mcp path inside the workspace" $? 0
-mcp '{"jsonrpc":"2.0","id":25,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n","output":"/tmp/zosasm-mcp-evil.o"}}}' > $T/m.out
+evil=/tmp/zosasm-mcp-evil-$$.o
+mcp '{"jsonrpc":"2.0","id":25,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n","output":"'$evil'"}}}' > $T/m.out
 grep -q 'outside the workspace' $T/m.out; check "mcp output outside the workspace" $? 0
-[ ! -e /tmp/zosasm-mcp-evil.o ]; check "mcp output outside the workspace: nothing written" $? 0
+[ ! -e "$evil" ]; check "mcp output outside the workspace: nothing written" $? 0
 mcp '{"jsonrpc":"2.0","id":26,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"path":"../docs/GUIDE.md"}}}' > $T/m.out
 grep -q 'outside the workspace' $T/m.out; check "mcp .. out of the workspace is rejected" $? 0
 # ZOSASM_UNRESTRICTED lifts the limit

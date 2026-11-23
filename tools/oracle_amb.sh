@@ -20,4 +20,4 @@ for k in hl zo; do
     "$zscp" "$host:$dir/am_${name}_$k.txt" "$out/am_${name}_$k.txt" > /dev/null 2>&1
     python3 "$here/oracle_amb.py" "$out/am_${name}_$k.txt" > "$out/am_${name}_$k.tok"
 done
-diff "$out/am_${name}_hl.tok" "$out/am_${name}_zo.tok" || true
+diff "$out/am_${name}_hl.tok" "$out/am_${name}_zo.tok"

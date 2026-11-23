@@ -93,6 +93,12 @@ def norm(path):
 def main():
     a, b = norm(sys.argv[1]), norm(sys.argv[2])
     nd = 0
+    if not a["esd"] and not a["txt"]:
+        print("oracle_obj: no ESD or TXT records parsed from %s; -dump format may have drifted" % sys.argv[1])
+        sys.exit(1)
+    if not b["esd"] and not b["txt"]:
+        print("oracle_obj: no ESD or TXT records parsed from %s; -dump format may have drifted" % sys.argv[2])
+        sys.exit(1)
     # empty B_PRV is a HLASM habit
     for k in list(a["esd"]):
         if k.startswith("ED:B_PRV") and a["esd"][k]["len"] == 0 and k not in b["esd"]:
