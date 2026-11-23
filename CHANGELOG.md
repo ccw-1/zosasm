@@ -6,6 +6,8 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 
 ## Unreleased
 
+## 0.3.0 - 2026-11-23
+
 * Column anchor `^`: a line whose first non-blank character is `^` is read as if
   the text after it started in column 1 (`    ^LB1  DC  AD(0)`; GUIDE 2.1). It
   indents statements that have a name, also in macro bodies (`^NAME op` is a model

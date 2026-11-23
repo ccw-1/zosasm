@@ -51,7 +51,7 @@ static Class *new_class(Asm *a, const char *name, Section *sect) {
     c->name = xstrdup(name);
     c->sect = sect;
     c->attr = new_class_attr();
-    p->name = c->name;
+    p->name = xstrdup(c->name);
     p->cls = c;
     vec_push(&c->pieces, p);
     piece_hint(a, p);
@@ -110,7 +110,7 @@ void dir_section(Asm *a, Stmt *st) {
         }
         c = new_class(a, "B_TEXT", sec);
         if (kind == K_RSECT) c->attr.readonly = 1;
-        c->pieces.v[0]->name = sec->name;
+        c->pieces.v[0]->name = xstrdup(sec->name);
         vec_push(&sec->classes, c);
         sec->cur = sec->text_cur = c->pieces.v[0];
         if (st->name[0]) asm_lookup(a, st->name)->piece = c->pieces.v[0];
@@ -448,7 +448,7 @@ void dir_xattr(Asm *a, Stmt *st) {
     asm_ops(a, st, 1, -1, &ops);
     x = xcalloc(sizeof *x);
     x->st = st;
-    x->name = st->name;
+    x->name = xstrdup(st->name);
     x->attr.linkage = -1;
     x->attr.scope = -1;
     x->attr.indirect = -1;
@@ -523,11 +523,20 @@ void dir_xattr(Asm *a, Stmt *st) {
                 }
             }
         } else if (!strcmp(at->key, "PSECT")) {
-            if (want_args(a, st, at, 1, "PSECT(name)")) x->attr.psect = at->args.v[0];
+            if (want_args(a, st, at, 1, "PSECT(name)")) x->attr.psect = xstrdup(at->args.v[0]);
         } else {
             bad_attr(a, st, at, xattr_keys, sizeof xattr_keys / sizeof xattr_keys[0]);
         }
     }
+    for (i = 0; i < ats.n; i++) {
+        AttrArg *at = &ats.v[i];
+        free(at->key);
+        size_t kk;
+        for (kk = 0; kk < at->args.n; kk++) free(at->args.v[kk]);
+        free(at->args.v);
+        free(at->asp.v);
+    }
+    free(ats.v);
     if (!st->bad) vec_push(&a->xattrs, x);
 }
 
@@ -556,7 +565,7 @@ void dir_mode(Asm *a, Stmt *st) {
                 st->bad = 1;
                 return;
             }
-            sm.name = st->name;
+            sm.name = xstrdup(st->name);
             sm.sp = st->name_span;
             sm.is_amode = is_a;
             sm.val = v;

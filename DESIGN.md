@@ -1173,7 +1173,7 @@ dispatch loop, not as a labelled `#break`.
 all statements and comments are collected in `Conv.open` and handed to
 `mconv_macro` as the macro `OPENCODE` (prototype, statements, MEND); the
 result is emitted as the `#macro` text and the call line. On failure the
-original lines are commented out with a warning — except the ranges of
+original lines are commented out with a warning, except the ranges of
 `MACRO`..`MEND` definitions inside the region (`Conv.open_macros`), which
 were already converted and emitted during the parse, so they must not appear
 a second time. `model_text` folds the
@@ -1264,16 +1264,9 @@ The debugger check was done with gdb under `qemu-s390x` (GUIDE 17).
 
 ## 18. The MCP server (`src/mcp.c`)
 
-One of the purposes of this project is to let AI agents directly generate
-z/OS object code (GOFF, or ELF64 s390x for Linux on Z) from user-provided
-zosasm (.za) input — zosasm assembles that input into an object file without
-invoking a compiler, assembler, or any z/OS toolchain. Note: zosasm emits
-GOFF/ELF object files only; it does not produce program objects, and the
-binder output remains proprietary — it cannot be bypassed.
-`build/zosasm-mcp` is a Model Context Protocol server for AI agents (guide
-chapter 18). It is one C file with its own JSON reader and writer (the rest
-of zosasm has no JSON) and uses POSIX (`popen`, `mkdtemp`, `realpath`,
-`setenv`); only `util.o` is linked.
+AI agents can generate z/OS object files (GOFF, or ELF64 s390x for Linux on Z) from zosasm (.za) input. zosasm assembles that input into an object file without a compiler, assembler, or z/OS toolchain. It emits object files only, not program objects, and the binder output remains proprietary.
+
+`build/zosasm-mcp` is a Model Context Protocol server for AI agents (guide chapter 18). It is one C file with its own JSON reader and writer (the rest of zosasm has no JSON). It uses POSIX (`popen`, `mkdtemp`, `realpath`, `setenv`); only `util.o` is linked.
 
 **Transport and protocol.** MCP "stdio": one JSON-RPC 2.0 message per line.
 Methods: `initialize` (answers with the client's protocol version if it is a
@@ -1284,49 +1277,11 @@ notifications are ignored; unknown methods give -32601, unparsable lines
 -32700 and unknown tools -32602 (as the specification asks). Batches and
 server-initiated requests (sampling, roots) are not used.
 
-**No assembler state.** The tools run `zosasm` and `hlasm2za` as
-subprocesses (found next to the server, or `ZOSASM_BIN_DIR`) in a temporary
-directory (`mkdtemp` below `$TMPDIR`, removed after each call). Source passed
-inline is written to `input.za` (or `name`) and `files` next to it, which is
-also added with `-I` and `-M` (so a `NAME.zmac` in `files` is a library macro; `macro_dirs`, `sysparm` and
-`macro_steps` map to `-M`, `-sysparm` and `-macro-steps`). `zosasm_convert_hlasm` passes `macros`, `flat`,
-`keep_goto`, `comment_macros`, `copy_dir` and, for a whole library, `macro_dir` + `output_dir`. The temporary directory name is removed from the
-diagnostics and the listing so that results are reproducible. Standard error
-is redirected to a file and read back, so a failing program cannot block the
-pipe. A tool failure is a result with `isError` true, not a JSON-RPC error,
-so that the agent sees the diagnostics.
+**No assembler state.** The tools run `zosasm` and `hlasm2za` as subprocesses. They are found next to the server or in `ZOSASM_BIN_DIR`. Each call runs in a temporary directory (`mkdtemp` below `$TMPDIR`, removed after the call). Source passed inline is written to `input.za` (or `name`) with `files` next to it. The directory is also added with `-I` and `-M`, so a `NAME.zmac` in `files` is a library macro. `macro_dirs`, `sysparm`, and `macro_steps` map to `-M`, `-sysparm`, and `-macro-steps`. `zosasm_convert_hlasm` passes `macros`, `flat`, `keep_goto`, `comment_macros`, `copy_dir`, and, for a whole library, `macro_dir` plus `output_dir`. The temporary directory name is removed from diagnostics and listings so results are reproducible. Standard error is redirected to a file and read back, so a failing program cannot block the pipe. A tool failure is a result with `isError` true, not a JSON-RPC error, so the agent sees the diagnostics.
 
-**Per-request memory.** The server is a long lived process, so unlike the
-rest of zosasm it gives memory back: the request line is capped at 16 MB
-(`MAX_REQUEST`, a longer line is a `-32600` reply), the `J` parse tree is
-freed with `jfree` after `handle` (also the partial tree of a failed parse,
-and the scratch buffers of a failed string or number), the reply buffers of
-`reply_result`/`reply_error`/`handle` and of every tool (`run_prog` output
-and error, `text`/`st`, the object and .dbg read back, the argument vector,
-the resolved paths) are freed through a `done:` label per tool, `tmp_close`
-frees the temporary file names it holds, and `input_file`/`object_file`
-always return a string the caller owns (the copy registered in `Tmp` is
-freed by `tmp_close`). What remains for the process lifetime is
-configuration (`locate`) and the caches (`tools_json`, the guide). Verified
-with an ASan/LSan build fed hundreds of mixed requests: no leaks.
+**Per-request memory.** The server is a long-lived process, so unlike the rest of zosasm it returns memory after each request. The request line is capped at 16 MB (`MAX_REQUEST`); longer lines get a `-32600` reply. The `J` parse tree is freed with `jfree` after `handle`, including the partial tree of a failed parse and the scratch buffers of a failed string or number. The reply buffers of `reply_result`, `reply_error`, `handle`, and every tool (`run_prog` output and error, `text`/`st`, the object and `.dbg` read back, the argument vector, the resolved paths) are freed through a `done:` label per tool. `tmp_close` frees the temporary file names it holds, and `input_file`/`object_file` always return a string the caller owns (the copy registered in `Tmp` is freed by `tmp_close`). Only configuration (`locate`) and the caches (`tools_json`, the guide) remain for the process lifetime. Verified with an ASan/LSan build fed hundreds of mixed requests: no leaks.
 
-**The workspace.** Every file name a tool call gives (`path`, `output`,
-`dwarf_output`, `output_dir`, `macro_dir`, `copy_dir`, `include_dirs`,
-`macro_dirs`) is resolved by `ws_resolve` and must land inside the
-workspace, the directory of the server binary. Relative names are relative
-to the workspace root, absolute names must already be inside, and
-`realpath` (of the file, or of the directory for an output that does not
-exist yet) defeats `..` and symlinks; a name outside is a tool error
-naming the workspace. `ZOSASM_UNRESTRICTED` (any non-empty value) lifts
-the limit for operators who want it: any file name is allowed, relative
-names relative to the working directory, as before the sandbox. This
-closes the two channels an injected instruction could otherwise use
-through an agent: reading any file of the machine (the diagnostics quote
-source lines, so `path` was an arbitrary-file reader) and overwriting any
-file (`output`, `output_dir`). `files` and inline `source` need no
-workspace (the temporary directory is the server's own). `-gdir`,
-`-gmap` and `-gdbgpath` are not sandboxed: they only rewrite path strings
-in the DWARF, no file of this machine is read or written through them.
+**The workspace.** Every file name a tool call gives (`path`, `output`, `dwarf_output`, `output_dir`, `macro_dir`, `copy_dir`, `include_dirs`, `macro_dirs`) is resolved by `ws_resolve` and must land inside the workspace, the directory of the server binary. Relative names are relative to the workspace root. Absolute names must already be inside. `realpath` (of the file, or of the directory for an output that does not exist yet) defeats `..` and symlinks; a name outside is a tool error naming the workspace. `ZOSASM_UNRESTRICTED` (any non-empty value) lifts the limit for operators who want it: any file name is allowed, relative names relative to the working directory, as before the sandbox. This closes the two channels an injected instruction could otherwise use through an agent: reading any file of the machine (the diagnostics quote source lines, so `path` was an arbitrary-file reader) and overwriting any file (`output`, `output_dir`). `files` and inline `source` need no workspace (the temporary directory is the server's own). `-gdir`, `-gmap` and `-gdbgpath` are not sandboxed: they only rewrite path strings in the DWARF, no file of this machine is read or written through them.
 
 **Self describing.** Each tool has a description (input, output, where in the
 guide to read more) and a JSON schema of its arguments with a description of

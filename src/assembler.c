@@ -1181,19 +1181,37 @@ static StrMap *piece_starts(const Module *m, int *settled) {
     return h;
 }
 
+static void strmap_free_contents(StrMap *m) {
+    size_t i;
+    if (!m) return;
+    for (i = 0; i < m->cap; i++) free(m->keys[i]);
+    free(m->keys);
+    free(m->vals);
+    free(m);
+}
+
 Module *asm_assemble_all(const SrcLine *lines, size_t n, const char *name, Reporter *rep) {
     StrMap *hints = NULL;
     size_t mark = rep_mark(rep);
     int it;
+    Asm *last_a = NULL;
     for (it = 0; it < 5; it++) {
         Asm *a = assemble_once(lines, n, name, rep, hints, 0);
         int settled;
         StrMap *h = piece_starts(a->mod, &settled);
-        if (settled || rep_too_many(rep)) return a->mod;
+        last_a = a;
+        if (settled || rep_too_many(rep)) {
+            strmap_free_contents(h);
+            break;
+        }
         hints = h;
         rep_rewind(rep, mark);
     }
-    return assemble_once(lines, n, name, rep, NULL, 1)->mod;
+    if (!last_a) last_a = assemble_once(lines, n, name, rep, NULL, 1);
+    Module *m = last_a->mod;
+    /* Asm is intentionally not freed here; asm_free(Module *)
+     * releases everything the module owns. */
+    return m;
 }
 
 Module *asm_assemble(const SrcLine *lines, size_t n, const char *name, Reporter *rep) {
@@ -1242,4 +1260,95 @@ int rmode_byte(const char *s, uint8_t *out) {
         ok = 0;
     free(u);
     return ok;
+}
+
+/* ---- memory ownership ------------------------------------------------- */
+
+static void asm_free_symbol(Symbol *s) {
+    size_t i;
+    free(s->name);
+    if (s->xattr) {
+        free(s->xattr->reference);
+        free(s->xattr->psect);
+        free(s->xattr);
+    }
+    for (i = 0; i < s->refs.n; i++) free((char *)s->refs.v[i].file);
+    free(s->refs.v);
+    free(s);
+}
+
+static void asm_free_class(Class *c) {
+    size_t pi;
+    free(c->name);
+    free(c->part);
+    for (pi = 0; pi < c->pieces.n; pi++) {
+        Piece *p = c->pieces.v[pi];
+        free(p->name);
+        free(p);
+    }
+    free(c->pieces.v);
+    free(c->relocs.v);
+    free(c->data);
+    free(c);
+}
+
+static void asm_free_section(Section *s) {
+    size_t ci;
+    for (ci = 0; ci < s->classes.n; ci++) asm_free_class(s->classes.v[ci]);
+    free(s->classes.v);
+    free(s->name);
+    free(s);
+}
+
+static void asm_free_stmt(Stmt *st) {
+    free(st->name);
+    free(st->op);
+    free(st->operands);
+    free(st->remark);
+    free(st->segs);
+    free(st);
+}
+
+static void asm_free_using_rec(UsingRec *u) {
+    free(u->label);
+}
+
+void asm_free(Module *m) {
+    size_t i;
+    if (!m) return;
+    for (i = 0; i < m->sections.n; i++) asm_free_section(m->sections.v[i]);
+    free(m->sections.v);
+    for (i = 0; i < m->symbols.cap; i++) {
+        if (m->symbols.keys[i]) {
+            asm_free_symbol(m->symbols.vals[i]);
+            free(m->symbols.keys[i]);
+        }
+    }
+    free(m->symbols.keys);
+    free(m->symbols.vals);
+    for (i = 0; i < m->sym_order.n; i++) {
+        /* symbols are owned by the StrMap, not sym_order; only free the vec */
+    }
+    free(m->sym_order.v);
+    free(m->entry);
+    free(m->name);
+    for (i = 0; i < m->zrecs.n; i++) {
+        /* ZRec owns no heap memory itself */
+    }
+    free(m->zrecs.v);
+    for (i = 0; i < m->zsrc.n; i++) {
+        free(m->zsrc.v[i].name);
+        free(m->zsrc.v[i].text);
+    }
+    free(m->zsrc.v);
+    for (i = 0; i < m->zdefs.n; i++) free(m->zdefs.v[i]);
+    free(m->zdefs.v);
+    for (i = 0; i < m->stmts.n; i++) asm_free_stmt(m->stmts.v[i]);
+    free(m->stmts.v);
+    /* LitRec.key shares the pointer with Literal.key/shown (freed when the
+     * Asm state is discarded); do not free it again here. */
+    free(m->lits.v);
+    for (i = 0; i < m->usings.n; i++) asm_free_using_rec(&m->usings.v[i]);
+    free(m->usings.v);
+    free(m);
 }

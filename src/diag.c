@@ -368,6 +368,41 @@ char *rep_summary(const Reporter *r) {
                      r->nwarn == 1 ? "" : "s");
 }
 
+void rep_free(Reporter *r) {
+    size_t i;
+    for (i = 0; i < r->diags.n; i++) {
+        Diag *d = r->diags.v[i];
+        free(d->msg);
+        free(d->label);
+        for (int j = 0; j < d->nnotes; j++) free(d->notes[j].msg);
+        free(d->notes);
+        for (int j = 0; j < d->nhelp; j++) free(d->help[j]);
+        free(d->help);
+        free(d);
+    }
+    free(r->diags.v);
+    for (i = 0; i < r->sources.n; i++) {
+        Source *s = r->sources.v[i];
+        free(s->name);
+        free(s->text);
+        free(s->starts);
+        free(s);
+    }
+    free(r->sources.v);
+    for (i = 0; i < r->expansions.n; i++) {
+        free(r->expansions.keys[i]);
+        {
+            Expansion *e = r->expansions.vals[i];
+            free(e->text);
+            free(e->macro);
+            free(e);
+        }
+    }
+    free(r->expansions.keys);
+    free(r->expansions.vals);
+    free(r);
+}
+
 void rep_print(Reporter *r, FILE *w, int color) {
     size_t n, i;
     const Diag **ds = rep_sorted(r, &n);

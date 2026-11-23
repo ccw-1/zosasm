@@ -296,7 +296,7 @@ void dir_opsyn(Asm *a, Stmt *st) {
     }
     name = za_strupper(st->name);
     if (ops.n == 0 || !str_trim(ops.v[0].text)[0]) {
-        strmap_put(&a->opsyn, name, "");
+        strmap_put(&a->opsyn, name, xstrdup(""));
         return;
     }
     tgt = za_strupper(str_trim(ops.v[0].text));

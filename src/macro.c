@@ -9,10 +9,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/time.h>
 
 #include "macro_int.h"
 #include "ebcdic.h"
 #include "isa.h"
+#include "version.h"
 
 #define MAX_DEPTH 64
 #define DEFAULT_STEPS 1000000L
@@ -95,7 +97,7 @@ struct MacSys {
     StrMap globals; /* lower case name -> MVal */
     Frame top;      /* open code variables */
     int depth, aborted;
-    long ndx, nexp;
+    long ndx, nexp, stmt;
 };
 
 Reporter *ms_rep(MacSys *ms) { return ms->rep; }
@@ -1702,6 +1704,7 @@ static void run_code(MacSys *ms, const Code *code, Frame *f) {
     while (pc < code->n && !ms->aborted) {
         const MStmt *st = &code->st[pc];
         c.st = st;
+        ms->stmt++;
         if (++ms->steps > ms->step_limit) {
             ma_err(&c, "ZA4121", "the expansion was stopped after %ld statements", ms->step_limit);
             ms->aborted = 1;
@@ -1872,6 +1875,27 @@ MVal sys_value(Ctx *c, const char *name, int *ok) {
     if (!strcmp(name, "__ebcdic__")) return v_int(za_ascii == 0);
     if (!strcmp(name, "__amode__") || !strcmp(name, "__rmode__"))
         return v_int(c->ms->host.mode ? c->ms->host.mode(c->ms->host.user, name[2] == 'a') : 0);
+    if (!strcmp(name, "asm")) return v_str("zosasm");
+    if (!strcmp(name, "ver")) return v_str(ZASM_VERSION_STR);
+    if (!strcmp(name, "system_id")) return v_str("zosasm " ZASM_VERSION_STR);
+    if (!strcmp(name, "stmt")) return v_int(c->ms->stmt);
+    if (!strcmp(name, "opt_elf")) return v_int(c->ms->elf);
+    if (!strcmp(name, "opt_strict_registers")) return v_int(za_strict_registers);
+    if (!strcmp(name, "opt_ascii")) return v_int(za_ascii != 0);
+    if (!strcmp(name, "opt_ebcdic")) return v_int(za_ascii == 0);
+    if (!strcmp(name, "clock")) {
+        struct timeval tv;
+        struct tm *tm;
+        char buf[64];
+        gettimeofday(&tv, NULL);
+        tm = gmtime(&tv.tv_sec);
+        if (!tm) return v_str("");
+        snprintf(buf, sizeof buf, "%04d-%02d-%02d %02d:%02d:%02d.%06ld",
+                 tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+                 tm->tm_hour, tm->tm_min, tm->tm_sec,
+                 (long)tv.tv_usec);
+        return v_str(xstrdup(buf));
+    }
     *ok = 0;
     return v_str("");
 }

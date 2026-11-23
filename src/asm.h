@@ -1,8 +1,9 @@
 /* asm.h - the assembler proper: statements, expressions, the object model
  * (sections, classes, location counters, symbols) and the assembler state.
  *
- * Memory: the assembler is a short lived process, so objects are allocated
- * and never freed. */
+ * Memory: objects are owned by the Module that holds them. When zosasm is
+ * used as a one-shot process the OS reclaims memory at exit; when used as
+ * a library, call asm_free() to release a Module and everything it owns. */
 #ifndef ZA_ASM_H
 #define ZA_ASM_H
 
@@ -254,6 +255,10 @@ typedef struct {
 } Module;
 
 Symbol *module_symbol(const Module *m, const char *name);
+/* Release a Module and everything it owns (sections, classes, pieces,
+ * symbols, statements, literals, USINGs, zsrc, zdefs, ...). After this
+ * call the Module pointer must not be used. */
+void asm_free(Module *m);
 
 /* Writes the module as a GOFF object (malloc'ed). On failure returns NULL
  * and describes the problem in err. */

@@ -60,7 +60,7 @@ static const char *literal_label(Asm *a, Stmt *st, Operand o, const char *key, c
         ksp = asm_op_span(st, k);
         d->file = st->file;
         d->line = sp.pos.line;
-        d->name = l->name;
+        d->name = xstrdup(l->name);
         d->name_span = sp;
         d->op = "DC";
         d->op_span = sp;

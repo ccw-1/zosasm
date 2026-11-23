@@ -422,7 +422,8 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
         st->line = ln;
         st->li = i;
         st->nli = 1;
-        st->name = st->op = st->operands = st->remark = "";
+        st->name = xstrdup("");
+        st->op = st->operands = st->remark = "";
         /* name field */
         if (!is_blank((unsigned char)line[0])) {
             size_t nl;

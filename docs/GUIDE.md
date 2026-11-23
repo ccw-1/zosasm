@@ -2457,18 +2457,7 @@ elsewhere, say where they are:
 | `ZOSASM_UNRESTRICTED` | set to a non-empty value to lift the file name limit below |
 | `--version`, `--help` | print and exit |
 
-**File names are limited to the server directory (the *workspace*).** Every
-file name a tool call gives — `path`, `output`, `dwarf_output`,
-`output_dir`, `macro_dir`, `copy_dir`, the entries of `include_dirs` and
-`macro_dirs` — must resolve to inside the directory of the server binary.
-Relative names are taken relative to that directory (not the working
-directory of the server), absolute names must already be inside it, and
-`..` or a symlink cannot lead out of it; a name outside is an error that
-says so. An operator who wants the tools to reach the whole machine can
-start the server with `ZOSASM_UNRESTRICTED` set: the limit is lifted and
-relative names are relative to the working directory again. Inline
-`source` with `files` needs no workspace at all: the files are written to
-a temporary directory the server manages itself.
+**File names are limited to the server directory (the *workspace*).** Every file name a tool call gives (`path`, `output`, `dwarf_output`, `output_dir`, `macro_dir`, `copy_dir`, the entries of `include_dirs` and `macro_dirs`) must resolve to inside the directory of the server binary. Relative names are taken relative to that directory (not the working directory of the server). Absolute names must already be inside it. `..` or a symlink cannot lead out of it; a name outside is an error. An operator who wants the tools to reach the whole machine can start the server with `ZOSASM_UNRESTRICTED` set: the limit is lifted and relative names are relative to the working directory again. Inline `source` with `files` needs no workspace at all: the files are written to a temporary directory the server manages itself.
 
 When the client sends `initialize`, the reply carries *instructions* for the
 agent: what the server is for, the usual order of calls, and the **absolute
