@@ -138,12 +138,15 @@ HLASM conditional assembly (guide chapter 19, `MACRO.md`). `hlasm2za` converts
 existing HLASM `MACRO`..`MEND` definitions into these zosasm macros, recovering
 the control flow so the result is structured (`-m`, `-macro-dir`, `-flat`).
 
-## For AI agents: generate z/OS object code without a compiler
+## For AI agents: generate z/OS object code from user input
 
 One of the purposes of this project is to let AI agents directly generate
-z/OS object code (GOFF, or ELF64 s390x for Linux on Z) from source —
-without installing or invoking a compiler, assembler, binder, or any z/OS
-toolchain. `build/zosasm-mcp` is an MCP (Model Context Protocol) server on
+z/OS object code (GOFF, or ELF64 s390x for Linux on Z) from user-provided
+zosasm (.za) input — zosasm assembles that input into an object file without
+invoking a compiler, assembler, or any z/OS toolchain. Note: zosasm emits
+GOFF/ELF object files only; it does not produce program objects, and the
+binder output remains proprietary — it cannot be bypassed.
+`build/zosasm-mcp` is an MCP (Model Context Protocol) server on
 stdio that exposes typed tools so an agent can:
 
 * assemble zosasm (`.za`) source into a GOFF object (`zosasm_assemble`),

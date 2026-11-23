@@ -294,6 +294,44 @@ static void test_sub_relocs(void) {
           t[15] == 0xED);
 }
 
+/* golden GOFF structure test: testdata/golden.za assembles to a stable
+ * GOFF layout that we can check structurally (this guards against silent
+ * changes to ESD/TXT/RLD/END emission). */
+static void test_golden_goff(void) {
+    size_t n;
+    char *text = read_file("testdata/golden.za", &n);
+    Reporter *rep;
+    Module *m;
+    uint8_t *obj;
+    const char *perr;
+    GoffModule *g;
+    char err[256];
+    const GoffESD *sd, *ct;
+    CHECK_MSG(text != NULL, "missing testdata/golden.za");
+    if (!text) return;
+    rep = rep_new(0);
+    m = asm_assemble_text("testdata/golden.za", text, n, rep);
+    CHECK_MSG(m != NULL, "golden.za assembly failed");
+    if (!m) { free(text); return; }
+    obj = module_emit(m, &n, err, sizeof err);
+    CHECK_MSG(obj != NULL, "golden.za emit: %s", err);
+    if (!obj) { free(text); return; }
+    g = goff_parse(obj, n, &perr);
+    CHECK_MSG(g != NULL, "golden.za parse: %s", perr ? perr : "?");
+    if (!g) { free(text); free(obj); return; }
+
+    sd = find_esd(g, GOFF_SD, "T");
+    CHECK(sd != NULL);
+    ct = find_esd(g, GOFF_ED, "B_TEXT");
+    CHECK(ct != NULL && ct->parent == sd->id);
+    /* MSG is a label inside B_TEXT, tracked in ZSYM but not as a
+     * separate GOFF LD entry.  Check the class length instead. */
+    CHECK(ct->length == 11); /* 6 + 2 + 3 = 11 bytes */
+    CHECK(g->texts.n >= 1);
+    free(text);
+    free(obj);
+}
+
 int main(void) {
     test_sub_relocs();
     test_structure();
@@ -301,6 +339,7 @@ int main(void) {
     test_entry_external();
     test_quoted_names();
     test_samples();
+    test_golden_goff();
     test_literal_ltorg();
     test_literal_pool_at_end();
     test_literal_errors();

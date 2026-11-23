@@ -1,0 +1,6 @@
+* golden GOFF dump test source
+T        CSECT
+         LARL  %r1,MSG
+         BR    %r14
+MSG      DC    C'Hi',X'0A'
+         END   T
