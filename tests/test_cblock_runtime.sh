@@ -206,6 +206,14 @@ run_ptr_case memmovefwd '         LGR   %r3,%r15
          AGHI  %r3,-256' \
     '#pragma cin uint8_t *s=%r3' '#pragma cout uint8_t *o=%r4' \
     '__memset(s, 65, 1); __memset(s + 1, 66, 1); __memset(s + 2, 67, 1); __memset(s + 3, 68, 1); __memmove(s, s + 1, 3); o = s + 1;' 67
+run_ptr_case deref '         LGR   %r2,%r15
+         AGHI  %r2,-512
+         LGR   %r3,%r15
+         AGHI  %r3,-256' \
+    '#pragma cin uint8_t *d=%r2, uint8_t *s=%r3' '#pragma cout uint8_t *o=%r4' \
+    'uint8_t *p; p = d; *p = 65; p[1] = 66; *p += 1; __memcpy(s, d, 2); o = s + 1;' 66
+run_ptr_case addrlocal '' '' '#pragma cout uint8_t *o=%r4' \
+    'int32_t x = 65; *(&x) = 66; o = &x;' 66
 run_case strlen '         LGR   %r3,%r15
          AGHI  %r3,-256
          MVI   0(%r3),65

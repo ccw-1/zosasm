@@ -74,7 +74,11 @@ Types:
 
 Pointers can be assigned, compared, adjusted by an integer byte count
 (`p + 4`, `p - 4`, `p += 4`) and subtracted (`p - q`, a byte difference).
-They cannot be dereferenced yet.
+`*p` and `p[i]` read one byte and yield an unsigned 32-bit value. Assignment
+to `*p` or `p[i]` writes the low byte of the value. `&local` returns a byte
+pointer to the local's slot in `ctemp`; `&*p` is just `p`. A bound
+`cin`/`cout` register has no storage, so `&` rejects it. There is no typed
+pointer-to-integer distinction beyond these byte pointers.
 
 Statements:
 
@@ -88,15 +92,17 @@ Statements:
 Expressions:
 
 * integer literals, variables, casts;
+* unary `*` (byte load) and `&` (address of a local);
+* postfix `p[i]` (byte load from `p + i`);
 * `+ - * / %`, shifts, bitwise operators;
 * comparisons, `&&`, `||`, `!`, `?:`;
-* prefix and postfix `++` and `--`.
+* prefix and postfix `++` and `--` on variables, not on `*p`.
 
 There are no arrays, structures, strings, floating point, user-defined
 function calls, global variables or recursion. The `__strlen` and `__memchr`
-expression intrinsics are the only call-like forms. Byte pointers are address
-values only; `*p` and `p[i]` are not implemented. `return` is not allowed; the
-block ends at `#pragma cend`.
+expression intrinsics are the only call-like forms. Pointers remain byte
+pointers: there is no `uint32_t *`, no pointer-to-pointer type, and no array
+type. `return` is not allowed; the block ends at `#pragma cend`.
 
 Signed overflow wraps two's complement. Division by a constant zero is a
 compile-time error; runtime division by zero traps. A constant shift count
@@ -192,18 +198,19 @@ expanded assembly.
 ## Tests
 
 * `make test` runs `tests/test_cblock.c`.
-* `make test-cblock-runtime` runs 31 generated ELF cases under `qemu-s390x`
+* `make test-cblock-runtime` runs 33 generated ELF cases under `qemu-s390x`
   when `s390x-linux-gnu-ld` and `qemu-s390x` are installed. The suite covers
-  arithmetic, control flow, pointer arithmetic, `__memcpy`, `__memmove`,
-  `__memset`, `__strlen`, `__memchr`, and the runnable example.
+  arithmetic, control flow, pointer arithmetic, `*p`, `p[i]`, `&local`,
+  `__memcpy`, `__memmove`, `__memset`, `__strlen`, `__memchr`, and the
+  runnable example.
 * `tools/cblock_oracle.sh SRC.za pok56` expands a CBLOCK with `zosasm -E`,
   converts it to HLASM source and compares the GOFF structure with HLASM
   through `tryhlasm.sh`.
 
 ## Not implemented
 
-Typed pointer dereference (`*p`, `p[i]`), `SRST`-based string and byte scans,
-a faster chunked runtime `memset` and `memmove`, and structured DWARF for C
-variables. The generated
+Typed pointers (`uint32_t *` and pointer-to-pointer), arrays, `SRST`-based
+string and byte scans, a faster chunked runtime `memset` and `memmove`, and
+structured DWARF for C variables. The generated
 code already maps line information back to the C source, but local variable
 locations and types are not described in `.debug_info`.

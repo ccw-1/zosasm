@@ -22,16 +22,16 @@ Implemented so far:
 * short-circuit `&&`/`||`, `?:`, prefix and postfix `++`/`--`;
 * `switch`/`case`/`default`, labels and `goto`;
 * byte pointers (`uint8_t *`, `void *`, `char *`) with assignment, comparison,
-  integer byte offsets and pointer difference, but no dereference yet;
+  integer byte offsets, pointer difference, `*p`, `p[i]` and `&local`;
 * `__memcpy`, `__memmove` and `__memset` with constant and runtime sizes;
 * `__strlen` and `__memchr` expression intrinsics;
 * generated assembly lines and the `ZA5xxx` diagnostics;
 * `test_cblock` and the optional qemu runtime suite (`make
   test-cblock-runtime`).
 
-Not implemented yet: typed pointer dereference (`*p`, `p[i]`), `SRST`-based
-string and byte scans, a faster chunked runtime `memset`/`memmove`, and C
-variable debug information.
+Not implemented yet: typed pointers (`uint32_t *` and pointer-to-pointer),
+arrays, `SRST`-based string and byte scans, a faster chunked runtime
+`memset`/`memmove`, and C variable debug information.
 
 ## 1. Goal
 

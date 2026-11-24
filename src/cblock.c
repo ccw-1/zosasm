@@ -31,7 +31,7 @@ typedef struct CBVar {
 
 typedef Vec(CBVar *) CBVarVec;
 
-typedef enum { E_NUM, E_VAR, E_UN, E_BIN, E_CAST, E_COND, E_INC, E_CALL } CBEKind;
+typedef enum { E_NUM, E_VAR, E_UN, E_BIN, E_CAST, E_COND, E_INC, E_CALL, E_DEREF, E_ADDR } CBEKind;
 
 typedef struct CBExpr CBExpr;
 static void cblock_expr_free(CBExpr *e);
@@ -54,7 +54,8 @@ typedef struct CBStmt CBStmt;
 typedef Vec(CBStmt) CBStmtVec;
 struct CBStmt {
     CBSKind kind;
-    CBVar *var;
+    CBVar *var; /* S_ASSIGN to a variable, NULL for an lvalue expression */
+    CBExpr *lval; /* S_ASSIGN to *p or p[i] */
     int op; /* assignment operator */
     CBExpr *expr;
     CBExpr *cond;
@@ -536,6 +537,29 @@ static CBExpr *parse_primary(Parser *p) {
 
 static CBExpr *parse_postfix(Parser *p) {
     CBExpr *e = parse_primary(p);
+    while (e && tok_is(&p->l, '[')) {
+        CBExpr *idx, *base, *d;
+        int line = e->line, col = e->col;
+        lex_next(&p->l);
+        idx = parse_assignment(p);
+        if (!tok_is(&p->l, ']')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected ']'");
+            p->err = 1;
+            return e;
+        }
+        lex_next(&p->l);
+        if (!idx) { p->err = 1; return e; }
+        if (!e->type.ptr) {
+            cb_error(p->b, line, col, "ZA5003", "p[i] needs a pointer on the left");
+            p->err = 1;
+            return e;
+        }
+        base = mk_bin(p, '+', e, idx);
+        if (!base) { p->err = 1; return e; }
+        d = mk_expr(E_DEREF, type_of(32, 1), line, col);
+        d->a = base;
+        e = d;
+    }
     while (e && (tok_is(&p->l, OP_INC) || tok_is(&p->l, OP_DEC))) {
         CBExpr *n;
         if (e->kind != E_VAR) {
@@ -557,6 +581,43 @@ static CBExpr *parse_postfix(Parser *p) {
 static CBExpr *parse_unary(Parser *p) {
     Lex *l = &p->l;
     int line = l->tok.line, col = l->tok.col;
+    if (tok_is(l, '*')) {
+        CBExpr *a, *e;
+        lex_next(l);
+        a = parse_unary(p);
+        if (!a) return NULL;
+        if (!a->type.ptr) {
+            cb_error(p->b, a->line, a->col, "ZA5003", "cannot dereference a non-pointer");
+            p->err = 1;
+            return a;
+        }
+        e = mk_expr(E_DEREF, type_of(32, 1), line, col);
+        e->a = a;
+        return e;
+    }
+    if (tok_is(l, '&')) {
+        CBExpr *a;
+        lex_next(l);
+        a = parse_unary(p);
+        if (!a) return NULL;
+        if (a->kind == E_DEREF) return a->a;
+        if (a->kind != E_VAR) {
+            cb_error(p->b, a->line, a->col, "ZA5003", "& needs a variable with storage");
+            p->err = 1;
+            return a;
+        }
+        if (a->var->kind != V_LOCAL) {
+            cb_error(p->b, a->line, a->col, "ZA5003", "& needs a local variable, not a bound register");
+            p->err = 1;
+            return a;
+        }
+        {
+            CBExpr *e = mk_expr(E_ADDR, type_ptr(), line, col);
+            e->var = a->var;
+            cblock_expr_free(a);
+            return e;
+        }
+    }
     if (tok_is(l, OP_INC) || tok_is(l, OP_DEC)) {
         int op = l->tok.op;
         CBExpr *a, *e;
@@ -1157,23 +1218,26 @@ static void parse_stmt(Parser *p, CBStmtVec *st) {
         CBVar *v;
         CBExpr *rhs;
         CBStmt s;
-        if (e->kind != E_VAR) {
-            cb_error(p->b, e->line, e->col, "ZA5003", "the left side of an assignment must be a variable");
+        if (e->kind != E_VAR && e->kind != E_DEREF) {
+            cb_error(p->b, e->line, e->col, "ZA5003",
+                     "the left side of an assignment must be a variable or *p");
             p->err = 1;
             return;
         }
-        v = e->var;
-        if (op != '=' && e->read_before) {
-            cb_error(p->b, e->line, e->col, "ZA5003", "\"%s\" is read before it is assigned",
-                     v->name);
-            p->err = 1;
-            return;
-        }
-        if (v->kind == V_CIN) {
-            cb_error(p->b, e->line, e->col, "ZA5003", "\"%s\" is a cin variable and cannot be assigned",
-                     v->name);
-            p->err = 1;
-            return;
+        v = e->kind == E_VAR ? e->var : NULL;
+        if (v) {
+            if (op != '=' && e->read_before) {
+                cb_error(p->b, e->line, e->col, "ZA5003", "\"%s\" is read before it is assigned",
+                         v->name);
+                p->err = 1;
+                return;
+            }
+            if (v->kind == V_CIN) {
+                cb_error(p->b, e->line, e->col, "ZA5003",
+                         "\"%s\" is a cin variable and cannot be assigned", v->name);
+                p->err = 1;
+                return;
+            }
         }
         lex_next(&p->l);
         rhs = parse_assignment(p);
@@ -1181,8 +1245,9 @@ static void parse_stmt(Parser *p, CBStmtVec *st) {
         memset(&s, 0, sizeof s);
         s.kind = S_ASSIGN;
         s.var = v;
+        s.lval = v ? NULL : e;
         s.op = assign_base(op);
-        if (v->type.ptr) {
+        if (v && v->type.ptr) {
             if (op != '=' && s.op != '+' && s.op != '-') {
                 cb_error(p->b, line, 1, "ZA5003", "a pointer supports only =, += and -=");
                 p->err = 1;
@@ -1190,11 +1255,11 @@ static void parse_stmt(Parser *p, CBStmtVec *st) {
             }
             s.expr = op == '=' ? mk_cast(rhs, v->type) : rhs;
         } else {
-            s.expr = mk_cast(rhs, v->type);
+            s.expr = mk_cast(rhs, e->type);
         }
         s.line = line;
         vec_push(st, s);
-        v->initialized = 1;
+        if (v) v->initialized = 1;
     } else {
         CBStmt s;
         memset(&s, 0, sizeof s);
@@ -1650,6 +1715,38 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
         store_slot(b, e->line, s, e->var->type, 0);
         *slotp = s;
         return 1;
+    case E_DEREF: {
+        int sa, addr;
+        if (!eval(cg, e->a, &sa)) return 0;
+        addr = pick_addr(b, 0, 0);
+        if (addr < 0) {
+            cb_error(b, e->line, e->col, "ZA5005", "a dereference needs a nonzero scratch register");
+            return 0;
+        }
+        load_slot(b, e->line, sa, type_ptr(), addr);
+        asm_line(b, e->line, "LLGC %%r0,0(%%r%d)", addr);
+        res = alloc_slot(cg);
+        store_slot(b, e->line, res, e->type, 0);
+        *slotp = res;
+        return 1;
+    }
+    case E_ADDR: {
+        int addr;
+        if (!e->var || e->var->kind != V_LOCAL) {
+            cb_error(b, e->line, e->col, "ZA5003", "& needs a local variable with storage");
+            return 0;
+        }
+        addr = pick_addr(b, 0, 0);
+        if (addr < 0) {
+            cb_error(b, e->line, e->col, "ZA5005", "& needs a nonzero scratch register");
+            return 0;
+        }
+        asm_line(b, e->line, "LA %%r%d,%ld(%%r%d)", addr, slot_off(b, e->var->slot), b->temp_reg);
+        res = alloc_slot(cg);
+        store_slot(b, e->line, res, type_ptr(), addr);
+        *slotp = res;
+        return 1;
+    }
     case E_CAST:
         if (!eval(cg, e->a, &s0)) return 0;
         load_slot(b, e->line, s0, e->a->type, 0);
@@ -2169,6 +2266,30 @@ for_fail:
         return 1;
     }
     if (st->kind == S_ASSIGN) {
+        if (st->lval) {
+            int sa, rs, addr;
+            if (st->op != '=') {
+                CBExpr bin;
+                memset(&bin, 0, sizeof bin);
+                bin.kind = E_BIN;
+                bin.type = st->lval->type;
+                bin.op = st->op;
+                bin.a = st->lval;
+                bin.b = st->expr;
+                bin.line = st->line;
+                if (!eval(cg, &bin, &rs)) return 0;
+            } else if (!eval(cg, st->expr, &rs)) return 0;
+            if (!eval(cg, st->lval->a, &sa)) return 0;
+            addr = pick_addr(b, 0, 0);
+            if (addr < 0) {
+                cb_error(b, st->line, 1, "ZA5005", "a dereference assignment needs a scratch register");
+                return 0;
+            }
+            load_slot(b, st->line, rs, st->lval->type, 0);
+            load_slot(b, st->line, sa, type_ptr(), addr);
+            asm_line(b, st->line, "STC %%r0,0(%%r%d)", addr);
+            return 1;
+        }
         if (st->op != '=') {
             CBExpr lhs, bin;
             memset(&lhs, 0, sizeof lhs);
@@ -2422,7 +2543,10 @@ done:
         int used = b.label_no > b.label_seq ? b.label_no : b.label_seq;
         if (used > *label_counter) *label_counter = used;
     }
-    for (i = 0; i < stmts.n; i++) cblock_expr_free(stmts.v[i].expr);
+    for (i = 0; i < stmts.n; i++) {
+        cblock_expr_free(stmts.v[i].expr);
+        cblock_expr_free(stmts.v[i].lval);
+    }
     if (!ok) {
         size_t k;
         for (k = out_start; k < out->n; k++) free((char *)out->v[k].text);

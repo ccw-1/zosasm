@@ -31,6 +31,21 @@ CBLOCK   CSECT
     sum = t;
 #pragma cend
 
+* Dereference and address of a local.
+         LARL  %r10,TEMP3
+#pragma cblock pointers
+#pragma cout int32_t value=%r4
+#pragma cscratch %r0, %r1, %r5, %r6
+#pragma ctemp %r10, 64, down
+#pragma cbegin
+    int32_t x = 65;
+    uint8_t *q;
+
+    q = &x;
+    *q = 66;                    /* writes the low byte of x */
+    value = x;                  /* 66 */
+#pragma cend
+
 * Pointer arithmetic and every memory/scan intrinsic.
          LARL  %r2,SRC
          LARL  %r3,DST
@@ -58,5 +73,6 @@ DST      DS    CL16
          DS    0D
 TEMP1    DS    128D
 TEMP2    DS    128D
+TEMP3    DS    128D
          LTORG
          END   CBLOCK

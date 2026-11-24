@@ -91,7 +91,7 @@ expressions, casts, assignments, `if`/`else`, `while`, `do`, `for`,
 `break`/`continue`, short-circuit `&&`/`||`, `?:`, `++`/`--`, `switch`,
 labels, `goto`, byte pointers, the memory intrinsics (`__memcpy`,
 `__memmove`, `__memset`) and the scan intrinsics (`__strlen`, `__memchr`).
-It compiles to ordinary assembler statements. Typed pointer dereference,
+It compiles to ordinary assembler statements. Typed pointers (`uint32_t *`),
 arrays, floating point, user-defined calls, recursion, C variable DWARF,
 chunked runtime `memset`/`memmove`, and `SRST`-based scans stay out of scope.
 
