@@ -42,9 +42,10 @@ It creates no symbol and does not touch `%r14` or the stack pointer.
 | `cend` | end the block |
 
 The temp base register cannot be `%r0`. A bound register cannot also appear in
-`cscratch`. `%r0` and `%r1` are internal scratch registers; if they are not in
-`cscratch`, the block saves and restores them in the temp area. A bound
-`cin`/`cout` register therefore cannot be `%r0` or `%r1`.
+`cscratch`. `%r0` and `%r1` are internal scratch registers. If both are missing from
+`cscratch`, the block saves and restores them as a pair with `STMG`/`LMG`;
+if only one is missing, it uses `STG`/`LG`. A bound `cin`/`cout` register
+therefore cannot be `%r0` or `%r1`.
 
 `ctemp` size is in bytes and must be a multiple of 8. The compiler computes the
 slots it needs and reports `ZA5006` when the area is too small. The base
@@ -126,5 +127,6 @@ expanded assembly.
 
 ## Not implemented
 
-Structured DWARF for C variables and a full `STMG`/`LMG` save-area mode.
-`%r0` and `%r1` are saved individually today.
+Structured DWARF for C variables. The generated code already maps line
+information back to the C source, but local variable locations and types are
+not described in `.debug_info`.

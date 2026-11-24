@@ -1917,16 +1917,30 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
             Cg cg;
             b.base_slots = (int)b.vars.n;
             b.save_r0 = b.save_r1 = -1;
-            if (b.temp_reg >= 0 && !has_scratch(&b, 0)) b.save_r0 = b.base_slots++;
-            if (b.temp_reg >= 0 && !has_scratch(&b, 1)) b.save_r1 = b.base_slots++;
+            if (b.temp_reg >= 0) {
+                int need0 = !has_scratch(&b, 0), need1 = !has_scratch(&b, 1);
+                if (need0 && need1 && b.temp_down) {
+                    /* keep R0 below R1 in memory so STMG 0,1 stores them
+                     * in register order */
+                    b.save_r1 = b.base_slots++;
+                    b.save_r0 = b.base_slots++;
+                } else {
+                    if (need0) b.save_r0 = b.base_slots++;
+                    if (need1) b.save_r1 = b.base_slots++;
+                }
+            }
             memset(&cg, 0, sizeof cg);
             cg.b = &b;
             cg.base_slots = b.base_slots;
             cg.slot_top = b.base_slots;
             cg.max_slot = b.base_slots;
             asm_line(&b, line, "* cblock %s", b.name);
-            if (b.save_r0 >= 0) store_slot(&b, line, b.save_r0, type_of(64, 1), 0);
-            if (b.save_r1 >= 0) store_slot(&b, line, b.save_r1, type_of(64, 1), 1);
+            if (b.save_r0 >= 0 && b.save_r1 >= 0)
+                asm_line(&b, line, "STMG %%r0,%%r1,%ld(%%r%d)", slot_off(&b, b.save_r0), b.temp_reg);
+            else {
+                if (b.save_r0 >= 0) store_slot(&b, line, b.save_r0, type_of(64, 1), 0);
+                if (b.save_r1 >= 0) store_slot(&b, line, b.save_r1, type_of(64, 1), 1);
+            }
             for (i = 0; i < b.vars.n; i++) {
                 CBVar *v = b.vars.v[i];
                 if (v->kind == V_CIN || v->kind == V_CINOUT) {
@@ -1944,8 +1958,12 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
                     CBVar *v = b.vars.v[i];
                     if (v->kind == V_COUT || v->kind == V_CINOUT) load_slot(&b, line, v->slot, v->type, v->reg);
                 }
-                if (b.save_r1 >= 0) load_slot(&b, line, b.save_r1, type_of(64, 1), 1);
-                if (b.save_r0 >= 0) load_slot(&b, line, b.save_r0, type_of(64, 1), 0);
+                if (b.save_r0 >= 0 && b.save_r1 >= 0)
+                    asm_line(&b, line, "LMG %%r0,%%r1,%ld(%%r%d)", slot_off(&b, b.save_r0), b.temp_reg);
+                else {
+                    if (b.save_r1 >= 0) load_slot(&b, line, b.save_r1, type_of(64, 1), 1);
+                    if (b.save_r0 >= 0) load_slot(&b, line, b.save_r0, type_of(64, 1), 0);
+                }
             }
         }
         for (i = 0; i < p.l.ids.n; i++) free(p.l.ids.v[i]);
