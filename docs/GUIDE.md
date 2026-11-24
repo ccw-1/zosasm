@@ -334,7 +334,7 @@ Rules that differ from C:
 | `__FILE__`, `__LINE__` | file name (as opened) and line number |
 | `__BASE_FILE__`, `__INCLUDE_LEVEL__` | the file named on the command line; 0 in it, 1 in its includes... |
 | `__COUNTER__` | 0, 1, 2 ... one step per use |
-| `__ZASM_VERSION__` | `major*10000 + minor*100 + patch` (0.2.0 is `200`) |
+| `__ZASM_VERSION__` | `major*10000 + minor*100 + patch` (0.3.0 is `300`) |
 | `__GOFF__` or `__ELF__` | defined (as 1) by the object format: `__ELF__` with `-elf`, else `__GOFF__` |
 | `__EBCDIC__` or `__ASCII__` | defined (as 1) by the character set (section 17): `__ASCII__` with `-ascii`, `-charset ascii` or `-elf` |
 | `__AMODE__`, `__RMODE__` | 0 until an `AMODE` or `RMODE` statement with 24, 31 or 64 is read, then that number (the last one read; `RMODE ANY` counts as 31, `AMODE ANY` and `MIN` change nothing) |
@@ -918,21 +918,6 @@ OFFSAVE  DC    Q(SAVE)
          END
 ```
 
-#### 14.1 Assembler controls
-
-| statement | what zosasm does |
-|---|---|
-| `ACONTROL AFPR`, `NOAFPR` | `NOAFPR`: only floating-point registers 0, 2, 4 and 6 are accepted (`ZA2071`); `AFPR` (the start state) allows all 16 |
-| `ACONTROL TYPECHECK(REGISTER)`, `NOREGISTER`, `NOTYPECHECK` | switch the strict register checks of section 6.1 on and off in the middle of the source |
-| `ACONTROL CA(819)`, `CE(1047)` (or `LOCAL`) | accepted; zosasm writes `CA` constants in ISO 8859-1 and `CE` in IBM-1047 only (`ZA2073` for other code pages) |
-| `ACONTROL COMPAT(..)`, `FLAG(..)`, `CU(..)`, `ILMA`, `LIBMAC`, `MACHINE(..)`, `OPTABLE(..)`, `RA2` | the selections are checked (`ZA2072` for an unknown one) and have no effect |
-| `PUSH`/`POP` `PRINT`, `USING`, `ACONTROL`, `,NOPRINT` | save and restore the listing print state, the active `USING`s and the `ACONTROL` state, each on its own stack; `POP` without `PUSH` is an error (`ZA2075`), a wrong operand `ZA2074` |
-| `CEJECT [n]` | listing only (section 11.2) |
-| `EXITCTL type,v1[,v2..]` | checked (`ZA2076` for an unknown exit type) and ignored: zosasm has no user exits |
-| `name OPSYN op` | `name` becomes another name of the instruction, directive or macro `op`; `name OPSYN` (no operand) deletes `name`; the last definition wins; `ZA2079` for an unknown `op` or a missing name. The macro language has no conditional assembly instructions to rename, so only operation codes of statements count; an alias of a macro is kept by the preprocessor, one of an instruction or directive by the assembler |
-| `PUNCH 'text'` | warning `ZA2078`, the text is ignored: a GOFF object has no card image records |
-| `REPRO` | warning `ZA2077`; the record that follows is skipped: a GOFF object has no card image records |
-
 **Not verified against IBM.** The records that the binder reads for these
 constants (offset, length and R-type relocations) are written as the GOFF
 documentation describes them, but the exact combination for the Q constant
@@ -1149,7 +1134,7 @@ the same source gives the same listing.
 
 <!-- listing: hello -->
 ```
-zosasm 0.2.0  docs/examples/hello.za
+zosasm 0.3.0  docs/examples/hello.za
 
 Loc     Object               Line   Source
                                 1   * A small routine with standard linkage: it saves the caller's registers,
@@ -1432,7 +1417,8 @@ on success, 1 when assembling failed or a file could not be read or written,
 2 for a bad command line. Source files use the extension `.za`.
 
 Environment: `SOURCE_DATE_EPOCH` (seconds since 1970) fixes `__DATE__` and
-`__TIME__`.
+`__TIME__`; `ZOSASM_MAX_DC_BYTES` raises the 64 MiB cap of one `DC` or
+bit-length `DS`.
 
 ---
 
@@ -1464,12 +1450,30 @@ macro statements).
 constants with real DBCS text (hexadecimal only); `CU` code page options
 (UTF-16LE/UTF-8); other code pages for `CA`/`CE`.
 
-**Limits.** A section cannot hold more than 2147483647 bytes (2 GB - 1):
+**Limits.** One `DC` or bit-length `DS` may expand to 64 MiB (`ZA2087`);
+set `ZOSASM_MAX_DC_BYTES` to a larger byte count when a bigger constant is
+really needed. A section cannot hold more than 2147483647 bytes (2 GB - 1):
 GOFF stores class lengths and text offsets in 32 bits. A `DS`/`DC` that
 would need more storage is an error (`ZA2087`), an `ORG` beyond the limit is
 an error (`ZA3053`), and a section grown past the limit by several
 statements is an error too (`ZA3054`) - the assembly says so instead of
 running out of memory.
+
+#### 14.1 Assembler controls
+
+| statement | what zosasm does |
+|---|---|
+| `ACONTROL AFPR`, `NOAFPR` | `NOAFPR`: only floating-point registers 0, 2, 4 and 6 are accepted (`ZA2071`); `AFPR` (the start state) allows all 16 |
+| `ACONTROL TYPECHECK(REGISTER)`, `NOREGISTER`, `NOTYPECHECK` | switch the strict register checks of section 6.1 on and off in the middle of the source |
+| `ACONTROL CA(819)`, `CE(1047)` (or `LOCAL`) | accepted; zosasm writes `CA` constants in ISO 8859-1 and `CE` in IBM-1047 only (`ZA2073` for other code pages) |
+| `ACONTROL COMPAT(..)`, `FLAG(..)`, `CU(..)`, `ILMA`, `LIBMAC`, `MACHINE(..)`, `OPTABLE(..)`, `RA2` | the selections are checked (`ZA2072` for an unknown one) and have no effect |
+| `PUSH`/`POP` `PRINT`, `USING`, `ACONTROL`, `,NOPRINT` | save and restore the listing print state, the active `USING`s and the `ACONTROL` state, each on its own stack; `POP` without `PUSH` is an error (`ZA2075`), a wrong operand `ZA2074` |
+| `CEJECT [n]` | listing only (section 11.2) |
+| `EXITCTL type,v1[,v2..]` | checked (`ZA2076` for an unknown exit type) and ignored: zosasm has no user exits |
+| `name OPSYN op` | `name` becomes another name of the instruction, directive or macro `op`; `name OPSYN` (no operand) deletes `name`; the last definition wins; `ZA2079` for an unknown `op` or a missing name. The macro language has no conditional assembly instructions to rename, so only operation codes of statements count; an alias of a macro is kept by the preprocessor, one of an instruction or directive by the assembler |
+| `PUNCH 'text'` | warning `ZA2078`, the text is ignored: a GOFF object has no card image records |
+| `REPRO` | warning `ZA2077`; the record that follows is skipped: a GOFF object has no card image records |
+
 
 **Verified against IBM.** An oracle run (2026-11) on z/OS with HLASM 6.0 and
 the binder compared: the operand rules of all 483 instructions that have
@@ -2343,7 +2347,7 @@ object: the sections `.debug_info`, `.debug_abbrev`, `.debug_line`,
 are subprograms). A relocation of the DWARF against a class is a RELA entry
 against the `.text.NAME` section, so `ld` relocates the addresses of the
 subprograms, labels and line table. No `.dbg` file and no link module are made.
-Differences from the GOFF form (section 21): the compile unit is
+Differences from the GOFF form (section 22): the compile unit is
 `DW_LANG_Mips_Assembler` and gives its code range with `DW_AT_ranges` (one
 range per CSECT); the line table uses the standard `DW_LNS_set_file`; there is
 no `.debug_srcfiles`. `-gside`, `-gdwarf` and `-gdbgpath` are errors with
@@ -2490,6 +2494,7 @@ server) where a tool takes both.
 | `object_base64` | boolean | also return the object, base64 encoded |
 | `listing`, `listing_all_bytes`, `listing_brief` | boolean | return the listing (`-l`, `-ldata`, `-lbrief`) |
 | `debug_info` | 0, 1, 2 | `-gz0/1/2` (GOFF only) |
+| `dwarf`, `dwarf_output`, `dwarf_dir`, `dwarf_dbgpath`, `dwarf_map`, `dwarf_base64` | boolean/string/array | `-g`, `-gdwarf`, `-gdir`, `-gdbgpath`, `-gmap`, and returning the `.dbg` bytes as base64 (GOFF only) |
 | `werror`, `reproducible` | boolean | `-Werror`, `-reproducible` |
 | `max_errors` | integer | `-max-errors` |
 
@@ -2670,14 +2675,17 @@ BUF      DS    CL600
   hiding an outer one a warning (ZA4107). `#global` is shared by all macros
   and open code, the first declaration sets the value.
 * Functions: `len count substr index upper lower trim repeat double quote byte
-  chars split join list int str hex bin min max abs empty defined attr`.
+  chars split join list fill int str hex bin min max abs empty defined attr
+  aread`.
   `attr(x, "T")` is `N` for a self-defining term, `O` for an omitted
   argument and `U` otherwise (the symbol table is not available).
 * Built-in names: `sys.label`, `sys.ndx` (`0001`, `0002`... one per call),
   `sys.sect`, `sys.sectype`, `sys.macro`, `sys.level`, `sys.args`, `sys.argc`,
   `sys.loc` (the name of the current location counter: the last `LOCTR`, or the
   section), `sys.date` (`mm/dd/yy`), `sys.datc` (`yyyymmdd`), `sys.time`
-  (`hh.mm`) and `sys.parm` (the text of `-sysparm`). The date and time are
+  (`hh.mm`) and `sys.parm` (the text of `-sysparm`), `sys.asm` (`"zosasm"`),
+  `sys.ver`, `sys.system_id`, `sys.clock`, `sys.stmt`, `sys.opt_elf`,
+  `sys.opt_strict_registers`, `sys.opt_ascii` and `sys.opt_ebcdic`. The date and time are
   those of `__DATE__`: `SOURCE_DATE_EPOCH`, and an error with `-reproducible`
   when it is not set.
 * Input and output of the source stream (HLASM `AREAD` and `AINSERT`):
@@ -2820,7 +2828,7 @@ cannot show it.
   section in the `B_TEXT` class of the module) and `.ADATA_<32 hex>`, the
   signature that ties the file to its object.
 * In the DWARF: one compile unit (`DW_LANG_IBM_Hlasm`, the producer is
-  `zosasm 0.2.0`); a `DW_TAG_subprogram` per CSECT/RSECT that has instructions;
+  `zosasm 0.3.0`); a `DW_TAG_subprogram` per CSECT/RSECT that has instructions;
   a `DW_TAG_label` for every label in code; a `DW_TAG_variable` with
   `DW_OP_addr` and a base or array type for every `DC`/`DS` label (the type
   follows the type letter and the length: `int32`, `char[10]`, ...); the line

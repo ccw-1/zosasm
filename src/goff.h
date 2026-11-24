@@ -136,6 +136,8 @@ const char *goff_write_rld(GoffWriter *w, const GoffReloc *items, size_t n);
 const char *goff_write_len(GoffWriter *w, const GoffDeferredLen *items, size_t n);
 /* finishes the object; the result is owned by the writer */
 const char *goff_write_end(GoffWriter *w, const GoffEnd *e, const uint8_t **out, size_t *len);
+/* release a writer and its buffer */
+void goff_writer_free(GoffWriter *w);
 
 /* ---- reader ---------------------------------------------------------- */
 
@@ -168,5 +170,7 @@ const GoffESD *goff_module_esd(const GoffModule *m, uint32_t id);
 int goff_equal(const GoffModule *a, uint32_t skip_a, uint32_t nskip, const GoffModule *b);
 /* readable listing */
 void goff_dump(const GoffModule *m, FILE *w);
+/* release a parsed module */
+void goff_free(GoffModule *m);
 
 #endif

@@ -3,7 +3,10 @@
  *
  * Memory: objects are owned by the Module that holds them. When zosasm is
  * used as a one-shot process the OS reclaims memory at exit; when used as
- * a library, call asm_free() to release a Module and everything it owns. */
+ * a library, call asm_free() to release a Module and everything it owns.
+ * Some per-pass parser and operand buffers are still process-lifetime; a
+ * long-lived library caller should create one process per assembly or use
+ * the CLI/MCP subprocess model (DESIGN.md section 7). */
 #ifndef ZA_ASM_H
 #define ZA_ASM_H
 
@@ -23,6 +26,7 @@ typedef struct Symbol Symbol;
 typedef struct Stmt Stmt;
 typedef struct Expr Expr;
 typedef struct Asm Asm;
+typedef Vec(Expr *) ExprVec;
 
 typedef enum { K_CSECT, K_RSECT, K_DSECT, K_COM } SectKind;
 const char *sectkind_name(SectKind k);
@@ -250,6 +254,7 @@ typedef struct {
     Vec(char *) zdefs;   /* at level 2: the -D options given ("NAME" or "NAME=value") */
     /* for the listing (listing.c) */
     StmtVec stmts;       /* every statement read, in source order */
+    StmtVec synth;       /* synthetic statements of literals, owned here */
     Vec(LitRec) lits;
     Vec(UsingRec) usings;
 } Module;
@@ -393,6 +398,8 @@ Expr *parse_expr(Stmt *st, const char *text, int off, Reporter *rep);
 int expr_is_func_name(const char *s, size_t n);
 /* short description of e for messages */
 char *expr_describe(const Expr *e);
+/* release a tree returned by parse_expr()/asm_expr() */
+void expr_free(Expr *e);
 
 /* ---- the assembler --------------------------------------------------- */
 
@@ -482,6 +489,9 @@ struct Asm {
     Piece *cur;
     Section *sect;
     int ended;
+    int ended_warned;
+    ExprVec exprs;        /* every tree made by asm_expr(), freed by asm_state_free */
+    Vec(char *) using_labels; /* all label strings of USINGs (owned here) */
     UsingVec usings;
     int using_id;
     char *end_entry;
@@ -626,6 +636,8 @@ typedef struct {
 } DcVal;
 
 typedef Vec(DcVal) DcVec;
+/* release the byte buffers of a DC value vector (dc.c) */
+void dc_vec_free(DcVec *v);
 
 void asm_put_val(Asm *a, const DcVal *v);
 

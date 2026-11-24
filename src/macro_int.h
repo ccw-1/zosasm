@@ -4,6 +4,9 @@
 
 #include "macro.h"
 
+/* the largest string a macro value may hold (4 MB) */
+#define MA_MAX_STR ((size_t)4 << 20)
+
 /* ---- values ------------------------------------------------------------- */
 
 typedef enum { V_INT, V_STR, V_LIST } VType;

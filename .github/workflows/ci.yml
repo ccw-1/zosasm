@@ -18,6 +18,8 @@ jobs:
           - cc: clang
           - cc: gcc
             sanitizers: true
+          - cc: clang
+            sanitizers: true
     steps:
       - uses: actions/checkout@v4
       - name: build and test
@@ -27,11 +29,13 @@ jobs:
             # the code is allocate-and-never-free by design for the one shot
             # tools, so leak detection is off; the test binaries and the MCP
             # server are also run by make test
-            ASAN_OPTIONS=detect_leaks=0 make \
+            ASAN_OPTIONS=detect_leaks=0 make CC=${{ matrix.cc }} \
               CFLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -g" \
               test
             # MCP server is long-lived; run its tests with leak detection.
-            make test-mcp-asan
+            make CC=${{ matrix.cc }} test-mcp-asan
           else
             make CC=${{ matrix.cc }} test
           fi
+      - name: check generated tables
+        run: make isa-check ebcdic-check

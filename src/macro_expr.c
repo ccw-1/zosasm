@@ -522,7 +522,15 @@ MVal ex_binop(Ctx *c, int op, MVal a, MVal b) {
             ok = ok && (b.t == V_INT ? (py = b.i, 1) : (b.t == V_STR && v_parse_int(b.s, &py)));
             if (ok) return v_int((int64_t)((uint64_t)px + (uint64_t)py));
         }
-        return v_str(xasprintf("%s%s", v_text(a), v_text(b)));
+        {
+            const char *sa = v_text(a), *sb = v_text(b);
+            size_t la = strlen(sa), lb = strlen(sb);
+            if (la > MA_MAX_STR || lb > MA_MAX_STR - la) {
+                ma_err(c, "ZA4112", "the concatenated string is too large");
+                return v_str(xstrdup(""));
+            }
+            return v_str(xasprintf("%s%s", sa, sb));
+        }
     }
     to_int(c, a, &x);
     to_int(c, b, &y);

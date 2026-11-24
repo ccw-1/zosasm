@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "../src/convert.h"
 #include "../src/pp.h"
@@ -192,7 +193,7 @@ static char *convert_copy(const char *text, const char *dir) {
 static void test_features(void) {
     int nw = 0;
     char *c, *x;
-    char dir[] = "/tmp/zmcXXXXXX";
+    char dir[512];
     FILE *f;
     /* AREAD reads the next source record; AINSERT queues records after the outermost macro */
     c = convert("         MACRO\n         RD\n         LCLC  &A\n&A       SETC  AREAD\n"
@@ -225,7 +226,9 @@ static void test_features(void) {
     x = expand(xasprintf("T CSECT\n%s    SV\n", c));
     CHECK_MSG(strstr(x, "C'") && !strstr(x, "ZA41"), "sys var expansion: %s", x);
     /* COPY inside a macro reads the member when a directory is given */
+    snprintf(dir, sizeof dir, "%s/zmcXXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
     CHECK(mkdtemp(dir) != NULL);
+    if (!*dir) return;
     f = fopen(xasprintf("%s/CPYM.mac", dir), "wb");
     CHECK(f != NULL);
     if (f) {
@@ -236,6 +239,12 @@ static void test_features(void) {
     CHECK_MSG(strstr(c, "#macro CP(") && strstr(c, "from copy &q"), "copy:\n%s", c);
     c = convert("         MACRO\n         CP    &Q\n         COPY  CPYM\n         MEND\n", 0, &nw);
     CHECK_MSG(!strstr(c, "#macro CP("), "COPY without a directory is not converted:\n%s", c);
+    {
+        char *m = xasprintf("%s/CPYM.mac", dir);
+        remove(m);
+        free(m);
+        rmdir(dir);
+    }
 }
 
 /* else if, #switch, the dispatch loop and -keep-goto (MACRO.md section 10) */

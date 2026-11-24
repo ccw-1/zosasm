@@ -1737,7 +1737,8 @@ static void tool_guide(const J *args, Buf *out) {
     }
     if (q && *q) {
         size_t i, hits = 0, ql = strlen(q);
-        buf_printf(&text, "lines of %s that contain \"%s\" (case ignored); read one with the 'section' argument:\n", g_guide, q);
+        buf_printf(&text, "lines of %s that contain \"%.200s%s\" (case ignored); read one with the 'section' argument:\n",
+                   g_guide, q, ql > 200 ? "..." : "");
         for (i = 0; i < g->lines.n && hits < 40; i++) {
             const char *l = g->lines.v[i];
             size_t ll = strlen(l), k;
@@ -2323,9 +2324,10 @@ static void dispatch(const J *msg, Buf *r) {
         if (!strcmp(name, "zosasm_assemble") || !strcmp(name, "zosasm_preprocess") ||
             !strcmp(name, "zosasm_dump") || !strcmp(name, "zosasm_disasm") ||
             !strcmp(name, "zosasm_convert_hlasm") || !strcmp(name, "zosasm_guide")) {
+            /* Each field is capped at MAX_TEXT while it is built; do not
+             * throw the whole result away when their sum is larger. */
             tool_call(name, args, r);
-            if (r->len > MAX_TEXT) { r->len = 0; reply_error(id, -32603, "tool result too large"); }
-            else reply_result(id, buf_cstr(r));
+            reply_result(id, buf_cstr(r));
         } else {
             reply_error(id, -32602, "unknown tool");
         }

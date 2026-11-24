@@ -134,7 +134,7 @@ static void test_table(void) {
             dup++;
     }
     CHECK_MSG(dup == 0, "%d duplicate table entries", dup);
-    CHECK(isa_inst_count > 2000);
+    CHECK_MSG(isa_inst_count == 2369, "instruction count is %d, expected 2369", (int)isa_inst_count);
     CHECK(nfac > 500);
 }
 

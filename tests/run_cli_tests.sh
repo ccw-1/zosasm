@@ -455,12 +455,12 @@ mcp '{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"zosasm_ass
 # the workspace: with no ZOSASM_UNRESTRICTED, file names are limited to the
 # directory of the server binary (build/)
 printf 'T CSECT\n LR 1,2\n' > $T/ws.za
-mcp '{"jsonrpc":"2.0","id":25,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"path":"/etc/passwd"}}}' > $T/m.out
+mcp '{"jsonrpc":"2.0","id":28,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"path":"/etc/passwd"}}}' > $T/m.out
 grep -q '"isError":true' $T/m.out && grep -q 'outside the workspace' $T/m.out; check "mcp path outside the workspace" $? 0
 mcp '{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"path":"cli_tmp/ws.za"}}}' > $T/m.out
 grep -q '"success":true' $T/m.out; check "mcp path inside the workspace" $? 0
 evil=/tmp/zosasm-mcp-evil-$$.o
-mcp '{"jsonrpc":"2.0","id":25,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n","output":"'$evil'"}}}' > $T/m.out
+mcp '{"jsonrpc":"2.0","id":29,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"source":"T CSECT\n","output":"'$evil'"}}}' > $T/m.out
 grep -q 'outside the workspace' $T/m.out; check "mcp output outside the workspace" $? 0
 [ ! -e "$evil" ]; check "mcp output outside the workspace: nothing written" $? 0
 mcp '{"jsonrpc":"2.0","id":26,"method":"tools/call","params":{"name":"zosasm_assemble","arguments":{"path":"../docs/GUIDE.md"}}}' > $T/m.out

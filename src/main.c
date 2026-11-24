@@ -72,6 +72,96 @@ static void usage(FILE *f) {
                "  -Werror         treat warnings as errors\n");
 }
 
+/* Write a whole file atomically. "-" is standard output and "/dev/null" is
+ * opened directly (a temporary file in /dev cannot be created). */
+static int out_write(const char *path, const void *data, size_t n) {
+    if (!strcmp(path, "-")) {
+        if (n && fwrite(data, 1, n, stdout) != n) {
+            fprintf(stderr, "zosasm: stdout: %s\n", strerror(errno));
+            return 0;
+        }
+        return 1;
+    }
+    if (!strcmp(path, "/dev/null")) {
+        FILE *f = fopen(path, "wb");
+        int ok = f != NULL;
+        if (ok && n && fwrite(data, 1, n, f) != n) ok = 0;
+        if (f && fclose(f) != 0) ok = 0;
+        if (!ok) fprintf(stderr, "zosasm: %s: %s\n", path, strerror(errno));
+        return ok;
+    }
+    {
+        char *tmp = xasprintf("%s.tmp.%d", path, (int)getpid());
+        FILE *f = fopen(tmp, "wb");
+        int ok = f != NULL && (n == 0 || fwrite(data, 1, n, f) == n);
+        if (f && fclose(f) != 0) ok = 0;
+        if (!ok) {
+            fprintf(stderr, "zosasm: %s: %s\n", path, strerror(errno));
+            if (f) remove(tmp);
+            free(tmp);
+            return 0;
+        }
+        if (rename(tmp, path) != 0) {
+            fprintf(stderr, "zosasm: %s: %s\n", path, strerror(errno));
+            remove(tmp);
+            free(tmp);
+            return 0;
+        }
+        free(tmp);
+    }
+    return 1;
+}
+
+/* The path made absolute without requiring the final file to exist: the
+ * directory is resolved with realpath(), the base name is appended. */
+static char *canon_path(const char *p) {
+    const char *slash = strrchr(p, '/');
+    char *dir, *base, *rd, *r;
+    if (!slash) {
+        dir = xstrdup(".");
+        base = xstrdup(p);
+    } else if (slash == p) {
+        dir = xstrdup("/");
+        base = xstrdup(slash + 1);
+    } else {
+        dir = xstrndup(p, (size_t)(slash - p));
+        base = xstrdup(slash + 1);
+    }
+    rd = realpath(dir, NULL);
+    if (!rd) r = xstrdup(p);
+    else if (!strcmp(rd, "/")) r = xasprintf("/%s", base);
+    else r = xasprintf("%s/%s", rd, base);
+    free(rd);
+    free(dir);
+    free(base);
+    return r;
+}
+
+static int same_path(const char *a, const char *b) {
+    char *ca, *cb;
+    int eq;
+    if (!a || !b) return 0;
+    if (!strcmp(a, "-") || !strcmp(b, "-") || !strcmp(a, "/dev/null") || !strcmp(b, "/dev/null"))
+        return !strcmp(a, b);
+    ca = canon_path(a);
+    cb = canon_path(b);
+    eq = !strcmp(ca, cb);
+    free(ca);
+    free(cb);
+    return eq;
+}
+
+static char *dbg_name_for(const char *outname, const char *gdwarf) {
+    const char *slash, *dot;
+    size_t k;
+    if (gdwarf) return xstrdup(gdwarf);
+    slash = strrchr(outname, '/');
+    dot = strrchr(outname, '.');
+    k = strlen(outname);
+    if (dot && (!slash || dot > slash)) k = (size_t)(dot - outname);
+    return xasprintf("%.*s.dbg", (int)k, outname);
+}
+
 static int do_dump(const char *path) {
     size_t n;
     const char *err = NULL;
@@ -100,21 +190,30 @@ static int do_dump(const char *path) {
             printf("\n=== module %d at byte %lu ===\n", k++, (unsigned long)at);
             goff_dump(m2, stdout);
             at += m2->bytes;
+            goff_free(m2);
         }
     }
     {
         size_t zlen;
         uint8_t *z = zsym_extract(m, &zlen);
         if (z) {
+            Zsym *y = zsym_parse(z, zlen);
             putchar('\n');
-            zsym_dump(zsym_parse(z, zlen), stdout);
+            zsym_dump(y, stdout);
+            zsym_free(y);
+            free(z);
         }
         z = zsrc_extract(m, &zlen);
         if (z) {
+            ZSrc *y = zsrc_parse(z, zlen);
             putchar('\n');
-            zsrc_dump(zsrc_parse(z, zlen), stdout);
+            zsrc_dump(y, stdout);
+            zsrc_free(y);
+            free(z);
         }
     }
+    goff_free(m);
+    free(b);
     return 0;
 }
 
@@ -134,7 +233,7 @@ static int check_text(const GoffModule *m, const char *orig, size_t n, uint32_t 
         const char *e2 = NULL;
         GoffModule *m2 = goff_parse(obj, olen, &e2);
         int r = m2 && goff_equal(m, skip_z, nskip, m2) ? 0 : 2;
-        /* m2 is intentionally not freed: there is no goff_free() yet; this is a debug-only path */
+        goff_free(m2);
         free(obj);
         return r;
     }
@@ -178,7 +277,7 @@ static int do_unpack(const char *path, const char *dir) {
     }
     s = zsrc_parse(z, zlen);
     k = zsrc_unpack(s, dir ? dir : ".", stdout);
-    if (k < 0) return 1;
+    if (k < 0) { zsrc_free(s); free(z); goff_free(m); free(b); return 1; }
     if (s->bad_chunks || k == 0)
         fprintf(stderr, "zosasm: %s: warning: the sources are damaged or incomplete\n", path);
     else {
@@ -189,6 +288,10 @@ static int do_unpack(const char *path, const char *dir) {
                 break;
             }
     }
+    zsrc_free(s);
+    free(z);
+    goff_free(m);
+    free(b);
     return 0;
 }
 
@@ -200,7 +303,6 @@ static int do_disasm(const char *path, const char *out, int generic) {
     int nwarn = 0, smart = 0, rc;
     uint32_t skip_z = 0, nskip = 0;
     Reporter *rep;
-    FILE *f;
     if (!b) {
         fprintf(stderr, "zosasm: %s: %s\n", path, strerror(errno));
         return 1;
@@ -228,6 +330,8 @@ static int do_disasm(const char *path, const char *out, int generic) {
         fprintf(stderr, "zosasm: warning: the source made from the ZSYM information %s; using the generic "
                         "converter\n", rc == 1 ? "does not assemble" : "does not give the object back");
         if (rc == 1) rep_print(rep, stderr, 0);
+        rep_free(rep);
+        free(text);
         text = disasm_ex(m, DISASM_GENERIC, NULL, &nwarn, NULL, err, sizeof err);
         if (!text) {
             fprintf(stderr, "zosasm: %s: %s\n", path, err);
@@ -236,52 +340,7 @@ static int do_disasm(const char *path, const char *out, int generic) {
         rc = check_text(m, b, n, skip_z, nskip, text, &rep, &at);
     }
     tlen = strlen(text);
-    if (out && strcmp(out, "/dev/null") != 0) {
-        char *tmp = xasprintf("%s.tmp.%d", out, (int)getpid());
-        f = fopen(tmp, "wb");
-        {
-            int ok = f != NULL && fwrite(text, 1, tlen, f) == tlen;
-            if (f && fclose(f) != 0) ok = 0;
-            if (!ok) {
-                fprintf(stderr, "zosasm: %s: %s\n", out, strerror(errno));
-                remove(tmp);
-                free(tmp);
-    return 1;
-            }
-        }
-        if (rename(tmp, out) != 0) {
-            fprintf(stderr, "zosasm: %s: %s\n", out, strerror(errno));
-            remove(tmp);
-            free(tmp);
-    return 1;
-        }
-        free(tmp);
-    } else if (!out) {
-        if (fwrite(text, 1, tlen, stdout) != tlen) {
-            fprintf(stderr, "zosasm: stdout: %s\n", strerror(errno));
-    return 1;
-        }
-    } else {
-        char *tmp = xasprintf("%s.tmp.%d", out, (int)getpid());
-        f = fopen(tmp, "wb");
-        {
-            int ok = f != NULL && fwrite(text, 1, tlen, f) == tlen;
-            if (f && fclose(f) != 0) ok = 0;
-            if (!ok) {
-                fprintf(stderr, "zosasm: %s: %s\n", out, strerror(errno));
-                remove(tmp);
-                free(tmp);
-    return 1;
-            }
-        }
-        if (rename(tmp, out) != 0) {
-            fprintf(stderr, "zosasm: %s: %s\n", out, strerror(errno));
-            remove(tmp);
-            free(tmp);
-    return 1;
-        }
-        free(tmp);
-    }
+    if (!out_write(out ? out : "-", text, tlen)) return 1;
     if (rc == 1) {
         fprintf(stderr, "zosasm: warning: the generated source does not assemble\n");
         rep_print(rep, stderr, 0);
@@ -293,6 +352,10 @@ static int do_disasm(const char *path, const char *out, int generic) {
                 "difference at byte %zu, record %zu)\n",
                 at, at / GOFF_RECORD_LEN + 1);
     }
+    rep_free(rep);
+    goff_free(m);
+    free(b);
+    free(text);
     return 0;
 }
 
@@ -315,7 +378,7 @@ int main(int argc, char **argv) {
     PpOptions ppo;
     SrcVec lines = {0};
     size_t n, olen;
-    char *text, err[256], *outname;
+    char *text, err[256], *outname = NULL, *dbgname = NULL;
     Reporter *rep;
     Module *mod = NULL;
     uint8_t *obj;
@@ -349,13 +412,12 @@ int main(int argc, char **argv) {
         } else if (!strcmp(a, "-sysparm") && i + 1 < argc) {
             ppo.sysparm = argv[++i];
         } else if (!strcmp(a, "-macro-steps") && i + 1 < argc) {
-            char *end = NULL;
-            long long v = strtoll(argv[++i], &end, 10);
-            if (!end || *end || v < 0) {
+            int v;
+            if (!za_parse_int(argv[++i], &v)) {
                 fprintf(stderr, "zosasm: bad value for -macro-steps: %s\n", argv[i]);
-    return 2;
+                return 2;
             }
-            ppo.macro_steps = (long)v;
+            ppo.macro_steps = v;
         } else if (!strcmp(a, "-E")) {
             only_pp = 1;
         } else if (!strcmp(a, "-reproducible")) {
@@ -372,13 +434,12 @@ int main(int argc, char **argv) {
         } else if (!strcmp(a, "-lbrief")) {
             lo.brief = 1;
         } else if (!strcmp(a, "-lpage") && i + 1 < argc) {
-            char *end = NULL;
-            long v = strtol(argv[++i], &end, 10);
-            if (!end || *end || v < 0) {
+            int v;
+            if (!za_parse_int(argv[++i], &v)) {
                 fprintf(stderr, "zosasm: bad value for -lpage: %s\n", argv[i]);
-    return 2;
+                return 2;
             }
-            lo.page = (int)v;
+            lo.page = v;
         } else if (!strcmp(a, "-generic")) {
             generic = 1;
         } else if (!strcmp(a, "-elf")) {
@@ -433,13 +494,12 @@ int main(int argc, char **argv) {
         } else if (!strcmp(a, "-Werror")) {
             werror = 1;
         } else if (!strcmp(a, "-max-errors") && i + 1 < argc) {
-            char *end = NULL;
-            long v = strtol(argv[++i], &end, 10);
-            if (!end || *end || v < 0) {
+            int v;
+            if (!za_parse_int(argv[++i], &v)) {
                 fprintf(stderr, "zosasm: bad value for -max-errors: %s\n", argv[i]);
-    return 2;
+                return 2;
             }
-            max_err = (int)v;
+            max_err = v;
         } else if (!strcmp(a, "-h") || !strcmp(a, "-help")) {
             usage(stdout);
     return 0;
@@ -503,6 +563,32 @@ int main(int argc, char **argv) {
         if (!text) {
             fprintf(stderr, "zosasm: %s: %s\n", in, strerror(errno));
             return 1;
+        }
+    }
+    outname = out ? xstrdup(out) : default_output(in);
+    if (!only_pp) {
+        if (gflag && !elf) dbgname = dbg_name_for(outname, gdwarf);
+        if (gflag && !elf && gside) {
+            if (!gdwarf && (!strcmp(outname, "-") || !strcmp(outname, "/dev/null"))) {
+                fprintf(stderr, "zosasm: -gside needs a real object file name (use -gdwarf FILE with -o %s)\n", outname);
+                return 2;
+            }
+            if (!strcmp(dbgname, "-")) {
+                fprintf(stderr, "zosasm: -gdwarf - would put the .dbg file on standard output\n");
+                return 2;
+            }
+            if (same_path(outname, dbgname)) {
+                fprintf(stderr, "zosasm: -o and -gside output name the same file: %s\n", outname);
+                return 2;
+            }
+        }
+        if (listfile && same_path(outname, listfile)) {
+            fprintf(stderr, "zosasm: -o and -l name the same file: %s\n", outname);
+            return 2;
+        }
+        if (listfile && gflag && !elf && gside && same_path(listfile, dbgname)) {
+            fprintf(stderr, "zosasm: -l and -gside output name the same file: %s\n", listfile);
+            return 2;
         }
     }
     rep = rep_new(max_err);
@@ -580,49 +666,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "zosasm: %s: cannot write object: %s\n", in, err);
         return 1;
     }
-    outname = out ? xstrdup(out) : default_output(in);
-    if (strcmp(outname, "-") != 0 && strcmp(outname, "/dev/null") != 0) {
-        char *out_r = realpath(outname, NULL);
-        if (out_r) {
-            if (listfile && strcmp(listfile, "-") != 0 && strcmp(listfile, "/dev/null") != 0) {
-                char *lr = realpath(listfile, NULL);
-                if (lr && strcmp(out_r, lr) == 0) {
-                    fprintf(stderr, "zosasm: -o and -l name the same file: %s\n", outname);
-                    free(lr); free(out_r); return 2;
-                }
-                free(lr);
-            }
-            if (gdwarf) {
-                char *gr = realpath(gdwarf, NULL);
-                if (gr && strcmp(out_r, gr) == 0) {
-                    fprintf(stderr, "zosasm: -o and -gdwarf name the same file: %s\n", outname);
-                    free(gr); free(out_r); return 2;
-                }
-                free(gr);
-            }
-            free(out_r);
-        }
-    }
     if (gflag && !elf) {
         DbgResult dr;
-        char *dbgname, cwd[4096], *tmpobj = NULL, *tmpdbg = NULL;
-        const char *slash = strrchr(outname, '/'), *dot = strrchr(outname, '.');
-        size_t k = strlen(outname);
-        char outrealbuf[4096], dbgrealbuf[4096];
-        char *outreal = realpath(outname, outrealbuf);
-        if (dot && (!slash || dot > slash)) k = (size_t)(dot - outname);
-        dbgname = gdwarf ? xstrdup(gdwarf) : xasprintf("%.*s.dbg", (int)k, outname);
-        if (gside) {
-            char *dbgreal = realpath(dbgname, dbgrealbuf);
-            if (outreal && dbgreal && strcmp(outreal, dbgreal) == 0) {
-                fprintf(stderr, "zosasm: -o and -gside output resolve to the same file: %s\n", outname);
-        return 1;
-            }
-            if (!outreal && !dbgreal && strcmp(outname, dbgname) == 0) {
-                fprintf(stderr, "zosasm: -o and -gside output resolve to the same file: %s\n", outname);
-        return 1;
-            }
-        }
+        char cwd[4096];
+        Buf ob = {0};
         dopt.cwd = getcwd(cwd, sizeof cwd) ? cwd : "";
         dopt.main_file = in;
         dopt.producer = xasprintf("zosasm %s", ZASM_VERSION_STR);
@@ -631,82 +678,16 @@ int main(int argc, char **argv) {
             fprintf(stderr, "zosasm: %s: %s\n", in, err);
             return 1;
         }
-        tmpobj = xasprintf("%s.tmp.%d", outname, (int)getpid());
-        if (gside) {
-            FILE *df;
-            tmpdbg = xasprintf("%s.tmp.%d", dbgname, (int)getpid());
-            df = fopen(tmpdbg, "wb");
-            {
-                int ok = df != NULL && fwrite(dr.elf, 1, dr.elf_len, df) == dr.elf_len;
-                if (df && fclose(df) != 0) ok = 0;
-                if (!ok) {
-                    fprintf(stderr, "zosasm: %s: %s\n", dbgname, strerror(errno));
-                    remove(tmpdbg);
-                    free(tmpdbg);
-                    remove(tmpobj);
-                    free(tmpobj);
-        return 1;
-                }
-            }
+        buf_write(&ob, obj, olen);
+        buf_write(&ob, dr.mod2, dr.mod2_len);
+        if (!out_write(outname, ob.p, ob.len)) {
+            free(ob.p);
+            return 1;
         }
-        f = fopen(tmpobj, "wb");
-        {
-            int ok = f != NULL && fwrite(obj, 1, olen, f) == olen && fwrite(dr.mod2, 1, dr.mod2_len, f) == dr.mod2_len;
-            if (f && fclose(f) != 0) ok = 0;
-            if (!ok) {
-                fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
-                remove(tmpobj);
-                free(tmpobj);
-                if (tmpdbg) { remove(tmpdbg); free(tmpdbg); }
-        return 1;
-            }
-        }
-        if (rename(tmpobj, outname) != 0) {
-            fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
-            remove(tmpobj);
-            free(tmpobj);
-            if (tmpdbg) { remove(tmpdbg); free(tmpdbg); }
-        return 1;
-        }
-        if (tmpdbg && rename(tmpdbg, dbgname) != 0) {
-            fprintf(stderr, "zosasm: %s: %s\n", dbgname, strerror(errno));
-            remove(tmpdbg);
-            free(tmpdbg);
-            free(tmpobj);
-        return 1;
-        }
-        free(tmpobj);
-        free(tmpdbg);
-    } else if (strcmp(outname, "/dev/null") == 0) {
-        f = fopen(outname, "wb");
-        {
-            int ok = f != NULL && fwrite(obj, 1, olen, f) == olen;
-            if (f && fclose(f) != 0) ok = 0;
-            if (!ok) {
-                fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
-        return 1;
-            }
-        }
+        free(ob.p);
+        if (gside && !out_write(dbgname, dr.elf, dr.elf_len)) return 1;
     } else {
-        char *tmpobj = xasprintf("%s.tmp.%d", outname, (int)getpid());
-        f = fopen(tmpobj, "wb");
-        {
-            int ok = f != NULL && fwrite(obj, 1, olen, f) == olen;
-            if (f && fclose(f) != 0) ok = 0;
-            if (!ok) {
-                fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
-                remove(tmpobj);
-                free(tmpobj);
-        return 1;
-            }
-        }
-        if (rename(tmpobj, outname) != 0) {
-            fprintf(stderr, "zosasm: %s: %s\n", outname, strerror(errno));
-            remove(tmpobj);
-            free(tmpobj);
-        return 1;
-        }
-        free(tmpobj);
+        if (!out_write(outname, obj, olen)) return 1;
     }
     return 0;
 }

@@ -118,6 +118,7 @@ void zsym_put_chunk(Buf *out, int kind, Buf *payload);
 /* Parse a stream of chunks. Never fails on content: damaged chunks are
  * counted in bad_chunks and the block they belong to is incomplete. */
 Zsym *zsym_parse(const uint8_t *b, size_t n);
+void zsym_free(Zsym *z);
 /* the concatenated text of the class C_ADATAE9C1, or NULL when absent */
 uint8_t *zsym_extract(const GoffModule *m, size_t *len);
 /* the same for any annotation class (C_ADATAE9C2: zsrc.h) */

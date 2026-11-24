@@ -6,7 +6,8 @@
 int main(void) {
     static const struct { const char *in; unsigned char out; } known[] = {
         {"A", 0xC1}, {"a", 0x81}, {"0", 0xF0}, {" ", 0x40}, {"[", 0xAD}, {"]", 0xBD},
-        {"^", 0x5F}, {"!", 0x5A}, {"|", 0x4F}, {"~", 0xA1}, {"_", 0x6D}, {"\n", 0x25}};
+        {"^", 0x5F}, {"!", 0x5A}, {"|", 0x4F}, {"~", 0xA1}, {"_", 0x6D}, {"\n", 0x25},
+        {"\\", 0xE0}, {"{", 0xC0}, {"}", 0xD0}, {"\"", 0x7F}, {"#", 0x7B}, {"@", 0x7C}};
     size_t i, n;
     int c;
     for (i = 0; i < sizeof known / sizeof known[0]; i++) {

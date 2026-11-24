@@ -1,6 +1,7 @@
 #include "util.h"
 
 #include <errno.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -86,6 +87,17 @@ int za_strncmpi(const char *a, const char *b, size_t n) {
         if (!x) return 0;
     }
     return 0;
+}
+
+int za_parse_int(const char *s, int *out) {
+    char *end = NULL;
+    long v;
+    if (!s || !*s) return 0;
+    errno = 0;
+    v = strtol(s, &end, 10);
+    if (errno || !end || *end || v < 0 || v > INT_MAX) return 0;
+    *out = (int)v;
+    return 1;
 }
 
 int za_streqi(const char *a, const char *b) {

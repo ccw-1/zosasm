@@ -171,6 +171,25 @@ ZSrc *zsrc_parse(const uint8_t *b, size_t n) {
 
 uint8_t *zsrc_extract(const GoffModule *m, size_t *len) { return zsym_extract_class(m, ZSRC_CLASS, len); }
 
+void zsrc_free(ZSrc *z) {
+    size_t i, j;
+    if (!z) return;
+    for (i = 0; i < z->blocks.n; i++) {
+        ZSrcBlock *b = z->blocks.v[i];
+        free(b->producer);
+        for (j = 0; j < b->defs.n; j++) free(b->defs.v[j]);
+        free(b->defs.v);
+        for (j = 0; j < b->files.n; j++) {
+            free(b->files.v[j].name);
+            free(b->files.v[j].data);
+        }
+        free(b->files.v);
+        free(b);
+    }
+    free(z->blocks.v);
+    free(z);
+}
+
 void zsrc_dump(const ZSrc *z, FILE *f) {
     size_t bi, i;
     fprintf(f, "ZSRC: %zu block%s", z->blocks.n, z->blocks.n == 1 ? "" : "s");

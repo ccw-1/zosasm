@@ -3,7 +3,7 @@
 A cross assembler for an HLASM-like language that writes z/OS GOFF object
 files. Portable C99; it needs only a C compiler and `make`.
 
-Two workflows are supported:
+Three workflows are supported:
 
 * **Assemble zosasm source** (`.za`) directly into a GOFF object.
 * **Convert existing HLASM source** (`.asm`) to zosasm source with
@@ -36,6 +36,10 @@ Any C99 compiler works (`make CC=clang`). No generator, python or other tool
 is run at build time: the instruction table (`src/isa_tab.c`) and the EBCDIC
 tables (`src/ebcdic_tab.c`) are generated files that are checked in.
 
+`make test` itself needs `python3`, `od`, `seq` and `strings` for the command
+line tests. `make isa-check` and `make ebcdic-check` additionally need
+`python3` and, for the latter, `iconv`; they are run by CI.
+
 ## Converting from HLASM (`hlasm2za`)
 
 `hlasm2za` converts existing HLASM source into zosasm source, so you can
@@ -44,7 +48,7 @@ workflows.
 
 ```sh
 build/hlasm2za old.asm                 # one source file -> old.za
-build/hlasm2za -m -macro-dir sys1.maclib IHASAVER   # one library member
+build/hlasm2za -m sys1.maclib/IHASAVER.mac           # one library member
 build/hlasm2za -macro-dir sys1.maclib -o out_macros  # whole SYS1.MACLIB
 ```
 
@@ -77,11 +81,11 @@ The converter is designed to handle real HLASM macro libraries, not only
 small examples. `make test-maclib` (`ZASM_MACLIB=/path/to/SYS1.MACLIB`)
 converts and compiles a real library. On a local SYS1.MACLIB copy, it:
 
-* converted **2076** macros
+* converted **2080** members and **2214** macros
 * had **0** compile failures
 * had **0** expansion differences (4286 expansions compared)
 * left **0** `#goto` in structured output
-* reported **46** members with no macro definition
+* reported the members that are not assembler macros separately
 
 Guide: `docs/GUIDE.md` section 16; `DESIGN.md` section 16.
 

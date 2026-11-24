@@ -221,7 +221,10 @@ int main(int argc, char **argv) {
         } else if (!strcmp(a, "-relaxed")) {
             o.strict = 0;
         } else if (!strcmp(a, "-w") && i + 1 < argc) {
-            o.width = atoi(argv[++i]);
+            if (!za_parse_int(argv[++i], &o.width)) {
+                fprintf(stderr, "hlasm2za: bad value for -w\n");
+                return 2;
+            }
         } else if (!strcmp(a, "-inc-ext") && i + 1 < argc) {
             o.inc_ext = argv[++i];
         } else if (!strcmp(a, "-m")) {
@@ -253,6 +256,8 @@ int main(int argc, char **argv) {
         }
     }
     if (mdir) {
+        if (in && !quiet)
+            fprintf(stderr, "hlasm2za: -macro-dir converts the whole directory; ignoring the positional input %s\n", in);
         if (!o.copy_dir) o.copy_dir = mdir;
         return macro_dir(mdir, out, &o, quiet);
     }

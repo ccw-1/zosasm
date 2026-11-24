@@ -65,6 +65,78 @@ static uint8_t *all_text(const GoffModule *g, size_t *n) {
     return out;
 }
 
+/* read the complete dump of an object as text */
+static char *dump_text(const GoffModule *g, size_t *len) {
+    FILE *f = tmpfile();
+    char *b;
+    long n;
+    if (!f) return NULL;
+    goff_dump(g, f);
+    fflush(f);
+    n = ftell(f);
+    if (n < 0) { fclose(f); return NULL; }
+    rewind(f);
+    b = xmalloc((size_t)n + 1);
+    if (fread(b, 1, (size_t)n, f) != (size_t)n) { free(b); fclose(f); return NULL; }
+    b[n] = 0;
+    fclose(f);
+    *len = (size_t)n;
+    return b;
+}
+
+static void check_golden(const char *srcpath, const char *dumppath) {
+    size_t sn, gn, en;
+    char *src = read_file(srcpath, &sn);
+    char *got, *want = read_file(dumppath, &en);
+    Reporter *rep = rep_new(0);
+    Module *m;
+    GoffModule *g;
+    uint8_t *obj;
+    char err[256];
+    const char *perr = NULL;
+    CHECK_MSG(src && want, "missing golden file %s or %s", srcpath, dumppath);
+    if (!src || !want) { free(src); free(want); return; }
+    m = asm_assemble_text(srcpath, src, sn, rep);
+    CHECK_MSG(m != NULL, "%s assembly failed", srcpath);
+    obj = m ? module_emit(m, &gn, err, sizeof err) : NULL;
+    CHECK_MSG(obj != NULL, "%s emit: %s", srcpath, obj ? "" : err);
+    g = obj ? goff_parse(obj, gn, &perr) : NULL;
+    CHECK_MSG(g != NULL, "%s parse: %s", srcpath, perr ? perr : "?");
+    got = g ? dump_text(g, &sn) : NULL;
+    CHECK_MSG(got && sn == en && !memcmp(got, want, en), "%s differs from %s", srcpath, dumppath);
+    free(src);
+    free(want);
+    free(got);
+    free(obj);
+}
+
+static void test_golden_files(void) {
+    size_t sn, gn, en;
+    char *src, *want;
+    char err[256];
+    Reporter *rep;
+    Module *m;
+    uint8_t *obj;
+    check_golden("testdata/golden.za", "testdata/golden.dump.txt");
+    check_golden("testdata/golden-rel.za", "testdata/golden-rel.dump.txt");
+    /* ELF64 output: exact bytes (no timestamps in the object) */
+    src = read_file("testdata/golden.za", &sn);
+    want = read_file("testdata/golden.elf", &en);
+    CHECK_MSG(src && want, "missing testdata/golden.elf");
+    if (src && want) {
+        int save = za_ascii;
+        za_ascii = 1; /* -elf implies -ascii */
+        rep = rep_new(0);
+        m = asm_assemble_text("testdata/golden.za", src, sn, rep);
+        obj = m ? module_emit_elf(m, &gn, err, sizeof err) : NULL;
+        CHECK_MSG(obj && gn == en && !memcmp(obj, want, en), "ELF golden differs");
+        free(obj);
+        za_ascii = save;
+    }
+    free(src);
+    free(want);
+}
+
 static void test_structure(void) {
     GoffModule *g = emit_src("PROG     CSECT\n"
                              "PROG     AMODE 31\n"
@@ -340,6 +412,7 @@ int main(void) {
     test_quoted_names();
     test_samples();
     test_golden_goff();
+    test_golden_files();
     test_literal_ltorg();
     test_literal_pool_at_end();
     test_literal_errors();

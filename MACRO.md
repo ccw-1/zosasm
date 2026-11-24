@@ -285,6 +285,8 @@ and `++`/`--` are statements, not expressions.
 | `double(s)`, `quote(s)` | double the `'` and `&` of s; `'s'` with `'` doubled (`DOUBLE`) |
 | `byte(n)`, `chars(s)` | one character of code n (`BYTE`); the list of characters |
 | `split(s, sep)`, `join(list, sep)`, `list(a, b, ...)` | |
+| `fill(n, v)` | a list of `n` copies of `v` (the declared `LCLA &A(n)` array) |
+| `aread()` | the next source record after the macro call, 80 columns, `""` at the end (`AREAD`) |
 | `int(x)`, `str(n)`, `hex(n, digits)`, `bin(n, digits)` | conversions (`D2X`, `X2D`...) |
 | `min`, `max`, `abs` | |
 | `empty(x)`, `defined(name)` | `x == ""`; a variable, parameter, `#define` or macro of that name exists |
@@ -369,9 +371,12 @@ and `++`/`--` are statements, not expressions.
   `&SYSNDX`), `sys.sect` and `sys.sectype` (current control section and its
   kind; `&SYSECT`, `&SYSSTYP`), `sys.macro`, `sys.level` (`&SYSMAC`,
   nesting), `sys.args` (all positional arguments as a list; `&SYSLIST`),
-  `sys.argc`; `__FILE__`, `__LINE__` (the call), `__GOFF__`/`__ELF__`,
-  `__ASCII__`/`__EBCDIC__`, `__AMODE__`/`__RMODE__` (0, 24, 31 or 64: the
-  last `AMODE`/`RMODE` statement read so far) as in the preprocessor.
+  `sys.argc`, `sys.asm` (`"zosasm"`), `sys.ver`, `sys.system_id`,
+  `sys.clock`, `sys.stmt`, `sys.opt_elf`, `sys.opt_strict_registers`,
+  `sys.opt_ascii`, `sys.opt_ebcdic`; `__FILE__`, `__LINE__` (the call),
+  `__GOFF__`/`__ELF__`, `__ASCII__`/`__EBCDIC__`, `__AMODE__`/`__RMODE__`
+  (0, 24, 31 or 64: the last `AMODE`/`RMODE` statement read so far) as in
+  the preprocessor.
 * **Library macros.** An unknown operation code `FOO` is looked up in the
   macro directories (`-M DIR`, repeatable; the `-I` directories last) as
   `foo.zmac`, then `foo.mac`. The file may hold several `#macro`s; those

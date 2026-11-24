@@ -5,7 +5,7 @@
 #include "macro_int.h"
 #include "ebcdic.h"
 
-#define MAX_STR ((size_t)4 << 20)
+#define MAX_STR MA_MAX_STR
 
 /* ---- construction -------------------------------------------------------- */
 
@@ -55,8 +55,14 @@ const char *v_text(MVal v) {
         size_t i;
         buf_putc(&b, '(');
         for (i = 0; i < v.n; i++) {
+            const char *t = v_text(v.items[i]);
+            size_t l = strlen(t);
+            if (b.len + l + 2 > MAX_STR) {
+                buf_puts(&b, "...");
+                break;
+            }
             if (i) buf_putc(&b, ',');
-            buf_puts(&b, v_text(v.items[i]));
+            buf_puts(&b, t);
         }
         buf_putc(&b, ')');
         return xstrdup(buf_cstr(&b));
@@ -359,16 +365,31 @@ static MVal f_split(Ctx *c, MVal *a, int n) {
     return v_list(out.v, out.n);
 }
 
+/* 1 when adding n bytes would exceed the macro string limit (ZA4112) */
+static int nl_guard(Ctx *c, const Buf *b, size_t n, const char *what) {
+    if (b->len > MA_MAX_STR || n > MA_MAX_STR - b->len) {
+        ma_err(c, "ZA4112", "%s: the string is too large", what);
+        return 1;
+    }
+    return 0;
+}
+
 static MVal f_join(Ctx *c, MVal *a, int n) {
     const MVal *it;
     size_t cnt = v_items(a[0], &it), i;
     const char *sep = arg_text(a[1]);
+    size_t sl = strlen(sep);
     Buf b = {0};
-    (void)c;
     (void)n;
     for (i = 0; i < cnt; i++) {
+        const char *t = v_text(it[i]);
+        size_t tl = strlen(t);
+        if (nl_guard(c, &b, (i ? sl : 0) + tl, "join")) {
+            free(b.p);
+            return v_str(xstrdup(""));
+        }
         if (i) buf_puts(&b, sep);
-        buf_puts(&b, v_text(it[i]));
+        buf_puts(&b, t);
     }
     return v_str(xstrdup(buf_cstr(&b)));
 }

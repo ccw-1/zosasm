@@ -31,6 +31,8 @@ char *za_strupper(const char *s); /* new string */
 char *za_strlower(const char *s);
 int za_streqi(const char *a, const char *b);
 int za_strncmpi(const char *a, const char *b, size_t n);
+/* a whole non-negative decimal option value that fits in an int */
+int za_parse_int(const char *s, int *out);
 
 /* Growable byte buffer. buf_cstr() always returns a NUL terminated string. */
 typedef struct {

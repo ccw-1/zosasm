@@ -15,33 +15,38 @@ LIBSRC := $(filter-out src/main.c src/hlasm2za.c src/mcp.c src/zafmt.c,$(wildcar
 OBJ    := $(LIBSRC:src/%.c=build/%.o)
 TESTS  := $(patsubst tests/%.c,build/%,$(wildcard tests/test_*.c))
 
-.PHONY: all test test-maclib test-mcp-asan clean isa isa-check pdf
+.PHONY: all test test-maclib test-mcp-asan test-free-asan clean isa isa-check ebcdic-check pdf
 all: build/zosasm build/hlasm2za build/zafmt build/zosasm-mcp
 
 build:
 	mkdir -p build
 
-build/%.o: src/%.c | build
+# A flag change rebuilds every object: the compiler flags are a dependency.
+build/flags.stamp: | build
+	@printf '%s\n' '$(CC) $(CFLAGS_ALL)' > $@.tmp
+	@if cmp -s $@.tmp $@ 2>/dev/null; then rm -f $@.tmp; else mv $@.tmp $@; fi
+
+build/%.o: src/%.c build/flags.stamp | build
 	$(CC) $(CFLAGS_ALL) -c $< -o $@
 
-build/libzosasm.a: $(OBJ)
-	$(AR) rcs $@ $^
+build/libzosasm.a: $(OBJ) build/flags.stamp
+	$(AR) rcs $@ $(OBJ)
 
-build/zosasm: build/main.o build/libzosasm.a
-	$(CC) $(CFLAGS_ALL) -o $@ $^ -lm
+build/zosasm: build/main.o build/libzosasm.a build/flags.stamp
+	$(CC) $(CFLAGS_ALL) -o $@ build/main.o build/libzosasm.a -lm
 
-build/hlasm2za: build/hlasm2za.o build/libzosasm.a
-	$(CC) $(CFLAGS_ALL) -o $@ $^ -lm
+build/hlasm2za: build/hlasm2za.o build/libzosasm.a build/flags.stamp
+	$(CC) $(CFLAGS_ALL) -o $@ build/hlasm2za.o build/libzosasm.a -lm
 
-build/zafmt: build/zafmt.o build/libzosasm.a
-	$(CC) $(CFLAGS_ALL) -o $@ $^ -lm
+build/zafmt: build/zafmt.o build/libzosasm.a build/flags.stamp
+	$(CC) $(CFLAGS_ALL) -o $@ build/zafmt.o build/libzosasm.a -lm
 
 # the MCP server keeps its own minimal core (mcp.c + util.c): it must never
 # grow assembler state
-build/zosasm-mcp: build/mcp.o build/util.o
-	$(CC) $(CFLAGS_ALL) -o $@ $^ -lm
+build/zosasm-mcp: build/mcp.o build/util.o build/flags.stamp
+	$(CC) $(CFLAGS_ALL) -o $@ build/mcp.o build/util.o -lm
 
-build/test_%: tests/test_%.c build/libzosasm.a
+build/test_%: tests/test_%.c build/libzosasm.a build/flags.stamp
 	$(CC) $(CFLAGS_ALL) -Isrc -MF $(@:%=%.d) -o $@ $< build/libzosasm.a -lm
 
 test: build/zosasm build/hlasm2za build/zafmt build/zosasm-mcp $(TESTS)
@@ -65,6 +70,16 @@ test-mcp-asan: build/zosasm-mcp
 		-fsanitize=address,undefined
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/test_mcp_asan
 
+# library destructor check: asm_free()/rep_free() under ASan/UBSan. Leak
+# detection is off: the assembler pipeline still keeps a few per-pass
+# temporaries (documented in asm.h); this test catches double frees and
+# use-after-free in the destructors, which is what the release fixes.
+test-free-asan: build/zosasm build/libzosasm.a
+	$(CC) $(STD) $(WARN) -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+		-Isrc -I. -o build/test_asm_free_asan tests/test_asm_free.c build/libzosasm.a -lm \
+		-fsanitize=address,undefined
+	ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 ./build/test_asm_free_asan
+
 # regenerate src/isa_tab.c from isa/isa.json (isa.json itself comes from the
 # Principles of Operation: python3 tools/pop2json.py SA22-7832-14.pdf > isa/isa.json)
 isa: build/isagen
@@ -82,6 +97,18 @@ isa-check: build/isagen
 		exit 1; \
 	fi
 	@rm -f build/isa_tab.check
+
+# self-check of the EBCDIC table (needs python3 and iconv; not part of make
+# test so the C-only build stays dependency free)
+ebcdic-check:
+	@python3 tools/genebcdic.py > build/ebcdic_tab.check
+	@if cmp -s build/ebcdic_tab.check src/ebcdic_tab.c; then \
+		echo "ebcdic-check: src/ebcdic_tab.c is in sync with tools/genebcdic.py"; \
+	else \
+		echo "ebcdic-check: src/ebcdic_tab.c differs; run 'python3 tools/genebcdic.py > src/ebcdic_tab.c'"; \
+		rm -f build/ebcdic_tab.check; exit 1; \
+	fi
+	@rm -f build/ebcdic_tab.check
 
 build/isagen: tools/isagen.c src/util.c src/util.h | build
 	$(CC) $(CFLAGS_ALL) -o $@ tools/isagen.c src/util.c

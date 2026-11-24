@@ -23,10 +23,21 @@ def parse(path):
                                len=int(ln), name=name, attrs=attrs)
         elif line.startswith("TXT"):
             m = re.match(r"TXT esd=(\d+) off=(\d+) len=(\d+)\s*(.*)", line)
+            if not m:
+                other.append(line)
+                continue
             e, off, ln, hx = m.groups()
-            txt.setdefault(int(e), []).append((int(off), bytes(int(x, 16) for x in hx.split())))
+            try:
+                data = bytes(int(x, 16) for x in hx.split())
+            except ValueError:
+                other.append(line)
+                continue
+            txt.setdefault(int(e), []).append((int(off), data))
         elif line.startswith("RLD"):
             m = re.match(r"RLD r=(\d+) p=(\d+) off=(\d+) (.*)", line)
+            if not m:
+                other.append(line)
+                continue
             rld.append((int(m.group(1)), int(m.group(2)), int(m.group(3)), m.group(4)))
         elif line.startswith("END") or line.startswith("HDR"):
             other.append(line)

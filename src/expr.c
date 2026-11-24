@@ -406,7 +406,7 @@ static Expr *parse_quoted(EP *p, size_t start, const char *word) {
             e = mk(EX_ATTR, ep_span(p, start));
             e->attr = u;
             e->loc = 1;
-            e->name = "";
+            e->name = xstrdup("");
             return e;
         } else if (p->s[p->pos] == '"') {
             char *nm = quoted_symbol(p);
@@ -566,6 +566,15 @@ static Expr *parse_primary(EP *p) {
         return symbol_expr(p, start, word);
     }
     return ep_fail(p, "ZA1005", p->pos, 1, "unexpected character \"%c\" in expression", c);
+}
+
+void expr_free(Expr *e) {
+    if (!e) return;
+    expr_free(e->l);
+    expr_free(e->r);
+    free(e->name);
+    free(e->qual);
+    free(e);
 }
 
 Expr *parse_expr(Stmt *st, const char *text, int off, Reporter *rep) {

@@ -546,6 +546,10 @@ Zsym *zsym_parse(const uint8_t *b, size_t n) {
                         parse_stmts(&r, cur);
                     if (r.bad) cur->damaged = 1;
                 }
+            } else if (kind != ZK_END) {
+                /* a checksum-valid chunk of a kind this version does not know */
+                z->bad_chunks++;
+                if (cur) cur->damaged = 1;
             } else if (kind == ZK_END) {
                 if (!cur) {
                     z->bad_chunks++;
@@ -614,6 +618,43 @@ static const char *const sym_names[] = {"label", "abs", "rel", "ext", "sect", "d
 static void dump_tmpl(const ZBlock *b, const ZTmpl *t, FILE *f) {
     char *s = zsym_render(b, t);
     fputs(s, f);
+}
+
+static void tmpl_free(ZTmpl *t) {
+    size_t i;
+    for (i = 0; i < t->n; i++) free(t->v[i].text);
+    free(t->v);
+}
+
+void zsym_free(Zsym *z) {
+    size_t i, j;
+    if (!z) return;
+    for (i = 0; i < z->blocks.n; i++) {
+        ZBlock *b = z->blocks.v[i];
+        free(b->producer);
+        for (j = 0; j < b->files.n; j++) free(b->files.v[j]);
+        free(b->files.v);
+        for (j = 0; j < b->scopes.n; j++) {
+            free(b->scopes.v[j].sect);
+            free(b->scopes.v[j].cls);
+        }
+        free(b->scopes.v);
+        for (j = 0; j < b->syms.n; j++) {
+            free(b->syms.v[j].name);
+            free(b->syms.v[j].terms.v);
+        }
+        free(b->syms.v);
+        for (j = 0; j < b->stmts.n; j++) {
+            ZStmt *st = &b->stmts.v[j];
+            tmpl_free(&st->label);
+            free(st->op);
+            tmpl_free(&st->operands);
+        }
+        free(b->stmts.v);
+        free(b);
+    }
+    free(z->blocks.v);
+    free(z);
 }
 
 void zsym_dump(const Zsym *z, FILE *f) {

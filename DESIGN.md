@@ -21,8 +21,9 @@ checked in). The Go version is no longer in the repository (the history was
 squashed to drop GPL-derived table data). Rules for the C code: `-std=c99 -Wall -Wextra
 -pedantic` clean (gcc and clang), no locale dependent functions
 (`za_isalpha`, `za_toupper`, ... in `util.c`), all memory from
-`xmalloc`/`xcalloc` (aborts on failure; the assembler is a short lived
-process and does not free).
+`xmalloc`/`xcalloc` (aborts on failure). The one-shot programs do not free;
+library callers call `asm_free(Module *)` and `rep_free(Reporter *)` after
+each assembly (section 7).
 
 ## 1. Scope
 
@@ -130,7 +131,7 @@ Statement layout, one per line:
 
 ```
  source text
-    |  pp.c (planned)             #include / #define / #if  -> logical lines
+    |  pp.c                       #include / #define / #if  -> logical lines
     v
     |  reader.c                   statements (name, op, operand text, spans)
     v
@@ -147,6 +148,12 @@ Statement layout, one per line:
     v
  object model  ->  emit.c + goff.c writer  ->  .o  (80-byte records)
 ```
+
+The core pipeline is shown above. The complete list of files is longer: the
+macro language (`macro*.c`), the converters (`convert.c`, `mconv.c`,
+`mflow.c`, `mpost.c`), the debug information (`dbg*.c`), the MCP server
+(`mcp.c`), the formatter (`fmt.c`), the listing (`listing.c`), the object
+annotations (`zsym.c`, `zsrc.c`, `lz.c`) and the debug/ELF readers.
 
 Files in `src/`:
 
@@ -328,7 +335,7 @@ as `Q(...)`, `J(...)`, `R(...)` and `CXD`. A DSECT that was used in `Q` comes
 back as a `DXD` (the object is the same). A `B_PRV` class without PRs and
 without a CXD is dropped.
 
-### 4.7 Assembler controls (`src/dirctl.c`)
+### 4.5 Assembler controls (`src/dirctl.c`)
 
 `ACONTROL`, `PUSH`/`POP`, `CEJECT`, `EXITCTL` and `REPRO` live in
 `dirctl.c`. State-changing ones run in both passes (`each()` resets the
@@ -417,7 +424,9 @@ error[ZA2001]: unknown instruction "LGRR"
   macro and `#if` expressions nest at most 200 levels (`ZA4100`, `ZA4030`),
   macro numbers that do not fit in 64 bits are errors, and `diag_closest`
   skips tokens longer than 64 characters (an edit distance against them
-  would dominate the assembly).
+  would dominate the assembly). One DC or bit-length DS may expand to at most
+  64 MiB (`ZA2087`; `ZOSASM_MAX_DC_BYTES` raises the cap), and string or list
+  values in the macro language are capped (`ZA4112`).
 * Suggestions use edit distance against mnemonics, directive names, symbols
   and operand keywords (`CATTR` attributes etc.).
 * `-W` flags select warnings (`-Werror` makes them fatal), `-color`.
@@ -432,14 +441,19 @@ error[ZA2001]: unknown instruction "LGRR"
 
 * `make test`: unit tests per module (`tests/test_*.c`) and command line
   tests (`tests/run_cli_tests.sh`); sanitizers with
-  `CFLAGS="-O1 -g -fsanitize=address,undefined" make test` (leaks are by
-  design: nothing is freed),
+  `CFLAGS="-O1 -g -fsanitize=address,undefined" ASAN_OPTIONS=detect_leaks=0 make test`
+  (the one-shot programs keep process-lifetime allocations; `asm_free()` and
+  `rep_free()` release a Module and a Reporter, and `make test-free-asan`
+  runs the destructor test under ASan/UBSan. A few per-pass parser and
+  operand buffers are still process-lifetime, so a long-lived library caller
+  should use one process per assembly or the CLI/MCP subprocess model),
 * `tests/test_isa_pop.c` assembles about 50 instruction forms of every
   format class and compares the bytes with encodings written out by hand
   from the POP formats (including RXB and the `or` mnemonics), and checks
   the whole table (field overlap, lengths, duplicates),
-* golden files in `testdata/` (planned): source -> expected GOFF dump (`-dump` text),
-  so GOFF structure regressions are visible in review,
+* golden files in `testdata/` (`golden.dump.txt`, `golden-rel.dump.txt`,
+  `golden.elf` and `golden.dbg`): source -> exact `-dump` text or ELF bytes, so GOFF and ELF
+  structure regressions are visible in review,
 * GOFF self-check: every object written by tests is parsed back by
   `goff_parse`, and structural rules are verified (ESD order, parents,
   text inside element length, RLD inside text),
@@ -1041,9 +1055,11 @@ which then go through the same analysis.
 **Left alone, reported.** Macro definitions are commented out (the macro name is
 remembered to report its calls), `COPY X` becomes `#include "x.inc"`, `ISEQ`
 is dropped, conditional assembly statements, `&` variables, sequence
-symbols, unsupported directives (`OPSYN`, `PUSH`, `POP`, `ACONTROL`, `ADATA`,
-`CEJECT`, `EXITCTL`, `REPRO`, `ALIAS`) and unknown operations (macro calls)
-stay as written with a warning. Warnings are sorted by line.
+symbols, the directives the assembler does not implement (`OPSYN`, `ADATA`,
+`REPRO`, `ALIAS`) and unknown operations (macro calls) stay as written with a
+warning. `PUSH`, `POP`, `ACONTROL`, `CEJECT` and `EXITCTL` are passed through
+and work because the assembler implements them (section 4.5). Warnings are
+sorted by line.
 
 **Tests.** `tests/test_convert.c` (layout, columns, continuation, ICTL,
 remarks, registers, relaxed, width, unconverted), `testdata/hlasm/` (fixed
@@ -1340,7 +1356,7 @@ sources are.
 
 **Object comparison** (`tools/oracle_obj.sh`, `tools/oracle_obj.py`, 2026-11-16): the HLASM object is fetched with z-scp and read by `zosasm -dump`, as is ours; the script compares the ESD tree (names path, attributes), text and RLD items structurally. It ignores the extra `B_IDRL` and an empty `B_PRV`, `C_ADATA*`, the class offsets of the HLASM location space (HLASM puts one space over all classes of a section; zosasm's offsets are class relative) and the ED offset stored in A-con and relative-immediate text. Found and fixed: CATTR defaults (`ClassAttr.cattr`), CNOP pad bytes, COM, Q/QY referent CLASS, B_PRV/DXD attributes, owner of a pseudo register (`Section.prv_owner`, `dir_dxd`), `R(local)` ER (`Symbol.r_er`), one-sided AMODE/RMODE, CSECT resume (`Section.text_cur`), LOCTR pieces without padding. The last needs an alignment that depends on the final start of the piece: `asm_assemble_all` repeats the assembly with the starts of the previous run (`Piece.hint`, a map keyed `section\x01class\x01piece`) until all starts agree modulo 4096; after 5 rounds it falls back to doubleword aligned piece starts (`Asm.round8`). A module without a second location counter is assembled once. Diagnostics of the discarded runs are removed with `rep_mark`/`rep_rewind`. ER rule: every `SYM_EXT` becomes an ER in `module_emit`, parent = `Symbol.ext_sect` (section current at the EXTRN/WXTRN), `-dump` shows it, `oracle_obj.py` compares it; the disassembler writes every ER back as EXTRN/WXTRN unless `R(label)` recreates it. `tools/oracle_amb.sh` is the amblist cross-check.
 
-## 20. The source formatter (`zafmt`, `src/fmt.c`, `src/zafmt.c`)
+## 21. The source formatter (`zafmt`, `src/fmt.c`, `src/zafmt.c`)
 
 `za_format(text, len, opts)` (`fmt.h`) works on lines and never changes a token: it splits
 each line into fields the way the real readers do and writes the fields again in columns.
@@ -1371,7 +1387,7 @@ keeps it out of the library objects like `main.c`.
   `testdata/` assemble to the same objects (`__FILE__` aside).
 
 
-## 21. Debug information of `-g` (`src/dbg*.c`, `src/md5.c`)
+## 22. Debug information of `-g` (`src/dbg*.c`, `src/md5.c`)
 
 Aim: what z/OS `/bin/as -g -mgoff` produces, written by a cross assembler, usable by dbx and the
 LLDB port (`CDADwarf.cpp`) after `ld`. The reference outputs were made on pok56 with probes of one

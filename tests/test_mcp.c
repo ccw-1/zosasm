@@ -316,8 +316,10 @@ static void test_requests(void) {
         n += sprintf(big + n, "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\",\"params\":{\"name\":\"zosasm_guide\",\"arguments\":{\"search\":\"");
         while (n < MAX_REQUEST + 50) big[n++] = 'a';
         n += sprintf(big + n, "\"}}}");
+        /* handle() has no line limit (the stdin loop has); the reply must
+         * still be bounded because every field is capped */
         r = rpc(big);
-        CHECK_MSG(strstr(r, "-32600") != NULL || strstr(r, "error") != NULL, "oversized request");
+        CHECK_MSG(strlen(r) < 4u * MAX_TEXT, "a large request gets a bounded reply");
         free(r);
         free(big);
     }

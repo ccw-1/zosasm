@@ -741,14 +741,15 @@ static E parse_prim(XP *p) {
 }
 
 static E parse_un(XP *p) {
+    E v;
     skipb(p);
-    if (p->s[p->i] == '-') {
+    if (p->s[p->i] == '-' || p->s[p->i] == '+') {
+        int neg = p->s[p->i] == '-';
+        if (xp_depth(p)) return dummy_str();
         p->i++;
-        return negate_arith(parse_un(p));
-    }
-    if (p->s[p->i] == '+') {
-        p->i++;
-        return parse_un(p);
+        v = parse_un(p);
+        xp_undepth(p);
+        return neg ? negate_arith(v) : v;
     }
     return parse_prim(p);
 }

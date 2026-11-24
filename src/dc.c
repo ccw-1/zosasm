@@ -1170,13 +1170,14 @@ int dc_values(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, DcVec *vals) {
  * other bit by bit; the last byte is filled with zero bits. */
 typedef struct {
     uint8_t *b;
-    size_t cap, nbits;
+    size_t cap;
+    uint64_t nbits;
 } BitAcc;
 
 static void bits_add(BitAcc *acc, const DcVal *v, int64_t bits, int left) {
     size_t skip = left ? 0 : v->n * 8 - (size_t)bits, i;
-    if (acc->nbits + (size_t)bits > acc->cap * 8) {
-        size_t ncap = (acc->nbits + (size_t)bits) / 8 + 64;
+    if (acc->nbits + (uint64_t)bits > (uint64_t)acc->cap * 8) {
+        size_t ncap = (size_t)((acc->nbits + (uint64_t)bits) / 8 + 64);
         acc->b = xrealloc(acc->b, ncap);
         memset(acc->b + acc->cap, 0, ncap - acc->cap);
         acc->cap = ncap;
@@ -1190,7 +1191,7 @@ static void bits_add(BitAcc *acc, const DcVal *v, int64_t bits, int left) {
 
 /* writes (DC) or skips (DS) the collected fields */
 static void bits_flush(Asm *a, BitAcc *acc, int is_ds) {
-    size_t n = (acc->nbits + 7) / 8;
+    size_t n = (size_t)((acc->nbits + 7) / 8);
     if (n) {
         if (is_ds) {
             asm_advance(a, (int64_t)n);
@@ -1205,6 +1206,13 @@ static void bits_flush(Asm *a, BitAcc *acc, int is_ds) {
     }
     free(acc->b);
     memset(acc, 0, sizeof *acc);
+}
+
+void dc_vec_free(DcVec *v) {
+    size_t i;
+    for (i = 0; i < v->n; i++) free(v->v[i].b);
+    free(v->v);
+    memset(v, 0, sizeof *v);
 }
 
 /* DC and DS */
@@ -1232,6 +1240,7 @@ void dir_dc(Asm *a, Stmt *st) {
                 asm_define_label(a, st, 1, 0);
                 label_done = 1;
             }
+            dc_vec_free(&vals);
             continue;
         }
         if (!sp.bits) bits_flush(a, &acc, is_ds);
@@ -1258,7 +1267,8 @@ void dir_dc(Asm *a, Stmt *st) {
                 diag_help(dc_err(a, st, "ZA2070", sp.off, sp.n,
                                  "a relocatable address cannot have a bit length"),
                           "use a byte length, for example `AL4`");
-                continue;
+                dc_vec_free(&vals);
+            continue;
             }
             if (sp.dup > 0 && vals.n > 0) {
                 uint64_t items = (uint64_t)sp.dup * (uint64_t)vals.n;
@@ -1273,7 +1283,8 @@ void dir_dc(Asm *a, Stmt *st) {
                                      (unsigned long long)bytes,
                                      (long long)ZA_MAX_LOC),
                               "GOFF stores class lengths and text offsets in 32 bits");
-                    continue;
+                    dc_vec_free(&vals);
+            continue;
                 }
                 {
                     uint64_t max_dc = (uint64_t)64 << 20;
@@ -1283,22 +1294,43 @@ void dir_dc(Asm *a, Stmt *st) {
                         unsigned long long v = strtoull(env, &endp, 10);
                         if (endp != env && *endp == 0 && v > 0) max_dc = (uint64_t)v;
                     }
-                    if (!is_ds && bytes > max_dc) {
+                    if (bytes > max_dc) {
                         diag_help(dc_err(a, st, "ZA2087", sp.off, sp.n,
-                                         "DC expansion is too large (%llu bytes); the limit is %llu bytes",
+                                         "DC/DS expansion is too large (%llu bytes); the limit is %llu bytes",
                                          (unsigned long long)bytes, (unsigned long long)max_dc),
                                   "reduce the duplication factor, split the constant, or set ZOSASM_MAX_DC_BYTES");
-                        continue;
+                        dc_vec_free(&vals);
+            continue;
                     }
                 }
             }
+            if (is_ds) {
+                /* nothing is stored: accumulate the bit count only, so a
+                 * large duplication factor cannot allocate the whole image */
+                uint64_t items = (uint64_t)sp.dup * (uint64_t)vals.n;
+                uint64_t bits = items * (uint64_t)sp.bits;
+                if (bits > (uint64_t)ZA_MAX_LOC * 8 ||
+                    acc.nbits > (uint64_t)ZA_MAX_LOC * 8 - bits) {
+                    diag_help(dc_err(a, st, "ZA2087", sp.off, sp.n,
+                                     "DS would need more than %lld bytes of bit storage",
+                                     (long long)ZA_MAX_LOC),
+                              "GOFF stores class lengths and text offsets in 32 bits");
+                    dc_vec_free(&vals);
+            continue;
+                }
+                acc.nbits += bits;
+                dc_vec_free(&vals);
+            continue;
+            }
             for (r = 0; r < sp.dup; r++)
                 for (j = 0; j < vals.n; j++) bits_add(&acc, &vals.v[j], sp.bits, left);
+            dc_vec_free(&vals);
             continue;
         }
         for (j = 0; j < vals.n; j++) total += (int64_t)vals.v[j].n;
         if (sp.dup < 0 || (vals.n != 0 && (uint64_t)sp.dup > (uint64_t)INT64_MAX / (uint64_t)(vals.n ? vals.n : 1))) {
             rep_errorf(a->rep, "ZA2087", st->op_span, "DC duplication factor is too large");
+            dc_vec_free(&vals);
             continue;
         }
         if (sp.dup > 0 && total > 0) {
@@ -1308,10 +1340,11 @@ void dir_dc(Asm *a, Stmt *st) {
                                  "%s would need %llu bytes of storage; the limit for one section is "
                                  "%lld bytes",
                                  is_ds ? "DS" : "DC",
-                                 (unsigned long long)bytes > (unsigned long long)ZA_MAX_LOC ? (unsigned long long)bytes : (unsigned long long)bytes,
+                                 (unsigned long long)bytes,
                                  (long long)ZA_MAX_LOC),
                           "GOFF stores class lengths and text offsets in 32 bits");
-                continue;
+                dc_vec_free(&vals);
+            continue;
             }
             {
                 uint64_t max_dc = (uint64_t)64 << 20;
@@ -1326,12 +1359,14 @@ void dir_dc(Asm *a, Stmt *st) {
                                      "DC expansion is too large (%llu bytes); the limit is %llu bytes",
                                      (unsigned long long)bytes, (unsigned long long)max_dc),
                               "reduce the duplication factor, split the constant, or set ZOSASM_MAX_DC_BYTES");
-                    continue;
+                    dc_vec_free(&vals);
+            continue;
                 }
             }
         }
         if (is_ds) {
             asm_advance(a, total * sp.dup);
+            dc_vec_free(&vals);
             continue;
         }
         for (r = 0; r < sp.dup; r++) {
@@ -1340,6 +1375,7 @@ void dir_dc(Asm *a, Stmt *st) {
                 asm_put_val(a, v);
             }
         }
+        dc_vec_free(&vals);
     }
     bits_flush(a, &acc, is_ds);
 }
@@ -1373,14 +1409,40 @@ void dir_dxd(Asm *a, Stmt *st) {
     for (k = 0; k < ops.n; k++) {
         DcSpec sp;
         DcVec vals = {0};
-        int64_t total = 0, al;
+        uint64_t total = 0, add;
+        int64_t al;
         size_t j;
         if (!dc_parse(a, st, ops.v[k], &sp) || !dc_values(a, st, &sp, 1, &vals)) continue;
         al = sp.has_len ? 1 : dc_alignment(&sp);
         if (al > 1) loc += (al - loc % al) % al;
         if (al > align) align = al;
-        for (j = 0; j < vals.n; j++) total += (int64_t)vals.v[j].n;
-        loc += total * sp.dup;
+        if (sp.dup < 0) continue;
+        for (j = 0; j < vals.n; j++) {
+            uint64_t n = (uint64_t)vals.v[j].n;
+            if (n > (uint64_t)ZA_MAX_LOC || total > (uint64_t)ZA_MAX_LOC - n) {
+                total = (uint64_t)ZA_MAX_LOC + 1;
+                break;
+            }
+            total += n;
+        }
+        if (total > (uint64_t)ZA_MAX_LOC ||
+            (total != 0 && (uint64_t)sp.dup > (uint64_t)ZA_MAX_LOC / total)) {
+            diag_help(dc_err(a, st, "ZA2087", sp.off, sp.n,
+                             "DXD would need more than %lld bytes", (long long)ZA_MAX_LOC),
+                      "the length of an external dummy section is a 32-bit value");
+            st->bad = 1;
+            continue;
+        }
+        add = total * (uint64_t)sp.dup;
+        if ((uint64_t)loc > (uint64_t)ZA_MAX_LOC - add) {
+            diag_help(dc_err(a, st, "ZA2087", sp.off, sp.n,
+                             "DXD would need more than %lld bytes", (long long)ZA_MAX_LOC),
+                      "the length of an external dummy section is a 32-bit value");
+            st->bad = 1;
+            continue;
+        }
+        loc += (int64_t)add;
+        dc_vec_free(&vals);
     }
     if (a->pass != 1 || st->bad) return;
     if (!asm_valid_stmt_name(st)) {

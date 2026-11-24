@@ -6,6 +6,13 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 
 ## Unreleased
 
+Review fixes (2026-11-24): `asm_free()`/`rep_free()` correctness and the
+emitter/parser destructors, `#define` recursion and macro string/list limits,
+`R()` of a LOCTR, `ENTRY` in a DSECT, statements after END, comment lines in
+continuations, `#if`/`DXD` overflow, the CLI output paths (`-o -`,
+`/dev/null`, `-g` aliases, collisions), exact oracle exit statuses, golden
+GOFF/ELF/`.dbg` objects, `make test-free-asan` and `make ebcdic-check`.
+
 ## 0.3.0 - 2026-11-23
 
 * Column anchor `^`: a line whose first non-blank character is `^` is read as if
@@ -44,6 +51,26 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
   The `.dbg` file is now written only with `-gside` (new); `-gdwarf` implies
   `-gside`. dbx still reads the `.dbg` file. LLDB reads the embedded copy first
   (`CDADwarf.cpp`, `locateEmbedded`); not yet verified on z/OS.
+
+* Library memory management: `asm_free(Module *)` and `rep_free(Reporter *)`
+  release a module and a reporter. The one-shot programs still rely on process
+  exit; `make test-free-asan` runs the destructor test under ASan/UBSan.
+* New macro built-ins `sys.asm`, `sys.ver`, `sys.system_id`, `sys.clock`,
+  `sys.stmt` and `sys.opt_elf|strict_registers|ascii|ebcdic`; `fill(n, v)`
+  and `aread()` are documented with the other functions.
+* `-elf` rejects objects with 65535 or more sections instead of truncating
+  section indices. A single `DC` or bit-length `DS` is limited to 64 MiB
+  (`ZA2087`; `ZOSASM_MAX_DC_BYTES` raises the cap).
+* MCP hardening: 16 MB request cap, per-request cleanup (ASan/LSan verified),
+  workspace sandbox for every file name, `ZOSASM_UNRESTRICTED` escape hatch,
+  and a bounded result instead of discarding a whole reply.
+* `make isa-check` verifies that `src/isa_tab.c` matches `isa/isa.json`, and
+  `make ebcdic-check` verifies the EBCDIC tables. Golden GOFF/ELF objects
+  (`testdata/golden*`) pin the emitted bytes.
+* Correctness fixes from the reviews: `R()` of a LOCTR name, `ENTRY` of a
+  DSECT label, statements after `END`, a comment line inside a continuation,
+  `#if` overflow, `DXD` length overflow, and the CLI output paths (`-o -`,
+  `/dev/null`, `-g` aliases, hidden `-l`/`-o` collisions).
 
 ## 0.2.0 - 2026-11-18
 

@@ -115,6 +115,7 @@ static void unknown_op(Asm *a, Stmt *st) {
     if (s) {
         up = za_strupper(s);
         diag_help(d, "did you mean \"%s\"?", up);
+        free(up);
     } else if (!st->name[0] && st->op[0] == '&') {
         diag_help(d, "the macro/conditional-assembly language is not supported");
     }
@@ -130,17 +131,20 @@ static void unknown_op(Asm *a, Stmt *st) {
 void asm_stmt(Asm *a, Stmt *st) {
     size_t n;
     char *up = za_strupper(st->op);
-    char *orig = NULL;
+    char *orig = NULL, *alias = NULL;
     Handler h;
     if (a->opsyn.n > 0) { /* an operation code made by OPSYN */
         const char *al = strmap_get(&a->opsyn, up);
         if (al) {
             if (!*al) {
+                free(up);
                 unknown_op(a, st);
                 return;
             }
             orig = st->op;
-            st->op = xstrdup(al);
+            alias = xstrdup(al);
+            st->op = alias;
+            free(up);
             up = za_strupper(st->op);
         }
     }
@@ -154,6 +158,8 @@ void asm_stmt(Asm *a, Stmt *st) {
         else
             unknown_op(a, st);
     }
+    free(up);
+    free(alias);
     if (orig) st->op = orig;
 }
 
@@ -268,9 +274,12 @@ int asm_ops(Asm *a, Stmt *st, int min, int max, OperandVec *out) {
 Expr *asm_expr(Asm *a, Stmt *st, Operand o) {
     Expr *e;
     if (a->pass != 1) /* pass 2 re-parses silently; errors were found in pass 1 */
-        return parse_expr(st, o.text, o.off, a->scratch);
-    e = parse_expr(st, o.text, o.off, a->rep);
-    if (!e) st->bad = 1;
+        e = parse_expr(st, o.text, o.off, a->scratch);
+    else {
+        e = parse_expr(st, o.text, o.off, a->rep);
+        if (!e) st->bad = 1;
+    }
+    if (e) vec_push(&a->exprs, e);
     return e;
 }
 
@@ -963,7 +972,7 @@ static void list_usings(Asm *a, Stmt *st) {
         if (u->id <= a->using_logged) continue;
         memset(&r, 0, sizeof r);
         r.sp = u->sp;
-        r.label = u->label;
+        r.label = u->label ? xstrdup(u->label) : NULL;
         r.key = u->key;
         r.off = u->off;
         r.lo = u->lo;
@@ -1001,7 +1010,14 @@ static void each(Asm *a) {
         Piece *before = a->cur;
         int64_t loc_before = before ? before->loc : 0;
         if (rep_too_many(a->rep)) return;
-        if (a->ended) break;
+        if (a->ended) {
+            if (a->pass == 1 && !a->ended_warned) {
+                rep_warnf(a->rep, "ZA0013", stmt_span(st),
+                          "statements after END are ignored (the first is here)");
+                a->ended_warned = 1;
+            }
+            break;
+        }
         if (st->bad) continue;
         a->cur_idx = i;
         a->star_len = 0;
@@ -1053,6 +1069,13 @@ static void finish(Asm *a) {
         if (!s || (s->kind != SYM_LABEL && s->kind != SYM_SECT)) {
             rep_errorf(a->rep, "ZA3010", e->sp,
                        "ENTRY symbol \"%s\" is not defined as a label in this module", e->name);
+            continue;
+        }
+        if (s->sect && s->sect->kind == K_DSECT) {
+            diag_help(rep_errorf(a->rep, "ZA3013", e->sp,
+                                 "ENTRY symbol \"%s\" belongs to the DSECT \"%s\"; a DSECT has no "
+                                 "text of its own", e->name, s->sect->name),
+                      "name a label of a CSECT or RSECT");
             continue;
         }
         s->entry = 1;
@@ -1116,6 +1139,8 @@ static void finish(Asm *a) {
         asm_note_ref(a, s, x->st->name_span);
         xa = xmalloc(sizeof *xa);
         *xa = x->attr;
+        xa->reference = x->attr.reference ? xstrdup(x->attr.reference) : NULL;
+        xa->psect = x->attr.psect ? xstrdup(x->attr.psect) : NULL;
         s->xattr = xa;
     }
     if (a->mod->sections.n == 0 && rep_error_count(a->rep) == 0) {
@@ -1190,28 +1215,99 @@ static void strmap_free_contents(StrMap *m) {
     free(m);
 }
 
+static void asm_free_stmt(Stmt *st);
+void asm_free(Module *m);
+
+/* Release the assembly state. keep_module keeps the Module (and the
+ * statements it owns) for the caller; everything else belongs to the state. */
+static void asm_state_free(Asm *a, int keep_module) {
+    size_t i;
+    if (!a) return;
+    for (i = 0; i < a->exprs.n; i++) expr_free(a->exprs.v[i]);
+    free(a->exprs.v);
+    for (i = 0; i < a->using_labels.n; i++) free(a->using_labels.v[i]);
+    free(a->using_labels.v);
+    for (i = 0; i < a->xattrs.n; i++) {
+        XattrStmt *x = a->xattrs.v[i];
+        free(x->name);
+        free(x->attr.reference);
+        free(x->attr.psect);
+        free(x);
+    }
+    free(a->xattrs.v);
+    for (i = 0; i < a->entries.n; i++) free(a->entries.v[i].name);
+    free(a->entries.v);
+    for (i = 0; i < a->symmodes.n; i++) free(a->symmodes.v[i].name);
+    free(a->symmodes.v);
+    for (i = 0; i < a->xdrefs.n; i++) free(a->xdrefs.v[i].name);
+    free(a->xdrefs.v);
+    free(a->fuses.v);
+    for (i = 0; i < a->pools.n; i++) {
+        LitPool *p = a->pools.v[i];
+        size_t j;
+        for (j = 0; j < p->lits.n; j++) {
+            Literal *l = p->lits.v[j];
+            free(l->key);
+            free(l->shown);
+            free(l->name);
+            free(l);
+        }
+        free(p->lits.v);
+        for (j = 0; j < p->by_key.cap; j++) free(p->by_key.keys[j]);
+        free(p->by_key.keys);
+        free(p->by_key.vals);
+        free(p);
+    }
+    free(a->pools.v);
+    for (i = 0; i < a->secs.cap; i++) free(a->secs.keys[i]);
+    free(a->secs.keys);
+    free(a->secs.vals);
+    for (i = 0; i < a->opsyn.cap; i++) {
+        free(a->opsyn.keys[i]);
+        free(a->opsyn.vals[i]);
+    }
+    free(a->opsyn.keys);
+    free(a->opsyn.vals);
+    free(a->usings.v);
+    for (i = 0; i < a->using_stack.n; i++) free(a->using_stack.v[i].v);
+    free(a->using_stack.v);
+    free(a->ac_stack.v);
+    if (a->end_entry && (!a->mod || a->mod->entry != a->end_entry)) free(a->end_entry);
+    rep_free(a->scratch);
+    if (!keep_module) asm_free(a->mod);
+    free(a);
+}
+
 Module *asm_assemble_all(const SrcLine *lines, size_t n, const char *name, Reporter *rep) {
     StrMap *hints = NULL;
     size_t mark = rep_mark(rep);
-    int it;
+    int it, settled = 0;
     Asm *last_a = NULL;
     for (it = 0; it < 5; it++) {
         Asm *a = assemble_once(lines, n, name, rep, hints, 0);
-        int settled;
         StrMap *h = piece_starts(a->mod, &settled);
-        last_a = a;
-        if (settled || rep_too_many(rep)) {
+        if (hints) {
+            strmap_free_contents(hints);
+            hints = NULL;
+        }
+        if (settled || rep_too_many(rep) || it == 4) {
+            if (!settled && !rep_too_many(rep))
+                rep_errorf(rep, "ZA9002", span_make(name, 0, 0, 0),
+                           "the LOCTR layout did not settle after five passes");
             strmap_free_contents(h);
+            last_a = a;
             break;
         }
         hints = h;
         rep_rewind(rep, mark);
+        /* the next pass only needs the piece starts; release this module now */
+        asm_state_free(a, 0);
     }
-    if (!last_a) last_a = assemble_once(lines, n, name, rep, NULL, 1);
-    Module *m = last_a->mod;
-    /* Asm is intentionally not freed here; asm_free(Module *)
-     * releases everything the module owns. */
-    return m;
+    {
+        Module *m = last_a ? last_a->mod : NULL;
+        if (last_a) asm_state_free(last_a, 1);
+        return m;
+    }
 }
 
 Module *asm_assemble(const SrcLine *lines, size_t n, const char *name, Reporter *rep) {
@@ -1221,9 +1317,14 @@ Module *asm_assemble(const SrcLine *lines, size_t n, const char *name, Reporter 
 
 Module *asm_assemble_text(const char *file, const char *text, size_t len, Reporter *rep) {
     SrcVec lines = {0};
+    Module *m;
     rep_add_source(rep, file, text, len);
     src_split(&lines, file, text, len);
-    return asm_assemble(lines.v, lines.n, file, rep);
+    m = asm_assemble(lines.v, lines.n, file, rep);
+    /* src_split keeps every line in one buffer */
+    if (lines.n) free((char *)lines.v[0].text);
+    free(lines.v);
+    return m;
 }
 
 /* ---- goff attribute helpers --------------------------------------------- */
@@ -1265,14 +1366,14 @@ int rmode_byte(const char *s, uint8_t *out) {
 /* ---- memory ownership ------------------------------------------------- */
 
 static void asm_free_symbol(Symbol *s) {
-    size_t i;
     free(s->name);
     if (s->xattr) {
         free(s->xattr->reference);
         free(s->xattr->psect);
         free(s->xattr);
     }
-    for (i = 0; i < s->refs.n; i++) free((char *)s->refs.v[i].file);
+    /* refs.v[i].file is borrowed from the caller (the Module does not own
+     * source file names), so only the vector is released here. */
     free(s->refs.v);
     free(s);
 }
@@ -1345,8 +1446,9 @@ void asm_free(Module *m) {
     free(m->zdefs.v);
     for (i = 0; i < m->stmts.n; i++) asm_free_stmt(m->stmts.v[i]);
     free(m->stmts.v);
-    /* LitRec.key shares the pointer with Literal.key/shown (freed when the
-     * Asm state is discarded); do not free it again here. */
+    for (i = 0; i < m->synth.n; i++) asm_free_stmt(m->synth.v[i]);
+    free(m->synth.v);
+    for (i = 0; i < m->lits.n; i++) free(m->lits.v[i].key);
     free(m->lits.v);
     for (i = 0; i < m->usings.n; i++) asm_free_using_rec(&m->usings.v[i]);
     free(m->usings.v);

@@ -34,16 +34,16 @@ Status key: [x] done, [-] in progress, [ ] open.
 
 ## Phase 2 - GOFF completeness
 
-- [ ] `CATTR`: ALIGN, RMODE, EXECUTABLE/NOTEXECUTABLE, READONLY, LOAD/NOLOAD/
+- [x] `CATTR`: ALIGN, RMODE, EXECUTABLE/NOTEXECUTABLE, READONLY, LOAD/NOLOAD/
       DEFLOAD, FILL, PART, PRIORITY, MERGE/CAT binding
-- [ ] `XATTR`: LINKAGE(OS|XPLINK), SCOPE(SECTION|MODULE|LIBRARY|EXPORT|IMPORT),
-      REFERENCE(CODE|DATA), DATAREFERENCE, PSECT, DEFLOAD, ...
-- [x] `ACONTROL`, `PUSH`/`POP`, `CEJECT`, `EXITCTL`, `REPRO`, `-diag json`, listing carets (DESIGN.md 4.7, 6, 15)
+- [x] `XATTR`: LINKAGE(OS|XPLINK), SCOPE(SECTION|MODULE|LIBRARY|EXPORT|IMPORT),
+      REFERENCE(CODE|DATA), DATAREFERENCE, PSECT, DEFLOAD, ... (ATTRIBUTES output open)
+- [x] `ACONTROL`, `PUSH`/`POP`, `CEJECT`, `EXITCTL`, `REPRO`, `-diag json`, listing carets (DESIGN.md 4.5, 6, 15)
 - [x] quoted symbols `"any name"` replace HLASM `ALIAS` (DESIGN.md 2; `-disasm` uses them)
 - [x] `DXD`/`CXD`, `Q`/`J`/`R` constants, `REFERENCE(...,INDIRECT)` (DESIGN.md 4.4; RLD encodings unverified)
 - [ ] `COM` details, deferred lengths (LEN record), XATTR `ATTRIBUTES`/`PSECT` output,
       XPLINK call descriptors, `B_IDRL` ident record
-- [ ] END with entry point by name / ESDID+offset
+- [x] END with entry point by name / ESDID+offset
 
 ## Phase 2b - proposals awaiting decisions
 
@@ -56,7 +56,7 @@ Status key: [x] done, [-] in progress, [ ] open.
 - [x] scale/exponent modifiers, CU, CCW/CCW0/CCW1, decimal float, rounding modes and special
       values (DESIGN.md 13; not checked against IBM `as` yet)
 - [x] `A(X-Y)` (RLD SUB items, also in `-disasm`; not checked against IBM `as` yet)
-- [ ] bit-length modifiers (`L.n`)
+- [x] bit-length modifiers (`L.n`)
 
 ## Phase 3 - quality
 
@@ -64,19 +64,20 @@ Status key: [x] done, [-] in progress, [ ] open.
 
 - [ ] register pair checks (even-odd GPR pairs, floating-point extended
       pairs) derived from the POP prose; the table has no pair information
-- [ ] `-diag-format=json`, warning classes, `-Werror`
+- [x] `-diag-format=json`, `-Werror` (warning classes open)
 - [x] listing file (`-l`), symbol cross reference (DESIGN.md 15)
 - [x] HLASM source -> zosasm source converter `hlasm2za` (DESIGN.md 16; macros and open-code conditional assembly are converted, `COPY` members are not)
-- [x] source formatter `zafmt` (guide chapter 20, DESIGN.md 20)
+- [x] source formatter `zafmt` (guide chapter 20, DESIGN.md 21)
 - [x] ELF64 output for Linux on Z (`-elf`, `-ascii`, `-charset`; DESIGN.md 17; checked with binutils, not run on a machine)
 - [x] MCP server `zosasm-mcp` for AI agents (tools, guide as resource; guide 18, DESIGN.md 18)
 - [x] macro language M1 (C-like braces, `&` substitution, `-M` library, guide 19; MACRO.md, DESIGN.md 19; not compared with HLASM)
-- [x] `hlasm2za` conversion of MACRO..MEND to `.zmac` with structure recovery (MACRO.md C1, sections 10 and 12), `-flat`, `-macro-dir`, `make test-maclib` (DESIGN.md 16.1; open: `#switch`/`#for`, `else if`, COPY/AREAD/PUNCH/AINSERT/OPSYN in macros)
+- [x] `hlasm2za` conversion of MACRO..MEND to `.zmac` with structure recovery (MACRO.md C1, sections 10 and 12), `-flat`, `-macro-dir`, `make test-maclib` (DESIGN.md 16.1; the macro forms of COPY/AREAD/PUNCH/AINSERT/OPSYN are converted; other system macros still need a library)
 - [x] MCP: restrict `path`/`output` to a workspace (the server directory;
       `ZOSASM_UNRESTRICTED` lifts the limit; DESIGN.md 18). Open: MCP prompts
-- [ ] ELF: 31-bit class, debug information, run under qemu-s390x
+- [x] ELF: debug information (DWARF in `.debug_*`, `readelf`/`ld`/`gdb` under qemu-s390x)
+- [ ] ELF: 31-bit class, run under qemu-s390x
 - [ ] `hlasm2za`: macro expansion of common IBM macros (`SAVE`, `RETURN`, `WTO`...), `EQUREGS`, DC forms zosasm lacks
-- [ ] golden tests, fuzzing of the reader/expression parser
+- [x] golden tests (`golden.dump.txt`, `golden-rel.dump.txt`, `golden.elf` and `golden.dbg`), fuzzing of the reader/expression parser
 - [ ] documentation of every directive in `docs/`
 - [ ] (macro language: covered by the preprocessor, see Phase 1)
 

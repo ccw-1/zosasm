@@ -58,6 +58,7 @@ uint8_t *zsrc_build(Module *m, size_t *len);
  * whose data does not decompress or does not match its checksum are counted
  * (bad_chunks / damaged) and left out. */
 ZSrc *zsrc_parse(const uint8_t *b, size_t n);
+void zsrc_free(ZSrc *z);
 /* the concatenated text of the class C_ADATAE9C2, or NULL when absent */
 uint8_t *zsrc_extract(const GoffModule *m, size_t *len);
 void zsrc_dump(const ZSrc *z, FILE *f);

@@ -395,6 +395,19 @@ static int blank_line(const char *s) {
     return 1;
 }
 
+/* Skip comment records (* or ; in column 1, after a '^' anchor) in a
+ * continuation. Returns s unchanged when it does not start with one. */
+static const char *skip_comment_records(const char *s) {
+    for (;;) {
+        const char *r = caret_rest(s);
+        const char *nl;
+        if (r[0] != '*' && r[0] != ';') return s;
+        nl = strchr(s, '\n');
+        if (!nl) return s;
+        s = nl + 1;
+    }
+}
+
 void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep) {
     size_t i;
     for (i = 0; i < n; i++) {
@@ -466,6 +479,9 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
                       "an operation (instruction or directive) must follow the name; labels need "
                       "to start in column 1 and the operation must be separated by blanks");
             st->bad = 1;
+            /* asm_free_stmt() frees these; a bare "" literal is not ours */
+            st->operands = xstrdup("");
+            st->remark = xstrdup("");
             vec_push(out, st);
             continue;
         }
@@ -531,7 +547,7 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
                 nl = strchr(cur, '\n');
                 if (nl) {
                     free(seg);
-                    cur = nl + 1;
+                    cur = skip_comment_records(nl + 1);
                     cur_pseg++;
                     cur_ln = (plines && cur_pseg < nplines) ? plines[cur_pseg] : ln;
                     p = 0; co = 0;
@@ -546,6 +562,17 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
                 if (!st->bad && i + 1 < n) {
                     free(seg);
                     i++;
+                    while (i < n) {
+                        const char *r = caret_rest(lines[i].text);
+                        if (r[0] != '*' && r[0] != ';') break;
+                        i++;
+                    }
+                    if (i >= n) {
+                        rep_errorf(rep, "ZA0003", span_make(file, cur_ln, 1, 1),
+                                   "the previous line ends with a comma but the continuation line is missing");
+                        st->bad = 1;
+                        break;
+                    }
                     cur = lines[i].text;
                     cur_ln = lines[i].line;
                     plines = lines[i].plines;
@@ -570,6 +597,7 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
             break;
         }
         st->operands = xstrdup(buf_cstr(&ops));
+        free(ops.p);
         st->segs = segs.v;
         st->nsegs = (int)segs.n;
         /* REPRO: the record that follows is data, not a statement */

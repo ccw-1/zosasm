@@ -107,18 +107,21 @@ def main():
     drop = lambda e: re.match(r'(T\s+CSECT|DS\s+0H|END|PRINT.*)$', e[-1] if len(e) == 2 else e[2], re.I)
     hl = [e for e in hl if not drop(e)]
     zl = [e for e in zl if not drop(e)]
+    same = diff = herr = 0
     if len(hl) != len(zl):
         print('statement counts differ: hlasm %d zosasm %d' % (len(hl), len(zl)))
-    same = diff = herr = 0
+        diff += abs(len(hl) - len(zl))
     for (obj, msgs, src), (zo, zsrc) in zip(hl, zl):
         if norm(src) != norm(zsrc):
             print('SOURCE MISMATCH %r / %r' % (src, zsrc))
+            diff += 1
             break
         errs = [m for m in msgs if re.match(r'ASMA\d+[ESC]', m)]
         if errs:
             herr += 1
             print('hlasm-error  %s   [zosasm %s]  %s' % (src, zo, '; '.join(errs)))
-        elif zo != obj and not (obj.startswith(zo) and not obj[len(zo):].strip('0')):
+        elif zo != obj and not (obj.startswith(zo) and len(obj) - len(zo) <= 8 and
+                                not obj[len(zo):].strip('0')):
             diff += 1
             print('DIFF  %s   hlasm=%s zosasm=%s %s' % (src, obj, zo, '; '.join(msgs)))
         else:

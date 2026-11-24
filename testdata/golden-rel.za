@@ -1,0 +1,10 @@
+* Golden object: literal pool, external references and relocations.
+T        CSECT
+         EXTRN EXT
+         USING *,15
+         L     2,=A(EXT)
+         DC    A(EXT)
+         DC    V(EXT)
+         DC    R(EXT)
+         DC    X'0102'
+         END

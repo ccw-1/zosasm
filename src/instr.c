@@ -523,6 +523,7 @@ void dir_using(Asm *a, Stmt *st) {
         Using u;
         memset(&u, 0, sizeof u);
         u.label = st->name[0] ? xstrdup(st->name) : NULL;
+        if (u.label) vec_push(&a->using_labels, u.label);
         u.key = key;
         u.off = off;
         u.lo = lo;
@@ -549,6 +550,7 @@ void dir_using(Asm *a, Stmt *st) {
             using_compact(a);
         }
         u.label = st->name[0] ? xstrdup(st->name) : NULL;
+        if (u.label) vec_push(&a->using_labels, u.label);
         u.key = key;
         u.off = off + (int64_t)i * 4096;
         u.lo = lo;

@@ -24,8 +24,14 @@ mkdir -p "$out"
 if [ -z "$ZORACLE_REUSE" ] || [ ! -s "$out/$name.tsv" ]; then
 "$zscp" "$src" "$host:$dir/$name.asm" > /dev/null
 "$zscp" "$here/oracle_cmp.py" "$host:$dir/oracle_cmp.py" > /dev/null
-ssh -o BatchMode=yes "$host" "$envc; cd $dir; rm -f $name.lst $name.o; as -mgoff -a=$name.lst -o $name.o $name.asm > $name.as.out 2>&1; python3 oracle_cmp.py --digest cp1047 $name.lst > $name.tsv" || true
+if ! ssh -o BatchMode=yes "$host" "$envc; cd $dir; rm -f $name.lst $name.o; as -mgoff -a=$name.lst -o $name.o $name.asm > $name.as.out 2>&1; python3 oracle_cmp.py --digest cp1047 $name.lst > $name.tsv"; then
+    echo "oracle.sh: HLASM on $host failed for $name" >&2
+    exit 1
+fi
 ssh -o BatchMode=yes "$host" "$envc; cat $dir/$name.tsv" > "$out/$name.tsv"
 fi
 "$here/../build/zosasm" -max-errors 0 -ldata -l "$out/$name.zlst" -o "$out/$name.zo" "$src" > "$out/$name.zerr" 2>&1 || true
-python3 "$here/oracle_cmp.py" "$out/$name.tsv" "$out/$name.zlst" | tee "$out/$name.cmp"
+rc=0
+python3 "$here/oracle_cmp.py" "$out/$name.tsv" "$out/$name.zlst" > "$out/$name.cmp" || rc=$?
+cat "$out/$name.cmp"
+exit "$rc"

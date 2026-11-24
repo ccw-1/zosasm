@@ -84,9 +84,17 @@ int module_validate(const Module *m, char *err, size_t errsz) {
         const char *e_ = (call);                                   \
         if (e_) {                                                  \
             snprintf(err, errsz, "%s", e_);                        \
-            return NULL;                                           \
+            goto fail;                                             \
         }                                                          \
     } while (0)
+
+/* write an ESD and release the name it carries (the writer copies it) */
+static const char *put_esd(GoffWriter *w, GoffESD *e) {
+    const char *r = goff_write_esd(w, e);
+    free(e->name);
+    e->name = NULL;
+    return r;
+}
 
 static const char *emit_class(GoffWriter *w, const Module *m, Section *s, Class *c) {
     uint8_t rmode = c->attr.rmode == CLASS_RMODE_NONE ? 0 : c->attr.rmode ? c->attr.rmode : s->rmode;
@@ -124,7 +132,7 @@ static const char *emit_class(GoffWriter *w, const Module *m, Section *s, Class 
         ed.length = 0;
         ed.name_space = GOFF_NS_PARTS3;
     }
-    if ((e = goff_write_esd(w, &ed)) != NULL) return e;
+    if ((e = put_esd(w, &ed)) != NULL) return e;
     c->esd = ed.id;
     if (!c->part) return NULL;
 
@@ -144,7 +152,7 @@ static const char *emit_class(GoffWriter *w, const Module *m, Section *s, Class 
     pr.attr.alignment = align;
     if (c->attr.priority >= 0) pr.priority = (uint32_t)c->attr.priority;
     apply_xattr(&pr.attr, xattr_of(m, c->part));
-    if ((e = goff_write_esd(w, &pr)) != NULL) return e;
+    if ((e = put_esd(w, &pr)) != NULL) return e;
     c->pr = pr.id;
     return NULL;
 }
@@ -164,7 +172,7 @@ static const char *emit_prv(GoffWriter *w, const Module *m, Section *s) {
     ed.attr.bind_algorithm = GOFF_BIND_MERGE;
     ed.attr.loading = GOFF_NOLOAD;
     ed.attr.alignment = GOFF_ALIGN_DBL;
-    if ((e = goff_write_esd(w, &ed)) != NULL) return e;
+    if ((e = put_esd(w, &ed)) != NULL) return e;
     s->prv_esd = ed.id;
     for (i = 0; i < m->sym_order.n; i++) {
         Symbol *sym = m->sym_order.v[i];
@@ -182,7 +190,7 @@ static const char *emit_prv(GoffWriter *w, const Module *m, Section *s) {
         pr.attr.bind_strength = GOFF_STRENGTH_WEAK;
         pr.attr.alignment = lg;
         apply_xattr(&pr.attr, sym->xattr);
-        if ((e = goff_write_esd(w, &pr)) != NULL) return e;
+        if ((e = put_esd(w, &pr)) != NULL) return e;
         sym->esd = pr.id;
     }
     return NULL;
@@ -261,7 +269,9 @@ static int reloc_xd(const Class *c, const Reloc *r, GoffReloc *g, char *err, siz
         }
         return 1;
     default: /* REL_R */
-        g->rid = t->kind == SYM_EXT ? t->esd : t->ld_esd ? t->r_er : 0;
+        /* every R-type target gets an ER above; it is the R-ID, also for a
+         * LOCTR name that never receives an LD of its own (IBM HLASM) */
+        g->rid = t->kind == SYM_EXT ? t->esd : t->r_er ? t->r_er : t->ld_esd;
         if (!g->rid) {
             snprintf(err, errsz, "R-type constant: \"%s\" has no label definition", t->name);
             return 0;
@@ -362,7 +372,8 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
     GoffEnd end;
     size_t si, ci, i, k;
     const uint8_t *out;
-    uint8_t *copy, *adata[2];
+    uint8_t *copy, *adata[2] = {NULL, NULL};
+    memset(&end, 0, sizeof end);
     size_t alen[2] = {0, 0};
     uint32_t aesd[2] = {0, 0};
 
@@ -370,9 +381,9 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
         if (m->sections.v[si]->kind != K_DSECT) vec_push(&secs, m->sections.v[si]);
     if (secs.n == 0) {
         snprintf(err, errsz, "no control section to emit");
-        return NULL;
+        goto fail;
     }
-    if (!module_validate(m, err, errsz)) return NULL;
+    if (!module_validate(m, err, errsz)) goto fail;
 
     /* external references: one ER per symbol, below the first section using it */
 #define NOTE(SYM, SECT) NOTE_IF(SYM, SECT, sym_->kind == SYM_EXT)
@@ -426,7 +437,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
         sd.name_space = GOFF_NS_NORMAL;
         set_name(&sd, sect_name(s));
         sd.attr.common = s->kind == K_COM;
-        TRY(goff_write_esd(w, &sd));
+        TRY(put_esd(w, &sd));
         s->esd = sd.id;
         for (ci = 0; ci < s->classes.n; ci++) TRY(emit_class(w, m, s, s->classes.v[ci]));
         if (s->prv) TRY(emit_prv(w, m, s));
@@ -437,7 +448,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
             Symbol *sym;
             init_ld(&ld, s, s->name, s->classes.v[0], 1);
             apply_xattr(&ld.attr, xattr_of(m, s->name));
-            TRY(goff_write_esd(w, &ld));
+            TRY(put_esd(w, &ld));
             sym = module_symbol(m, s->name);
             if (sym) sym->ld_esd = ld.id;
         }
@@ -468,7 +479,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
                 }
                 ld.offset = (uint32_t)ek[i].off;
                 apply_xattr(&ld.attr, sym->xattr);
-                TRY(goff_write_esd(w, &ld));
+                TRY(put_esd(w, &ld));
                 sym->ld_esd = ld.id;
             }
             free(ek);
@@ -484,7 +495,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
             er.name_space = GOFF_NS_NORMAL;
             if (sym->weak) er.attr.bind_strength = GOFF_STRENGTH_WEAK;
             apply_xattr(&er.attr, sym->xattr);
-            TRY(goff_write_esd(w, &er));
+            TRY(put_esd(w, &er));
             if (sym->kind == SYM_EXT)
                 sym->esd = er.id;
             else
@@ -509,7 +520,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
         ed.attr.text_style = GOFF_STYLE_UNSTRUCTURED;
         ed.attr.bind_algorithm = GOFF_BIND_CAT;
         ed.attr.loading = GOFF_NOLOAD;
-        TRY(goff_write_esd(w, &ed));
+        TRY(put_esd(w, &ed));
         aesd[k] = ed.id;
     }
 
@@ -569,5 +580,23 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
     TRY(goff_write_end(w, &end, &out, len));
     copy = xmalloc(*len + 1);
     memcpy(copy, out, *len);
+    free(adata[0]);
+    free(adata[1]);
+    free(secs.v);
+    free(er_order.v);
+    free(er_parent.v);
+    free(end.name);
+    goff_writer_free(w);
     return copy;
+
+fail:
+    free(rlds);
+    free(adata[0]);
+    free(adata[1]);
+    free(secs.v);
+    free(er_order.v);
+    free(er_parent.v);
+    free(end.name);
+    goff_writer_free(w);
+    return NULL;
 }

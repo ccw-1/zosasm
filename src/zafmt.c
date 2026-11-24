@@ -99,13 +99,13 @@ int main(int argc, char **argv) {
         } else if (!strcmp(a, "-o") && i + 1 < argc) {
             out = argv[++i];
         } else if (!strcmp(a, "-op") && i + 1 < argc) {
-            o.op_col = atoi(argv[++i]);
+            if (!za_parse_int(argv[++i], &o.op_col)) goto bad_num;
         } else if (!strcmp(a, "-remark") && i + 1 < argc) {
-            o.remark_col = atoi(argv[++i]);
+            if (!za_parse_int(argv[++i], &o.remark_col)) goto bad_num;
         } else if (!strcmp(a, "-indent") && i + 1 < argc) {
-            o.indent = atoi(argv[++i]);
+            if (!za_parse_int(argv[++i], &o.indent)) goto bad_num;
         } else if (!strcmp(a, "-blank") && i + 1 < argc) {
-            o.max_blank = atoi(argv[++i]);
+            if (!za_parse_int(argv[++i], &o.max_blank)) goto bad_num;
         } else if (a[0] == '-' && a[1]) {
             fprintf(stderr, "zafmt: unknown option %s\n", argv[i]);
             usage(stderr);
@@ -114,6 +114,11 @@ int main(int argc, char **argv) {
             vec_push(&in, argv[i]);
         }
     }
+    goto parsed;
+bad_num:
+    fprintf(stderr, "zafmt: bad numeric option value\n");
+    return 2;
+parsed:
     if (o.op_col < 2 || o.op_col > 40 || o.remark_col < o.op_col + 7 || o.remark_col > 200 || o.indent < 0 ||
         o.indent > 16 || o.max_blank < 0) {
         fprintf(stderr, "zafmt: bad column option (-op 2..40, -remark at least -op + 7)\n");

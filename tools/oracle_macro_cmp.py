@@ -21,3 +21,4 @@ for l in open(m+'.zexp',encoding='latin1'):
 print(m,'hlasm',len(h),'zosasm',len(z))
 d=list(difflib.unified_diff(h,z,lineterm='',n=1))
 print(len(d),'diff lines'); print('\n'.join(d[:40]))
+sys.exit(1 if d or len(h)!=len(z) else 0)

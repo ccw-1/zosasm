@@ -92,6 +92,7 @@ struct MacSys {
     Reporter *rep;
     MacHost host;
     long step_limit, steps;
+    uint64_t list_work; /* elements copied by list assignment in this expansion */
     int elf;
     StrMap macros; /* upper case name -> Macro */
     StrMap globals; /* lower case name -> MVal */
@@ -1675,6 +1676,12 @@ static MVal set_path(Ctx *c, MVal base, MVal *idx, int k, int nidx, MVal nv) {
         return base;
     }
     nn = (size_t)at + 1 > n ? (size_t)at + 1 : n;
+    if (c->ms->list_work > 8u * 1024u * 1024u ||
+        nn > 8u * 1024u * 1024u - c->ms->list_work) {
+        ma_err(c, "ZA4112", "list assignment is too large (index %lld)", (long long)at);
+        return base;
+    }
+    c->ms->list_work += nn;
     a = xcalloc(nn * sizeof *a);
     for (i = 0; i < nn; i++) a[i] = i < n ? it[i] : v_str("");
     a[at] = k + 1 == nidx ? nv : set_path(c, a[at], idx, k + 1, nidx, nv);
@@ -1937,6 +1944,7 @@ void mac_call(MacSys *ms, const char *op, const char *label, Span callsite, char
     if (!m || ms->aborted) return;
     if (ms->depth == 0) {
         ms->steps = 0;
+        ms->list_work = 0;
         ms->aborted = 0;
     }
     if (ms->depth >= MAX_DEPTH) {

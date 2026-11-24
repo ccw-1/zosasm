@@ -93,6 +93,7 @@ def main():
                 disf.write('%s | hlasm=%s zosasm=%s | %s\n' % (rec, obj, zo, s))
         sys.stderr.write('chunk %d done\n' % (c // chunk))
     print('%d statements, %d disagreements' % (nstat, ndis))
+    return 1 if ndis else 0
 
 
-main()
+sys.exit(main())

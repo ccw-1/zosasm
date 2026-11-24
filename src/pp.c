@@ -46,6 +46,7 @@ typedef struct {
     const char *file; /* file being read */
     int line;         /* its current logical line */
     int depth;
+    int expand_depth; /* nesting of #define expansion (ZA4042) */
     /* state of the line being expanded */
     Span use;
     const Macro *first;
@@ -326,6 +327,13 @@ static char *substitute(const Macro *m, char **raw, char **exp) {
 static char *expand(Pp *pp, const char *s, const Active *act) {
     Buf out = {0};
     size_t i = 0, n = strlen(s);
+    if (pp->expand_depth >= 200) {
+        if (!pp->too_big)
+            rep_errorf(pp->rep, "ZA4042", pp->use, "macro expansion nested too deeply");
+        pp->too_big = 1;
+        return xstrdup("");
+    }
+    pp->expand_depth++;
     while (i < n && !pp->too_big) {
         unsigned char c = (unsigned char)s[i];
         if (c == '\'') {
@@ -429,7 +437,11 @@ static char *expand(Pp *pp, const char *s, const Active *act) {
         }
     }
     if (pp->too_big && i < n) buf_puts(&out, s + i);
-    return xstrdup(buf_cstr(&out));
+    {
+        char *r = xstrdup(buf_cstr(&out));
+        pp->expand_depth--;
+        return r;
+    }
 }
 
 /* ---- macro definition -------------------------------------------------- */
@@ -589,7 +601,7 @@ static int64_t ev_unary(Ev *e) {
     case '-':
         e->i++;
         if (ev_deep(e)) return 0;
-        v = -ev_unary(e);
+        v = (int64_t)(0 - (uint64_t)ev_unary(e));
         e->depth--;
         return v;
     case '+':
@@ -727,17 +739,17 @@ static int64_t ev_bin(Ev *e, int level) {
             break;
         case 5:
             if (match_op(e, "+")) {
-                l = l + ev_bin(e, 6);
+                l = (int64_t)((uint64_t)l + (uint64_t)ev_bin(e, 6));
                 continue;
             }
             if (match_op(e, "-")) {
-                l = l - ev_bin(e, 6);
+                l = (int64_t)((uint64_t)l - (uint64_t)ev_bin(e, 6));
                 continue;
             }
             break;
         case 6:
             if (match_op(e, "*")) {
-                l = l * ev_bin(e, 7);
+                l = (int64_t)((uint64_t)l * (uint64_t)ev_bin(e, 7));
                 continue;
             }
             if (match_op(e, "/") || match_op(e, "%")) {

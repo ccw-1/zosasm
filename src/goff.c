@@ -66,6 +66,28 @@ GoffWriter *goff_writer_new(uint32_t arch_level) {
     return w;
 }
 
+void goff_writer_free(GoffWriter *w) {
+    if (!w) return;
+    free(w->buf.p);
+    free(w);
+}
+
+void goff_free(GoffModule *m) {
+    size_t i;
+    if (!m) return;
+    for (i = 0; i < m->esds.n; i++) {
+        free(m->esds.v[i]->name);
+        free(m->esds.v[i]);
+    }
+    free(m->esds.v);
+    for (i = 0; i < m->texts.n; i++) free(m->texts.v[i].data);
+    free(m->texts.v);
+    free(m->relocs.v);
+    free(m->lens.v);
+    free(m->end.name);
+    free(m);
+}
+
 /* One logical record: PTV type, a fixed header filling the start of the
  * first physical record, and a payload continuing into as many
  * continuation records as needed. */

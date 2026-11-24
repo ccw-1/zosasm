@@ -175,10 +175,10 @@ Invariants (tested):
 | option | content |
 |---|---|
 | `-gz0` | nothing (today's output) |
-| `-gz1` (proposed default) | symbols, statements, lines (this document) |
+| `-gz1` (default) | symbols, statements, lines (this document) |
 | `-gz2` | adds `C_ADATAE9C2`: the original files (before the preprocessor) and the `#define`/`#include` structure, so even macro names, `__LINE__`-style built-ins and include files can be rebuilt; compressed (small LZ, no external library) |
 
-Default on is proposed because the class is NOLOAD and the cost is only file
+`-gz1` is the default because the class is NOLOAD and the cost is only file
 size; `-gz0` is there for sealed builds.
 
 ## 7. Language changes that make the overlay better (free to choose)

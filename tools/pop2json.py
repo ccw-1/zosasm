@@ -28,6 +28,7 @@ import collections
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -230,12 +231,15 @@ def reg_class(mn, name, chapter, field):
 def extract(pdf):
     tmp = tempfile.mkdtemp(prefix='pop2json')
     out = {}
-    for key, args in (('full', ['-layout']),
-                      ('left', ['-x', '0', '-y', '0', '-W', '306', '-H', '792', '-layout']),
-                      ('right', ['-x', '306', '-y', '0', '-W', '306', '-H', '792', '-layout'])):
-        f = os.path.join(tmp, key + '.txt')
-        subprocess.check_call(['pdftotext'] + args + [pdf, f])
-        out[key] = open(f, encoding='utf-8', errors='replace').read().split('\f')
+    try:
+        for key, args in (('full', ['-layout']),
+                          ('left', ['-x', '0', '-y', '0', '-W', '306', '-H', '792', '-layout']),
+                          ('right', ['-x', '306', '-y', '0', '-W', '306', '-H', '792', '-layout'])):
+            f = os.path.join(tmp, key + '.txt')
+            subprocess.check_call(['pdftotext'] + args + [pdf, f])
+            out[key] = open(f, encoding='utf-8', errors='replace').read().split('\f')
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
     return out
 
 
@@ -702,7 +706,7 @@ def main():
         sys.stderr.write('pop2json: warning: %s\n' % w)
     sys.stderr.write('pop2json: %d instructions (%d base, %d extended), %d operand kinds, %d warnings\n' % (
         len(insts), len(rows), len(insts) - len(rows), len(tab.ops), len(warns)))
-    return 0
+    return 1 if warns else 0
 
 
 if __name__ == '__main__':

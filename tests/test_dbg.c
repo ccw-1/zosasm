@@ -551,6 +551,35 @@ static void test_dependent(void) {
     }
 }
 
+/* the exact .dbg bytes for a fixed set of options */
+static void test_golden_dbg(void) {
+    size_t sn, on, en;
+    char *src = read_file("testdata/golden.za", &sn);
+    char *want = read_file("testdata/golden.dbg", &en);
+    char err[256];
+    Reporter *rep = rep_new(0);
+    Module *m;
+    DbgOptions o;
+    DbgResult r;
+    uint8_t *obj;
+    CHECK_MSG(src && want, "missing testdata/golden.dbg");
+    if (!src || !want) { free(src); free(want); return; }
+    m = asm_assemble_text("testdata/golden.za", src, sn, rep);
+    if (!m) { free(src); free(want); return; }
+    obj = module_emit(m, &on, err, sizeof err);
+    CHECK_MSG(obj != NULL, "golden emit: %s", err);
+    memset(&o, 0, sizeof o);
+    o.cwd = "/u/test";
+    o.main_file = "testdata/golden.za";
+    o.producer = "zosasm 0.3.0";
+    o.dbg_path = "/u/test/golden.dbg";
+    CHECK_MSG(dbg_build(m, obj, on, &o, &r, err, sizeof err), "golden dbg_build: %s", err);
+    CHECK_MSG(r.elf_len == en && !memcmp(r.elf, want, en), "the .dbg golden differs");
+    free(src);
+    free(want);
+    free(obj);
+}
+
 int main(void) {
     test_md5();
     test_paths();
@@ -560,5 +589,6 @@ int main(void) {
     test_using();
     test_equ();
     test_dependent();
+    test_golden_dbg();
     TEST_MAIN_END();
 }

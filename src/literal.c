@@ -62,16 +62,17 @@ static const char *literal_label(Asm *a, Stmt *st, Operand o, const char *key, c
         d->line = sp.pos.line;
         d->name = xstrdup(l->name);
         d->name_span = sp;
-        d->op = "DC";
+        d->op = xstrdup("DC");
         d->op_span = sp;
         d->operands = xstrdup(key + 1);
-        d->remark = "";
+        d->remark = xstrdup("");
         d->segs = xcalloc(sizeof(Seg));
         d->segs[0].off = 0;
         d->segs[0].line = sp.pos.line;
         d->segs[0].col = ksp.pos.col + 1;
         d->nsegs = 1;
         l->st = d;
+        vec_push(&a->mod->synth, d);
     }
     vec_push(&p->lits, l);
     strmap_put(&p->by_key, key, l);
@@ -149,10 +150,10 @@ void asm_close_pool(Asm *a) {
         return;
     }
     if (!p->sorted && a->pass == 1) {
-        Reporter *save = a->rep;
+        Reporter *save = a->rep, *tr = rep_new(0);
         int64_t *align = xmalloc((p->lits.n + 1) * sizeof *align);
         p->sorted = 1;
-        a->rep = rep_new(0);
+        a->rep = tr;
         for (i = 0; i < p->lits.n; i++) {
             DcSpec sp;
             Operand o;
@@ -172,8 +173,10 @@ void asm_close_pool(Asm *a) {
                 } else if (!sp.has_len) {
                     align[i] = dc_alignment(&sp);
                 }
+                dc_vec_free(&vals);
             }
         }
+        rep_free(tr);
         a->rep = save;
         for (i = 0; i < p->lits.n; i++) p->lits.v[i]->st->bad = 0; /* the real run reports */
         /* stable insertion sort, largest alignment first */
@@ -207,7 +210,7 @@ void asm_close_pool(Asm *a) {
                 r.cls = a->cur->cls;
                 r.off = a->cur->start + loc0 + a->lead_pad;
                 r.len = a->cur->loc - loc0 - a->lead_pad;
-                r.key = l->shown ? l->shown : l->key;
+                r.key = xstrdup(l->shown ? l->shown : l->key);
                 r.owner = a->lit_owner == (size_t)-1 ? a->mod->zrecs.n : a->lit_owner;
                 vec_push(&a->mod->lits, r);
             }
