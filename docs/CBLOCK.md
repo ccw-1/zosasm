@@ -1,9 +1,10 @@
 # Inline C blocks (`#pragma cblock`)
 
-Status: experimental. Capture, integer expressions,
-control flow including `switch`, labels and `goto`, byte pointers, the memory
-intrinsics, the `__strlen`/`__memchr` scan intrinsics, and DWARF locals with
-`-g` are implemented. The original design is in `PLAN-CBLOCK.md`.
+Status: experimental. Capture, integer expressions, control flow including
+`switch`, labels and `goto`, byte and typed scalar pointers, opaque named
+pointers, the memory intrinsics, the `__strlen`/`__memchr` scan intrinsics,
+and DWARF locals with `-g` are implemented. The original design is in
+`CBLOCK-DESIGN.md`.
 
 A CBLOCK is inline code, not a function. It appears where it is written,
 reads and writes named registers, and falls through to the next assembler
@@ -33,8 +34,9 @@ It creates no symbol and does not touch `%r14` or the stack pointer.
 ## Examples
 
 * `docs/examples/cblock.za` assembles only. It shows a loop, `switch`, byte
-  pointers, `__memcpy`, `__memmove`, `__memset`, `__strlen` and `__memchr`.
-  Comments give the expected values.
+  and typed scalar pointers, an opaque DSECT pointer, `__sizeof`,
+  `__offsetof`, `__memcpy`, `__memmove`, `__memset`, `__strlen` and
+  `__memchr`. Comments give the expected values.
 * `docs/examples/cblock-linux.za` is a runnable Linux on Z program. It builds
   `strlen=5 pos=2` and writes it with `SVC 4`.
 * `docs/GUIDE.md` section 22 prints both examples.
@@ -113,10 +115,10 @@ Expressions:
 * prefix and postfix `++` and `--` on variables, not on `*p`.
 
 There are no arrays, structures, strings, floating point, user-defined
-function calls, global variables or recursion. The `__strlen` and `__memchr`
-expression intrinsics are the only call-like forms. Pointers remain byte
-pointers: there is no `uint32_t *`, no pointer-to-pointer type, and no array
-type. `return` is not allowed; the block ends at `#pragma cend`.
+function calls, global variables or recursion. The `__strlen`,
+`__memchr`, `__sizeof` and `__offsetof` forms are the only call-like
+expressions. There is no pointer-to-pointer type and no array type. `return`
+is not allowed; the block ends at `#pragma cend`.
 
 Signed overflow wraps two's complement. Division by a constant zero is a
 compile-time error; runtime division by zero traps. A constant shift count
@@ -137,8 +139,25 @@ __memmove(dst, src, len);  // overlapping allowed
 __memset(dst, byte, len);
 ```
 
-`dst` and `src` are byte pointers; `byte` and `len` are integers. The size and
-fill value may be constant expressions or runtime values.
+`dst` and `src` may be byte, typed, or opaque named pointers; the length is
+always in bytes. `byte` and `len` are integers. The size and fill value may
+be constant expressions or runtime values.
+
+A complete copy block:
+
+```asm
+#pragma cblock copy
+#pragma cin     uint8_t *src=%r2
+#pragma cinout  uint8_t *dst=%r3
+#pragma cscratch %r0, %r1, %r5
+#pragma ctemp   %r12, 32, down
+#pragma cbegin
+    __memcpy(dst, src, 16);
+#pragma cend
+```
+
+This copies 16 bytes with constant-size `MVC` chunks. A runtime length uses
+the same call with an integer expression as the third argument.
 
 Two assembly-time lookup intrinsics are also available:
 
@@ -158,8 +177,8 @@ uint64_t n = __strlen(str);          // length up to the first zero byte
 uint8_t *p = __memchr(str, byte, len); // pointer to byte, or 0
 ```
 
-`__strlen` takes a byte pointer and returns an unsigned 64-bit length.
-`__memchr` takes a byte pointer, an integer byte, and a length, and returns a
+`__strlen` takes a pointer and returns an unsigned 64-bit length.
+`__memchr` takes a pointer, an integer byte, and a length, and returns a byte
 pointer to the first matching byte, or 0. The byte value is truncated to eight
 bits. Both use a byte loop with `LLGC`, so the loaded byte does not inherit the
 upper bits of the scratch register. `LLGC` zero-extends the byte; an `IC`
@@ -196,7 +215,7 @@ would leave the previous high bits in place and break the zero test.
 With `-g`, each CBLOCK emits a lexical block and a DWARF variable for every
 local. The variable location is `DW_OP_breg<ctemp-reg> <slot-offset>`. A
 32-bit local is `int32` or `uint32`, a 64-bit local is `int64` or `uint64`,
-and a byte pointer local is represented as an unsigned 64-bit value. Bound
+and a pointer local is represented as an unsigned 64-bit value. Bound
 `cin`/`cout` registers are not variables with storage, so they get no DWARF
 variable.
 
@@ -236,7 +255,7 @@ expanded assembly.
 ## Tests
 
 * `make test` runs `tests/test_cblock.c`.
-* `make test-cblock-runtime` runs 33 generated ELF cases under `qemu-s390x`
+* `make test-cblock-runtime` runs 35 generated ELF cases under `qemu-s390x`
   when `s390x-linux-gnu-ld` and `qemu-s390x` are installed. The suite covers
   arithmetic, control flow, pointer arithmetic, `*p`, `p[i]`, `&local`,
   `__memcpy`, `__memmove`, `__memset`, `__strlen`, `__memchr`, and the

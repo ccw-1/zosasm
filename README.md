@@ -160,9 +160,22 @@ byte and typed scalar pointers, `*p`, `p[i]`, `&local`, opaque DSECT pointers,
 `__sizeof`, `__offsetof`, `__memcpy`, `__memmove`, `__memset`, `__strlen` and
 `__memchr`. With `-g`, CBLOCK locals appear in DWARF.
 
+A memory copy is a statement intrinsic:
+
+```asm
+#pragma cblock copy
+#pragma cin     uint8_t *src=%r2
+#pragma cinout  uint8_t *dst=%r3
+#pragma cscratch %r0, %r1, %r5
+#pragma ctemp   %r12, 32, down
+#pragma cbegin
+    __memcpy(dst, src, 16);
+#pragma cend
+```
+
 Reference: `docs/CBLOCK.md`. Examples: `docs/examples/cblock.za` (assembles)
 and `docs/examples/cblock-linux.za` (runs on Linux on Z). The original design
-record is `PLAN-CBLOCK.md`.
+record is `CBLOCK-DESIGN.md`.
 
 ## HLASM macros
 
@@ -223,7 +236,7 @@ make test
   (section 5), diagnostics, tests.
 * `docs/CBLOCK.md` - inline C blocks (`#pragma cblock`), experimental.
 * `PLAN.md` - status and open work.
-* `PLAN-CBLOCK.md` - original CBLOCK design plan.
+* `CBLOCK-DESIGN.md` - original CBLOCK design plan.
 
 ## Versions
 

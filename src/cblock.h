@@ -1,4 +1,4 @@
-/* cblock.h - inline scalar C-like blocks (#pragma cblock, PLAN-CBLOCK.md). */
+/* cblock.h - inline scalar C-like blocks (#pragma cblock, CBLOCK-DESIGN.md). */
 #ifndef ZA_CBLOCK_H
 #define ZA_CBLOCK_H
 

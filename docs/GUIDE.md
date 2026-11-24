@@ -3080,4 +3080,4 @@ qemu-s390x ./cblock-linux
 ```
 
 The reference for the pragmas, types, error codes and current limits is
-`docs/CBLOCK.md`. The design record is `PLAN-CBLOCK.md`.
+`docs/CBLOCK.md`. The design record is `CBLOCK-DESIGN.md`.

@@ -1,12 +1,14 @@
-# CBLOCK plan: inline scalar C expressions and statements in zosasm
+# CBLOCK design: inline scalar C expressions and statements in zosasm
 
 > Historical design plan. For current status and user documentation, see
-> `docs/CBLOCK.md`. Later work added `switch`, labels, `goto`, byte pointers,
-> memory intrinsics, and `__strlen`/`__memchr`.
+> `docs/CBLOCK.md`. Later work added `switch`, labels, `goto`, byte and typed
+> scalar pointers, opaque named pointers, memory intrinsics, and
+> `__strlen`/`__memchr`.
 
 Status: capture, integer expressions, control flow including `switch` and
-`goto`, byte pointers, memory intrinsics, the `__strlen`/`__memchr` scan
-intrinsics, and DWARF locals for `-g` are implemented on branch `ccw-inc`.
+`goto`, byte and typed scalar pointers, opaque named pointers, memory
+intrinsics, the `__strlen`/`__memchr` scan intrinsics, and DWARF locals for
+`-g` are implemented. This branch is merged and released as 0.4.0.
 
 Implemented so far:
 
