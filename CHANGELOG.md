@@ -4,7 +4,7 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 `vX.Y.Z`. Things not compared with IBM's tools are marked in the User's Guide
 (section 14).
 
-## Unreleased
+## 0.4.0 - 2026-11-24
 
 CBLOCK (`#pragma cblock`): inline integer C blocks with bound registers,
 scalar locals, expressions, control flow including `switch` and `goto`, byte
