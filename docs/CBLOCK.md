@@ -121,8 +121,13 @@ upper bits of the scratch register. `LLGC` zero-extends the byte; an `IC`
 would leave the previous high bits in place and break the zero test.
 
 * A constant `__memcpy` size up to 4096 emits `MVC` chunks.
-* Runtime `__memcpy` copies 256-byte `MVC` chunks first, then a byte loop for
-  the remainder.
+* Runtime `__memcpy` copies 256-byte `MVC` chunks first. The remainder uses
+  an `EX` over an `MVC` template when a third scratch register is available;
+  otherwise it falls back to a byte loop. `EX` does not change the template in
+  storage. It ORs the low byte of its length register into the template length
+  byte. The length register must be nonzero: `EX` with an R1 field of zero does
+  no ORing at all, so `EX %r0,...` executes the template with its original
+  length. The generated template starts with length zero.
 * A zero constant `__memset` emits `XC`; other fills use a byte `STC` loop.
 * `__memmove` compares the addresses at run time and uses a forward or
   backward `MVC` byte loop.
@@ -130,6 +135,10 @@ would leave the previous high bits in place and break the zero test.
   use byte loops; chunked versions can follow.
 * `__strlen` and `__memchr` use byte loops. `SRST` (Search String) can replace
   the scan loop later, but the loop is the current tested form.
+* The `__strlen` path was also tested on z/OS by replacing the scan loop in
+  `docs/examples/showargs.za` with a CBLOCK, building AMODE 31 and AMODE 64,
+  and running both with `a bb ccc dddd eeeee`. Both builds printed the
+  arguments cleanly.
 * The intrinsics need nonzero scratch registers for the addresses. The
   compiler reports `ZA5005` when the `cscratch` list is too small.
 * `__memcpy` requires non-overlapping ranges. Use `__memmove` when the ranges

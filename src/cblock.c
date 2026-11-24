@@ -1941,12 +1941,31 @@ static int codegen_intrinsic(Cg *cg, CBStmt *st) {
             emit_label(b, st->line, after);
             asm_line(b, st->line, "LTGR %%r0,%%r0");
             asm_line(b, st->line, "BRCL 8,%s", end);
-            emit_label(b, st->line, top);
-            asm_line(b, st->line, "MVC 0(1,%%r%d),0(%%r%d)", addr_d, addr_s);
-            asm_line(b, st->line, "AGHI %%r%d,1", addr_d);
-            asm_line(b, st->line, "AGHI %%r%d,1", addr_s);
-            asm_line(b, st->line, "AGHI %%r0,-1");
-            asm_line(b, st->line, "BRCL 7,%s", top);
+            {
+                int treg = pick_addr(b, addr_d, addr_s);
+                if (treg < 0) {
+                    /* no third scratch register: copy the tail one byte at a time */
+                    emit_label(b, st->line, top);
+                    asm_line(b, st->line, "MVC 0(1,%%r%d),0(%%r%d)", addr_d, addr_s);
+                    asm_line(b, st->line, "AGHI %%r%d,1", addr_d);
+                    asm_line(b, st->line, "AGHI %%r%d,1", addr_s);
+                    asm_line(b, st->line, "AGHI %%r0,-1");
+                    asm_line(b, st->line, "BRCL 7,%s", top);
+                } else {
+                    char *tmpl = new_label(b), *ex = new_label(b);
+                    /* EX ORs the low byte of a nonzero register into the MVC
+                       length byte. R0 cannot be used: EX with an R1 field of
+                       zero performs no ORing at all. */
+                    asm_line(b, st->line, "AGHI %%r0,-1");
+                    asm_line(b, st->line, "BRCL 15,%s", ex);
+                    emit_label(b, st->line, tmpl);
+                    asm_line(b, st->line, "MVC 0(0,%%r%d),0(%%r%d)", addr_d, addr_s);
+                    emit_label(b, st->line, ex);
+                    asm_line(b, st->line, "LARL %%r%d,%s", treg, tmpl);
+                    asm_line(b, st->line, "EX %%r%d,0(%%r%d)", treg, treg);
+                    free(tmpl); free(ex);
+                }
+            }
             free(chunk); free(after);
         }
         emit_label(b, st->line, end);
