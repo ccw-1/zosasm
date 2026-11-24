@@ -1,8 +1,10 @@
 # CBLOCK plan: inline scalar C expressions and statements in zosasm
 
-Status: M0 (capture), M1 (integer expressions) and M2 (control flow) are
-implemented on branch `ccw-inc`. Listing integration and the remaining
-milestones are not implemented yet.
+Status: M0 (capture), M1 (integer expressions), M2 (control flow) and the
+M3 integration work are implemented on branch `ccw-inc`. C source lines now
+appear in the listing, `%r0`/`%r1` are saved in `ctemp` when needed, and
+`tools/cblock_oracle.sh` compares a block with HLASM. `switch`, `goto`, a
+full `STMG`/`LMG` save mode and C variable DWARF remain.
 
 Implemented in M1:
 

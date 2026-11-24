@@ -81,17 +81,20 @@ Status key: [x] done, [-] in progress, [ ] open.
 - [ ] documentation of every directive in `docs/`
 - [ ] (macro language: covered by the preprocessor, see Phase 1)
 
-## Phase 5 - proposal: CBLOCK scalar expressions
+## Phase 5 - CBLOCK inline scalar blocks
 
-A design proposal for a small inline C-like scalar block (`#pragma cblock`)
-lives in `PLAN-CBLOCK.md`. It is not implemented and is not a callable
-function: the block falls through, reads and writes explicitly bound
-registers, and uses an optional caller-provided temp area. The first version
-is limited to 32-bit and 64-bit integers, scalar locals, expressions, and
-`if`/loop control flow. It compiles to ordinary assembler statements. C
-source appears in the listing.
-Pointers, arrays, floating point, calls, recursion, and C semantics outside
-the documented subset stay out of scope.
+`#pragma cblock` implements the inline scalar C-like block designed in
+`PLAN-CBLOCK.md`. It is implemented on branch `ccw-inc`, not merged to main.
+It is not a callable function: the block falls through, reads and writes
+explicitly bound registers, and uses an optional caller-provided temp area.
+The implemented subset covers 32-bit and 64-bit integers, scalar locals,
+expressions, casts, assignments, `if`/`else`, `while`, `do`, `for`,
+`break`/`continue`, short-circuit `&&`/`||`, `?:`, `++`/`--`, and the
+CBLOCK listing and oracle checks. It compiles to ordinary assembler
+statements. Pointers, arrays, floating point, calls, recursion, `switch`,
+`goto`, C variable DWARF and a full `STMG`/`LMG` save mode stay out of scope.
+
+Docs: `docs/CBLOCK.md`, design and milestones in `PLAN-CBLOCK.md`.
 
 ## Reference material
 

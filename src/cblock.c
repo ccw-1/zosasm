@@ -70,9 +70,13 @@ typedef struct {
     int temp_reg;
     long temp_size;
     int temp_down;
+    int save_r0, save_r1;
+    int base_slots;
     int label_no;
     Reporter *rep;
     SrcVec *out;
+    const CBlockLine *body;
+    size_t body_n;
 } CBlock;
 
 /* multi-character operators */
@@ -960,6 +964,12 @@ bad:
     return 0;
 }
 
+static int has_scratch(const CBlock *b, int reg) {
+    int i;
+    for (i = 0; i < b->nscratch; i++) if (b->scratch[i] == reg) return 1;
+    return 0;
+}
+
 static void cblock_expr_free(CBExpr *e) {
     if (!e) return;
     cblock_expr_free(e->a);
@@ -990,6 +1000,7 @@ static void cblock_stmt_vec_free(CBStmtVec *v) {
 
 typedef struct {
     CBlock *b;
+    int base_slots;
     int slot_top;
     int max_slot;
     int loop_depth;
@@ -1008,12 +1019,23 @@ static long slot_off(CBlock *b, int slot) {
     return (long)slot * 8;
 }
 
+static const char *csrc_for(const CBlock *b, int line) {
+    size_t i;
+    for (i = 0; i < b->body_n; i++)
+        if (b->body[i].line == line) return b->body[i].text;
+    return NULL;
+}
+
 static void asm_raw(CBlock *b, int line, char *s) {
     SrcLine sl;
     memset(&sl, 0, sizeof sl);
     sl.file = b->file;
     sl.line = line;
     sl.text = s;
+    {
+        const char *cs = csrc_for(b, line);
+        if (cs) sl.orig = xstrdup(cs);
+    }
     vec_push(b->out, sl);
 }
 
@@ -1318,7 +1340,7 @@ static int codegen_block(Cg *cg, CBStmtVec *v) {
 static int codegen_stmt(Cg *cg, CBStmt *st) {
     CBlock *b = cg->b;
     int s;
-    cg->slot_top = (int)b->vars.n;
+    cg->slot_top = cg->base_slots;
     if (st->kind == S_IF) {
         char *els = new_label(b), *end = NULL;
         if (!emit_cond_zero(cg, st->cond, els)) { free(els); return 0; }
@@ -1499,6 +1521,8 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
     b.line = line;
     b.rep = rep;
     b.out = out;
+    b.body = body;
+    b.body_n = n;
     b.temp_reg = -1;
     b.name = xstrdup(head && *head ? head : "cblock");
     b.temp_down = 1;
@@ -1565,11 +1589,12 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
         cb_error(&b, line, 1, "ZA5006", "cblock needs a ctemp area for its variables and values");
         goto done;
     }
-    if (b.nscratch < 2) {
-        cb_error(&b, line, 1, "ZA5005", "cblock needs at least two cscratch registers");
-        goto done;
-    }
     for (i = 0; i < b.vars.n; i++) {
+        if (b.vars.v[i]->reg == 0 || b.vars.v[i]->reg == 1) {
+            cb_error(&b, line, 1, "ZA5005", "register %%r%d cannot be a cin/cout binding",
+                     b.vars.v[i]->reg);
+            goto done;
+        }
         if (b.vars.v[i]->reg == b.temp_reg) {
             cb_error(&b, line, 1, "ZA5005", "bound register %%r%d is also the ctemp base",
                      b.vars.v[i]->reg);
@@ -1617,11 +1642,18 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
         if (p.err) ok = 0;
         if (ok) {
             Cg cg;
+            b.base_slots = (int)b.vars.n;
+            b.save_r0 = b.save_r1 = -1;
+            if (b.temp_reg >= 0 && !has_scratch(&b, 0)) b.save_r0 = b.base_slots++;
+            if (b.temp_reg >= 0 && !has_scratch(&b, 1)) b.save_r1 = b.base_slots++;
             memset(&cg, 0, sizeof cg);
             cg.b = &b;
-            cg.slot_top = (int)b.vars.n;
-            cg.max_slot = (int)b.vars.n;
+            cg.base_slots = b.base_slots;
+            cg.slot_top = b.base_slots;
+            cg.max_slot = b.base_slots;
             asm_line(&b, line, "* cblock %s", b.name);
+            if (b.save_r0 >= 0) store_slot(&b, line, b.save_r0, type_of(64, 1), 0);
+            if (b.save_r1 >= 0) store_slot(&b, line, b.save_r1, type_of(64, 1), 1);
             for (i = 0; i < b.vars.n; i++) {
                 CBVar *v = b.vars.v[i];
                 if (v->kind == V_CIN || v->kind == V_CINOUT) {
@@ -1639,6 +1671,8 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
                     CBVar *v = b.vars.v[i];
                     if (v->kind == V_COUT || v->kind == V_CINOUT) load_slot(&b, line, v->slot, v->type, v->reg);
                 }
+                if (b.save_r1 >= 0) load_slot(&b, line, b.save_r1, type_of(64, 1), 1);
+                if (b.save_r0 >= 0) load_slot(&b, line, b.save_r0, type_of(64, 1), 0);
             }
         }
         for (i = 0; i < p.l.ids.n; i++) free(p.l.ids.v[i]);

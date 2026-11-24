@@ -1554,6 +1554,7 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
             if (active(pp)) {
                 CBlockLineVec body = {0};
                 const char *head = skip_blanks(rest), *hp = head;
+                size_t first = pp->out->n;
                 while (*hp && !is_blank((unsigned char)*hp)) hp++;
                 head = skip_blanks(hp);
                 for (j = i + 1; j < end; j++) {
@@ -1564,6 +1565,21 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
                 }
                 cblock_compile(file, ln, head, body.v, body.n, pp->rep, pp->out);
                 free(body.v);
+                if (pp->opt->events) {
+                    size_t q;
+                    for (q = first; q < pp->out->n; q++) {
+                        PpEvent ev;
+                        memset(&ev, 0, sizeof ev);
+                        ev.file = file;
+                        ev.line = ev.line_end = pp->out->v[q].line;
+                        ev.depth = pp->depth;
+                        ev.kind = PE_LINE;
+                        ev.text = pp->out->v[q].orig ? pp->out->v[q].orig : pp->out->v[q].text;
+                        ev.first = q;
+                        ev.n = 1;
+                        vec_push(pp->opt->events, ev);
+                    }
+                }
             }
             pp->line = lines.v[end].line;
             free(joined_bs); free(joined_pl); free(joined_po);
