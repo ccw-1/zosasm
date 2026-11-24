@@ -61,7 +61,11 @@ static char *syntax(const IsaInst *in) {
             buf_puts(&b, reg_letter(f));
         }
     }
-    return xstrdup(buf_cstr(&b));
+    {
+        char *r = xstrdup(buf_cstr(&b));
+        free(b.p);
+        return r;
+    }
 }
 
 /* ---- USING ---------------------------------------------------------------- */
@@ -175,6 +179,7 @@ static int asm_register(Asm *a, Stmt *st, Operand o, unsigned flags, int64_t *ou
     to.text = t;
     to.off = o.off + (int)lead;
     ok = asm_abs_expr(a, st, to, "a register number", out);
+    free(t);
     return ok;
 }
 
@@ -418,6 +423,11 @@ void dir_using(Asm *a, Stmt *st) {
             tmp.v[k].off += ops.v[0].off + (int)lead + 1;
             vec_push(&rng, tmp.v[k]);
         }
+        free(tmp.v);
+        free(inner);
+        free(t0);
+        t0 = NULL;
+        vec_push(&a->opvecs, rng);
         if (rng.n < 1 || rng.n > 4) {
             if (a->pass == 1) {
                 rep_errorf(a->rep, "ZA3063", asm_op_span(st, ops.v[0]),
@@ -427,7 +437,12 @@ void dir_using(Asm *a, Stmt *st) {
             return;
         }
     } else {
-        vec_push(&rng, ops.v[0]);
+        Operand o = ops.v[0];
+        o.text = xstrdup(o.text);
+        vec_push(&rng, o);
+        free(t0);
+        t0 = NULL;
+        vec_push(&a->opvecs, rng);
     }
     base_op = rng.v[0];
     if (a->pass == 1) {
@@ -674,7 +689,16 @@ AddrOp asm_split_addr(Operand o) {
         vec_push(&r.inner, in.v[i]);
     }
     free(inner);
+    free(in.v);
     return r;
+}
+
+void addr_op_free(AddrOp *r) {
+    size_t i;
+    if (r->parens) free((char *)r->disp.text);
+    for (i = 0; i < r->inner.n; i++) free(r->inner.v[i].text);
+    free(r->inner.v);
+    memset(r, 0, sizeof *r);
 }
 
 /* ---- the instruction statement ----------------------------------------------- */
@@ -712,7 +736,7 @@ static void bad_arity(Asm *a, Stmt *st, const IsaInst *vars, size_t nv, int n) {
     Diag *d;
     size_t nforms = 0;
     char **seen = xmalloc((nv + 1) * sizeof *seen);
-    if (a->pass != 1) return;
+    if (a->pass != 1) { free(seen); return; }
     up = za_strupper(st->op);
     for (k = 0; k < nv; k++) {
         char *s = syntax(&vars[k]);
@@ -728,6 +752,10 @@ static void bad_arity(Asm *a, Stmt *st, const IsaInst *vars, size_t nv, int n) {
     d = rep_errorf(a->rep, "ZA2031", sp, "%s does not take %d operand(s)", up, n);
     diag_help(d, "syntax: %s", buf_cstr(&forms));
     st->bad = 1;
+    for (k = 0; k < nforms; k++) free(seen[k]);
+    free(seen);
+    free(forms.p);
+    free(up);
 }
 
 /* check the syntax of the operands in pass 1 */
@@ -747,9 +775,12 @@ static void parse_operands(Asm *a, Stmt *st, const IsaInst *in, const OperandVec
             diag_help(rep_errorf(a->rep, "ZA2032", asm_op_span(st, o), "operand %d is empty",
                                  (int)i + 1),
                       "syntax: %s %s", up, syn);
+            free(syn);
+            free(tr);
             st->bad = 1;
             continue;
         }
+        free(tr);
         if (s->kind != SK_ADDR) {
             if (!is_pct_reg(o)) asm_expr(a, st, o);
             continue;
@@ -759,6 +790,7 @@ static void parse_operands(Asm *a, Stmt *st, const IsaInst *in, const OperandVec
             diag_help(rep_errorf(a->rep, "ZA2033", asm_op_span(st, o),
                                  "the displacement before the parenthesis is missing"),
                       "write for example `0(%r2)`");
+            addr_op_free(&ad);
             st->bad = 1;
             continue;
         }
@@ -766,6 +798,7 @@ static void parse_operands(Asm *a, Stmt *st, const IsaInst *in, const OperandVec
         for (k = 0; k < ad.inner.n; k++) {
             char *t2 = str_trim(ad.inner.v[k].text);
             if (t2[0] && !is_pct_reg(ad.inner.v[k])) asm_expr(a, st, ad.inner.v[k]);
+            free(t2);
         }
         max_inner = (s->mid >= 0 && s->base >= 0) ? 2 : 1;
         if ((int)ad.inner.n > max_inner) {
@@ -773,9 +806,12 @@ static void parse_operands(Asm *a, Stmt *st, const IsaInst *in, const OperandVec
             diag_help(rep_errorf(a->rep, "ZA2034", asm_op_span(st, o),
                                  "too many registers in parentheses"),
                       "syntax: %s %s", up, syn);
+            free(syn);
             st->bad = 1;
         }
+        addr_op_free(&ad);
     }
+    free(up);
 }
 
 /* length attribute of the leftmost symbol of e (1 if none) */
@@ -1219,10 +1255,13 @@ static uint8_t *assemble_inst(Asm *a, Stmt *st, const IsaInst *in, const Operand
         }
         if (!ok) good = 0;
     }
-    if (!good) return NULL;
+    if (!good) { free(out); free(ri); return NULL; }
     if (isa_encode(in, vals, nf, out, err, sizeof err) != 0) {
         char *up = za_strupper(st->op);
         rep_errorf(a->rep, "ZA2040", st->op_span, "cannot encode %s: %s", up, err);
+        free(up);
+        free(out);
+        free(ri);
         return NULL;
     }
     if (ri && a->cur->cls->sect->kind != K_DSECT) {
@@ -1236,6 +1275,7 @@ static uint8_t *assemble_inst(Asm *a, Stmt *st, const IsaInst *in, const Operand
         r.kind = REL_RI;
         vec_push(&c->relocs, r);
     }
+    free(ri);
     return out;
 }
 
@@ -1245,7 +1285,7 @@ void asm_instr(Asm *a, Stmt *st) {
     OperandVec ops = {0};
     const IsaInst *in;
     uint8_t *bytes;
-    split_operands(&ops, st->operands);
+    if (!asm_ops(a, st, 0, -1, &ops)) return;
     asm_literal_operands(a, st, &ops);
     in = asm_choose_variant(vars, nv, (int)ops.n);
     if (!in) {

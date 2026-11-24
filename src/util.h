@@ -83,4 +83,12 @@ char *read_file(const char *path, size_t *len);
 /* Damerau-Levenshtein (optimal string alignment) distance on bytes. */
 int edit_distance(const char *a, const char *b);
 
+/* ---- arena ------------------------------------------------------------- */
+/* A list of allocations released together. Used for values and other
+ * assembly-time data whose lifetime is the Module. */
+typedef struct Arena Arena;
+Arena *arena_new(void);
+void *arena_alloc(Arena *a, size_t n);
+void arena_free(Arena *a);
+
 #endif

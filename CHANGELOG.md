@@ -6,8 +6,9 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 
 ## Unreleased
 
-Review fixes (2026-11-24): `asm_free()`/`rep_free()` correctness and the
-emitter/parser destructors, `#define` recursion and macro string/list limits,
+Review fixes (2026-11-24): `asm_free()`/`rep_free()` correctness, an arena
+for `Value` terms owned by the Module, operand/expression/emitter
+destructors, `#define` recursion and macro string/list limits,
 `R()` of a LOCTR, `ENTRY` in a DSECT, statements after END, comment lines in
 continuations, `#if`/`DXD` overflow, the CLI output paths (`-o -`,
 `/dev/null`, `-g` aliases, collisions), exact oracle exit statuses, golden

@@ -460,6 +460,16 @@ error[ZA2001]: unknown instruction "LGRR"
 * **oracle tests on z/OS**: when z/OS is reachable the same sources are
   assembled with IBM HLASM (`as`) and the structure is compared
   (see PLAN.md); results update the "verified" column there,
+* **memory ownership.** The `Module` owns sections, classes, pieces, symbols,
+  statements, literals, USING records and ZSYM sources; it also owns an
+  `Arena` (`util.c`) that holds the `Value` terms made during assembly, so a
+  relocatable EQU keeps valid terms after assembly. `asm_free(Module *)`
+  releases all of that, `rep_free(Reporter *)` releases the diagnostics and
+  the copied source texts, and `goff_free`/`zsym_free`/`zsrc_free` release
+  parsed objects and annotations. `Asm` owns the expression trees, operand
+  vectors and the scratch reporter; `asm_assemble_all()` frees those
+  after each pass and transfers the arena to the returned Module.
+  `make test-free-asan` runs `tests/test_asm_free.c` under ASan/UBSan.
 * final proof: object files must go through the z/OS binder (`ld`) and run.
 
 ## 8. Preprocessor (implemented, `src/pp.c`)

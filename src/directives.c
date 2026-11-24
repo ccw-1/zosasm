@@ -43,6 +43,7 @@ static void piece_hint(Asm *a, Piece *p) {
     key = xasprintf("%s\x01%s\x01%s", p->cls->sect->name, p->cls->name, p->name);
     v = strmap_get(a->hints, key);
     if (v) p->hint = *v;
+    free(key);
 }
 
 static Class *new_class(Asm *a, const char *name, Section *sect) {
@@ -110,6 +111,7 @@ void dir_section(Asm *a, Stmt *st) {
         }
         c = new_class(a, "B_TEXT", sec);
         if (kind == K_RSECT) c->attr.readonly = 1;
+        free(c->pieces.v[0]->name);
         c->pieces.v[0]->name = xstrdup(sec->name);
         vec_push(&sec->classes, c);
         sec->cur = sec->text_cur = c->pieces.v[0];

@@ -452,6 +452,7 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
             if (line[p] == '"') {
                 const char *why = NULL;
                 char *t = xstrndup(line + p, nl);
+                free(st->name);
                 st->name = sym_text(t, &why);
                 if (!st->name) {
                     diag_help(rep_errorf(rep, "ZA0004", st->name_span, "invalid quoted symbol: %s", why),
@@ -463,6 +464,7 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
                 st->name_quoted = 1;
                 free(t);
             } else {
+                free(st->name);
                 st->name = xstrndup(line + p, nl);
             }
             p = q;
@@ -605,6 +607,13 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
         st->nli = (int)(i - st->li + 1);
         vec_push(out, st);
     }
+}
+
+void operands_free(OperandVec *v) {
+    size_t i;
+    for (i = 0; i < v->n; i++) free(v->v[i].text);
+    free(v->v);
+    memset(v, 0, sizeof *v);
 }
 
 void split_operands(OperandVec *out, const char *s) {

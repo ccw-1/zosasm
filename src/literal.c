@@ -99,8 +99,12 @@ static char *star_rewrite(const char *key, const char *name) {
         }
         if (!is_blank((unsigned char)*p)) prev = *p;
     }
-    if (!found) return NULL;
-    return xstrdup(buf_cstr(&b));
+    if (!found) { free(b.p); return NULL; }
+    {
+        char *r = xstrdup(buf_cstr(&b));
+        free(b.p);
+        return r;
+    }
 }
 
 /* Replace literal operands of an instruction by the labels of the
@@ -130,10 +134,20 @@ void asm_literal_operands(Asm *a, Stmt *st, OperandVec *ops) {
                     h->operands = "";
                     h->remark = "";
                     asm_define_label(a, h, 4, 'I');
+                    free(h->name);
+                    free(h);
+                } else {
+                    free(name);
                 }
-                ops->v[i].text = (char *)literal_label(a, st, ops->v[i], k2, key);
+                char *old = ops->v[i].text;
+                ops->v[i].text = xstrdup(literal_label(a, st, ops->v[i], k2, key));
+                free(old);
+                free(k2);
             } else {
-                ops->v[i].text = (char *)literal_label(a, st, ops->v[i], key, NULL);
+                char *old = ops->v[i].text;
+                ops->v[i].text = xstrdup(literal_label(a, st, ops->v[i], key, NULL));
+                free(old);
+                free(name);
             }
         }
         free(key);
@@ -175,6 +189,7 @@ void asm_close_pool(Asm *a) {
                 }
                 dc_vec_free(&vals);
             }
+            dc_spec_free(&sp);
         }
         rep_free(tr);
         a->rep = save;

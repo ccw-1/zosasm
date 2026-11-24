@@ -30,6 +30,10 @@ Base base_sym(Symbol *s) {
 
 int base_eq(Base a, Base b) { return a.kind == b.kind && a.p == b.p; }
 
+static Arena *value_arena;
+
+void value_set_arena(Arena *a) { value_arena = a; }
+
 Value value_abs(int64_t n) {
     Value v;
     v.abs = n;
@@ -74,7 +78,7 @@ Value value_add(Value a, Value b, int sign) {
     r.abs = sign < 0 ? (int64_t)((uint64_t)a.abs - (uint64_t)b.abs)
                      : (int64_t)((uint64_t)a.abs + (uint64_t)b.abs);
     r.defined = a.defined && b.defined;
-    ts = xmalloc((size_t)(a.nterms + b.nterms + 1) * sizeof *ts);
+    ts = arena_alloc(value_arena, (size_t)(a.nterms + b.nterms + 1) * sizeof *ts);
     n = a.nterms;
     if (n) memcpy(ts, a.terms, (size_t)n * sizeof *ts);
     for (i = 0; i < b.nterms; i++) n = add_term(ts, n, b.terms[i].base, sign * b.terms[i].coef);
@@ -88,7 +92,7 @@ Value value_neg(Value v) {
     int i;
     r.abs = (int64_t)(0 - (uint64_t)v.abs);
     if (v.nterms) {
-        r.terms = xmalloc((size_t)v.nterms * sizeof(Term));
+        r.terms = arena_alloc(value_arena, (size_t)v.nterms * sizeof(Term));
         for (i = 0; i < v.nterms; i++) {
             r.terms[i].base = v.terms[i].base;
             r.terms[i].coef = -v.terms[i].coef;

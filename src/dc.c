@@ -247,6 +247,8 @@ static void dc_len_range(const DcSpec *sp, int is_ds, int64_t *lo, int64_t *hi) 
 
 /* Parse one operand of DC or DS: [dup]T[ext][Lnn]['nominal' | (nominal)].
  * Reports errors and returns 0 when the operand cannot be used. */
+void dc_spec_free(DcSpec *sp) { free(sp->nom); sp->nom = NULL; }
+
 int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp) {
     const char *s = o.text;
     size_t len = strlen(s), i = 0;
@@ -456,6 +458,7 @@ void split_nominal(const DcSpec *sp, OperandVec *out) {
             for (j = start; j < i; j++)
                 if (sp->nom[j] != ' ') buf_putc(&nb, sp->nom[j]);
             o.text = xstrdup(buf_cstr(&nb));
+            free(nb.p);
             o.off = sp->nom_off + (int)start;
             vec_push(out, o);
             start = i + 1;
@@ -478,7 +481,11 @@ static char *unescape_quotes(const char *s) {
         buf_putc(&b, s[i]);
         if ((s[i] == '\'' && s[i + 1] == '\'') || (s[i] == '&' && s[i + 1] == '&')) i++;
     }
-    return xstrdup(buf_cstr(&b));
+    {
+        char *r = xstrdup(buf_cstr(&b));
+        free(b.p);
+        return r;
+    }
 }
 
 static int dc_char(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
@@ -505,17 +512,21 @@ static int dc_char(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
         n = bb.len;
         b = xmalloc(n + 2);
         memcpy(b, bb.p ? bb.p : "", n);
+        free(bb.p);
         if (sp->has_len) {
             size_t want = (size_t)sp->length;
             if (want < n && want >= 2 && (b[want - 2] & 0xFC) == 0xD8) {
                 diag_help(dc_err(a, st, "ZA2049", sp->nom_off - 1, (int)strlen(sp->nom) + 2,
                                  "the length %zu cuts a UTF-16 surrogate pair in two", want),
                           "use a length of %zu or more", want + 2);
+                free(b);
+                free(str);
                 return 0;
             }
             {
                 uint8_t *nb = xmalloc(want + 2);
                 for (i = 0; i < want; i++) nb[i] = i < n ? b[i] : (i & 1 ? 0x20 : 0x00);
+                free(b);
                 b = nb;
                 n = want;
             }
@@ -523,9 +534,11 @@ static int dc_char(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
             diag_help(dc_err(a, st, "ZA2019", sp->nom_off - 1, 2,
                              "an empty character constant needs a length modifier"),
                       "write for example `CUL2''` for one blank");
+            free(str);
             return 0;
         }
         push_val(out, b, n);
+        free(str);
         return 1;
     }
     if (sp->ext == 'A') {
@@ -539,6 +552,7 @@ static int dc_char(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
         n = bb.len;
         b = xmalloc(n + 1);
         memcpy(b, bb.p ? bb.p : "", n);
+        free(bb.p);
     } else {
         b = sp->ext == 'E' ? ebcdic_from_source(str, sl, &n) : charset_from_source(str, sl, &n);
     }
@@ -546,15 +560,19 @@ static int dc_char(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
         size_t want = (size_t)sp->length;
         uint8_t *nb = xmalloc(want + 1);
         for (i = 0; i < want; i++) nb[i] = i < n ? b[i] : pad;
+        free(b);
         b = nb;
         n = want;
     } else if (n == 0) {
         diag_help(dc_err(a, st, "ZA2019", sp->nom_off - 1, 2,
                          "an empty character constant needs a length modifier"),
                   "write for example `CL1''` for one blank");
+        free(b);
+        free(str);
         return 0;
     }
     push_val(out, b, n);
+    free(str);
     return 1;
 }
 
@@ -562,6 +580,7 @@ static int dc_bits(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
     OperandVec items = {0};
     size_t k, m;
     split_nominal(sp, &items);
+    vec_push(&a->opvecs, items);
     for (k = 0; k < items.n; k++) {
         const char *t = items.v[k].text;
         size_t tl = strlen(t), nn;
@@ -671,6 +690,7 @@ static int dc_int(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
     size_t k;
     if (sp->has_len) n = (int)sp->length;
     split_nominal(sp, &items);
+    vec_push(&a->opvecs, items);
     for (k = 0; k < items.n; k++) {
         char *t = str_trim(items.v[k].text);
         uint8_t *b = zeros((size_t)(n < 1 ? 1 : n));
@@ -718,10 +738,12 @@ static int addr_con(Asm *a, Stmt *st, const Expr *e, Value v, int n, DcVal *res,
                                      (long long)v.abs, n),
                           "allowed range: %lld to %lld", (long long)lo, (long long)hi);
                 st->bad = 1;
-                return 0;
+                free(terms);
+        return 0;
             }
         }
         be_bytes((uint64_t)v.abs, n, res->b);
+        free(terms);
         return 1;
     }
     {
@@ -738,7 +760,8 @@ static int addr_con(Asm *a, Stmt *st, const Expr *e, Value v, int n, DcVal *res,
                       "subtracted once, plus an absolute value; for example A(X-Y) or "
                       "A(EXT1-EXT2+4)");
             st->bad = 1;
-            return 0;
+            free(terms);
+        return 0;
         }
         if (n < 2 || n > 8 || (n > 4 && n != 8)) {
             diag_help(rep_errorf(a->rep, "ZA2024", e->sp,
@@ -746,7 +769,8 @@ static int addr_con(Asm *a, Stmt *st, const Expr *e, Value v, int n, DcVal *res,
                       "relocatable A-type constants are 2 (with a warning), 3, 4 or 8 bytes long "
                       "(AL2, AL3, A, AD)");
             st->bad = 1;
-            return 0;
+            free(terms);
+        return 0;
         }
         if (n == 2)
             rep_warnf(a->rep, "ZA2086", e->sp, "2-byte relocatable address constant");
@@ -763,7 +787,8 @@ static int addr_con(Asm *a, Stmt *st, const Expr *e, Value v, int n, DcVal *res,
                 } else {
                     rep_errorf(a->rep, "ZA2025", e->sp, "this expression cannot be relocated");
                     st->bad = 1;
-                    return 0;
+                    free(terms);
+        return 0;
                 }
                 np++;
             }
@@ -775,6 +800,7 @@ static int addr_con(Asm *a, Stmt *st, const Expr *e, Value v, int n, DcVal *res,
         res->sub = items[0].sub;
         res->nmore = np - 1;
         for (k = 1; k < np; k++) res->more[k - 1] = items[k];
+        free(terms);
         return 1;
     }
 }
@@ -785,6 +811,7 @@ static int dc_addr(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
     size_t k;
     if (sp->has_len) n = (int)sp->length;
     split_operands(&items, sp->nom);
+    vec_push(&a->opvecs, items);
     for (k = 0; k < items.n; k++) {
         Operand it = items.v[k];
         Expr *e;
@@ -808,6 +835,7 @@ static int dc_addr(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
             continue;
         }
         if (!addr_con(a, st, e, v, n, &val, sp->typ == 'Y')) {
+            free(val.b);
             good = 0;
             push_val(out, zeros((size_t)n), (size_t)n);
             continue;
@@ -830,6 +858,7 @@ static int dc_s(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
         return 0;
     }
     split_operands(&items, sp->nom);
+    vec_push(&a->opvecs, items);
     for (k = 0; k < items.n; k++) {
         Operand it = items.v[k];
         int64_t base, disp;
@@ -869,6 +898,7 @@ static int dc_v(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
         return 0;
     }
     split_operands(&items, sp->nom);
+    vec_push(&a->opvecs, items);
     for (k = 0; k < items.n; k++) {
         Operand it = items.v[k];
         char *raw = str_trim(it.text), *name;
@@ -881,6 +911,7 @@ static int dc_v(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
             diag_help(dc_err(a, st, "ZA1021", sp->nom_off + it.off, tl,
                              "\"%s\" is not a valid symbol name", raw),
                       "%s", why);
+            free(raw);
             good = 0;
             continue;
         }
@@ -898,9 +929,13 @@ static int dc_v(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
                                        name),
                                 s->def, "\"%s\" is defined here", name),
                       "use an A-type constant for symbols of this module");
+            free(raw);
+            free(name);
             good = 0;
             continue;
         }
+        free(name);
+        free(raw);
         memset(&v, 0, sizeof v);
         v.b = zeros((size_t)n);
         v.n = (size_t)n;
@@ -948,6 +983,7 @@ static int dc_xd(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, DcVec *out) {
         return 0;
     }
     split_operands(&items, sp->nom);
+    vec_push(&a->opvecs, items);
     for (k = 0; k < items.n; k++) {
         Operand it = items.v[k];
         char *raw = str_trim(it.text), *name;
@@ -959,13 +995,16 @@ static int dc_xd(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, DcVec *out) {
         if (!name) {
             diag_help(dc_err(a, st, "ZA1021", off, tl, "\"%s\" is not a valid symbol name", raw),
                       "%s", why);
+            free(raw);
             good = 0;
             continue;
         }
+        free(raw);
         memset(&v, 0, sizeof v);
         v.b = zeros((size_t)n);
         v.n = (size_t)n;
         if (is_ds) {
+            free(name);
             vec_push(out, v);
             continue;
         }
@@ -976,6 +1015,8 @@ static int dc_xd(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, DcVec *out) {
                 r.sp = stmt_operand_span(st, off, tl);
                 r.sect = a->sect;
                 vec_push(&a->xdrefs, r);
+            } else {
+                free(name);
             }
             vec_push(out, v);
             continue;
@@ -1013,6 +1054,7 @@ static int dc_xd(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, DcVec *out) {
                 good = 0;
             }
         }
+        free(name);
         vec_push(out, v);
     }
     return good;
@@ -1022,6 +1064,7 @@ static int dc_decimal(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
     OperandVec items = {0};
     size_t k, m;
     split_nominal(sp, &items);
+    vec_push(&a->opvecs, items);
     for (k = 0; k < items.n; k++) {
         char *t = str_trim(items.v[k].text);
         const char *p = t;
@@ -1241,6 +1284,7 @@ void dir_dc(Asm *a, Stmt *st) {
                 label_done = 1;
             }
             dc_vec_free(&vals);
+            dc_spec_free(&sp);
             continue;
         }
         if (!sp.bits) bits_flush(a, &acc, is_ds);
@@ -1268,6 +1312,7 @@ void dir_dc(Asm *a, Stmt *st) {
                                  "a relocatable address cannot have a bit length"),
                           "use a byte length, for example `AL4`");
                 dc_vec_free(&vals);
+            dc_spec_free(&sp);
             continue;
             }
             if (sp.dup > 0 && vals.n > 0) {
@@ -1284,6 +1329,7 @@ void dir_dc(Asm *a, Stmt *st) {
                                      (long long)ZA_MAX_LOC),
                               "GOFF stores class lengths and text offsets in 32 bits");
                     dc_vec_free(&vals);
+            dc_spec_free(&sp);
             continue;
                 }
                 {
@@ -1300,6 +1346,7 @@ void dir_dc(Asm *a, Stmt *st) {
                                          (unsigned long long)bytes, (unsigned long long)max_dc),
                                   "reduce the duplication factor, split the constant, or set ZOSASM_MAX_DC_BYTES");
                         dc_vec_free(&vals);
+            dc_spec_free(&sp);
             continue;
                     }
                 }
@@ -1316,21 +1363,25 @@ void dir_dc(Asm *a, Stmt *st) {
                                      (long long)ZA_MAX_LOC),
                               "GOFF stores class lengths and text offsets in 32 bits");
                     dc_vec_free(&vals);
+            dc_spec_free(&sp);
             continue;
                 }
                 acc.nbits += bits;
                 dc_vec_free(&vals);
+            dc_spec_free(&sp);
             continue;
             }
             for (r = 0; r < sp.dup; r++)
                 for (j = 0; j < vals.n; j++) bits_add(&acc, &vals.v[j], sp.bits, left);
             dc_vec_free(&vals);
+            dc_spec_free(&sp);
             continue;
         }
         for (j = 0; j < vals.n; j++) total += (int64_t)vals.v[j].n;
         if (sp.dup < 0 || (vals.n != 0 && (uint64_t)sp.dup > (uint64_t)INT64_MAX / (uint64_t)(vals.n ? vals.n : 1))) {
             rep_errorf(a->rep, "ZA2087", st->op_span, "DC duplication factor is too large");
             dc_vec_free(&vals);
+            dc_spec_free(&sp);
             continue;
         }
         if (sp.dup > 0 && total > 0) {
@@ -1344,6 +1395,7 @@ void dir_dc(Asm *a, Stmt *st) {
                                  (long long)ZA_MAX_LOC),
                           "GOFF stores class lengths and text offsets in 32 bits");
                 dc_vec_free(&vals);
+            dc_spec_free(&sp);
             continue;
             }
             {
@@ -1360,6 +1412,7 @@ void dir_dc(Asm *a, Stmt *st) {
                                      (unsigned long long)bytes, (unsigned long long)max_dc),
                               "reduce the duplication factor, split the constant, or set ZOSASM_MAX_DC_BYTES");
                     dc_vec_free(&vals);
+            dc_spec_free(&sp);
             continue;
                 }
             }
@@ -1367,6 +1420,7 @@ void dir_dc(Asm *a, Stmt *st) {
         if (is_ds) {
             asm_advance(a, total * sp.dup);
             dc_vec_free(&vals);
+            dc_spec_free(&sp);
             continue;
         }
         for (r = 0; r < sp.dup; r++) {
@@ -1376,6 +1430,7 @@ void dir_dc(Asm *a, Stmt *st) {
             }
         }
         dc_vec_free(&vals);
+        dc_spec_free(&sp);
     }
     bits_flush(a, &acc, is_ds);
 }
@@ -1412,7 +1467,8 @@ void dir_dxd(Asm *a, Stmt *st) {
         uint64_t total = 0, add;
         int64_t al;
         size_t j;
-        if (!dc_parse(a, st, ops.v[k], &sp) || !dc_values(a, st, &sp, 1, &vals)) continue;
+        if (!dc_parse(a, st, ops.v[k], &sp)) continue;
+        if (!dc_values(a, st, &sp, 1, &vals)) { dc_spec_free(&sp); continue; }
         al = sp.has_len ? 1 : dc_alignment(&sp);
         if (al > 1) loc += (al - loc % al) % al;
         if (al > align) align = al;
@@ -1443,6 +1499,7 @@ void dir_dxd(Asm *a, Stmt *st) {
         }
         loc += (int64_t)add;
         dc_vec_free(&vals);
+        dc_spec_free(&sp);
     }
     if (a->pass != 1 || st->bad) return;
     if (!asm_valid_stmt_name(st)) {

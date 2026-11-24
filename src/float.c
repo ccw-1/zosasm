@@ -1098,6 +1098,7 @@ int dc_float(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
     size_t k;
     if (sp->has_len) n = (int)sp->length;
     split_nominal(sp, &items);
+    vec_push(&a->opvecs, items);
     for (k = 0; k < items.n; k++) {
         char *t = str_trim(items.v[k].text);
         uint8_t *b = xcalloc((size_t)(n < 1 ? 1 : n) + 1);

@@ -253,6 +253,7 @@ int asm_ops(Asm *a, Stmt *st, int min, int max, OperandVec *out) {
     OperandVec tmp = {0};
     if (!out) out = &tmp;
     split_operands(out, st->operands);
+    vec_push(&a->opvecs, *out);
     n = (int)out->n;
     if (n >= min && (max < 0 || n <= max)) return 1;
     if (a->pass == 1) {
@@ -304,7 +305,7 @@ Value asm_addr_value(Asm *a, Piece *p, int64_t off) {
     Value v;
     v.defined = 1;
     v.nterms = 1;
-    v.terms = xmalloc(sizeof(Term));
+    v.terms = arena_alloc(a->arena, sizeof(Term));
     v.terms[0].coef = 1;
     if (a->laid && p->cls->sect->kind != K_DSECT) {
         v.abs = p->start + off;
@@ -404,7 +405,7 @@ static int sym_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
         out->abs = 0;
         out->defined = 1;
         out->nterms = 1;
-        out->terms = xmalloc(sizeof(Term));
+        out->terms = arena_alloc(a->arena, sizeof(Term));
         out->terms[0].base = base_sym(s);
         out->terms[0].coef = 1;
         return 1;
@@ -1168,6 +1169,8 @@ static Asm *assemble_once(const SrcLine *lines, size_t n, const char *name, Repo
     Asm *a = xcalloc(sizeof *a);
     a->rep = rep;
     a->scratch = rep_new(0);
+    a->arena = arena_new();
+    value_set_arena(a->arena);
     a->strict = za_strict_registers;
     a->hints = hints;
     a->round8 = round8;
@@ -1199,6 +1202,7 @@ static StrMap *piece_starts(const Module *m, int *settled) {
                 char *key = xasprintf("%s\x01%s\x01%s", s->name, c->name, p->name);
                 *v = s->kind == K_DSECT ? 0 : p->start;
                 strmap_put(h, key, v);
+                free(key);
                 if ((*v - p->hint) % 4096 != 0) *settled = 0;
             }
         }
@@ -1209,7 +1213,10 @@ static StrMap *piece_starts(const Module *m, int *settled) {
 static void strmap_free_contents(StrMap *m) {
     size_t i;
     if (!m) return;
-    for (i = 0; i < m->cap; i++) free(m->keys[i]);
+    for (i = 0; i < m->cap; i++) {
+        free(m->keys[i]);
+        free(m->vals[i]);
+    }
     free(m->keys);
     free(m->vals);
     free(m);
@@ -1225,6 +1232,8 @@ static void asm_state_free(Asm *a, int keep_module) {
     if (!a) return;
     for (i = 0; i < a->exprs.n; i++) expr_free(a->exprs.v[i]);
     free(a->exprs.v);
+    for (i = 0; i < a->opvecs.n; i++) operands_free(&a->opvecs.v[i]);
+    free(a->opvecs.v);
     for (i = 0; i < a->using_labels.n; i++) free(a->using_labels.v[i]);
     free(a->using_labels.v);
     for (i = 0; i < a->xattrs.n; i++) {
@@ -1273,6 +1282,10 @@ static void asm_state_free(Asm *a, int keep_module) {
     free(a->using_stack.v);
     free(a->ac_stack.v);
     if (a->end_entry && (!a->mod || a->mod->entry != a->end_entry)) free(a->end_entry);
+    if (keep_module && a->mod) a->mod->arena = a->arena;
+    else arena_free(a->arena);
+    a->arena = NULL;
+    value_set_arena(NULL);
     rep_free(a->scratch);
     if (!keep_module) asm_free(a->mod);
     free(a);
@@ -1433,6 +1446,7 @@ void asm_free(Module *m) {
     free(m->sym_order.v);
     free(m->entry);
     free(m->name);
+    arena_free(m->arena);
     for (i = 0; i < m->zrecs.n; i++) {
         /* ZRec owns no heap memory itself */
     }

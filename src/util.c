@@ -104,6 +104,33 @@ int za_streqi(const char *a, const char *b) {
     return za_strncmpi(a, b, (size_t)-1) == 0;
 }
 
+struct Arena {
+    void **blocks;
+    size_t n, cap;
+};
+
+Arena *arena_new(void) { return xcalloc(sizeof(Arena)); }
+
+void *arena_alloc(Arena *a, size_t n) {
+    void *p = xmalloc(n ? n : 1);
+    if (a) {
+        if (a->n == a->cap) {
+            a->cap = a->cap ? a->cap * 2 : 32;
+            a->blocks = xrealloc(a->blocks, a->cap * sizeof *a->blocks);
+        }
+        a->blocks[a->n++] = p;
+    }
+    return p;
+}
+
+void arena_free(Arena *a) {
+    size_t i;
+    if (!a) return;
+    for (i = 0; i < a->n; i++) free(a->blocks[i]);
+    free(a->blocks);
+    free(a);
+}
+
 void buf_reserve(Buf *b, size_t extra) {
     if (b->len + extra + 1 > b->cap) {
         size_t c = b->cap ? b->cap * 2 : 64;

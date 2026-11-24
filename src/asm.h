@@ -4,9 +4,10 @@
  * Memory: objects are owned by the Module that holds them. When zosasm is
  * used as a one-shot process the OS reclaims memory at exit; when used as
  * a library, call asm_free() to release a Module and everything it owns.
- * Some per-pass parser and operand buffers are still process-lifetime; a
- * long-lived library caller should create one process per assembly or use
- * the CLI/MCP subprocess model (DESIGN.md section 7). */
+ * Value terms live in an Arena owned by the Module and are released by
+ * asm_free(). A few buffers of the literal-pool alignment path are still
+ * process-lifetime; a long-lived caller should use one process per assembly
+ * or the CLI/MCP subprocess model (DESIGN.md section 7). */
 #ifndef ZA_ASM_H
 #define ZA_ASM_H
 
@@ -141,6 +142,7 @@ typedef struct {
 } Value;
 
 Value value_abs(int64_t n);
+void value_set_arena(Arena *a);
 int value_is_abs(const Value *v);
 /* "base + constant" with a single positive term */
 int value_simple(const Value *v, Base *b);
@@ -246,6 +248,7 @@ typedef struct {
     StrMap symbols;
     SymbolVec sym_order;
     char *entry; /* END operand, or NULL */
+    Arena *arena; /* values and other transient data kept with the module */
     Span entry_def;
     ZRecVec zrecs; /* the statements, in source order (ZSYM.md) */
     int zlevel;    /* ZSYM level written by module_emit: 0 none, 1 symbols and statements,
@@ -324,6 +327,8 @@ typedef struct {
 } Operand;
 
 typedef Vec(Operand) OperandVec;
+/* release the operand texts and the vector itself */
+void operands_free(OperandVec *v);
 
 Span stmt_operand_span(const Stmt *s, int off, int n);
 Span stmt_span(const Stmt *s); /* the operation field, or column 1 */
@@ -491,6 +496,8 @@ struct Asm {
     int ended;
     int ended_warned;
     ExprVec exprs;        /* every tree made by asm_expr(), freed by asm_state_free */
+    Arena *arena;         /* Value terms; moved to the Module when it is kept */
+    Vec(OperandVec) opvecs; /* operand vectors made by asm_ops(), freed by asm_state_free */
     Vec(char *) using_labels; /* all label strings of USINGs (owned here) */
     UsingVec usings;
     int using_id;
@@ -638,6 +645,7 @@ typedef struct {
 typedef Vec(DcVal) DcVec;
 /* release the byte buffers of a DC value vector (dc.c) */
 void dc_vec_free(DcVec *v);
+void dc_spec_free(DcSpec *sp);
 
 void asm_put_val(Asm *a, const DcVal *v);
 
@@ -673,6 +681,7 @@ typedef struct {
     int parens;
 } AddrOp;
 AddrOp asm_split_addr(Operand o);
+void addr_op_free(AddrOp *r);
 int asm_base_disp(Asm *a, Stmt *st, Operand o, int longdisp, int64_t *base, int64_t *disp);
 /* the variant of an instruction (isa_lookup) that takes n operands, or NULL */
 const IsaInst *asm_choose_variant(const IsaInst *vars, size_t nv, int n);
