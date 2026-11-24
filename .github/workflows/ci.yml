@@ -38,4 +38,6 @@ jobs:
             make CC=${{ matrix.cc }} test
           fi
       - name: check generated tables
-        run: make isa-check ebcdic-check
+        # isagen is a developer tool with process-lifetime allocations; when
+        # the sanitizer job built it, do not fail on its leaks
+        run: ASAN_OPTIONS=detect_leaks=0 make isa-check ebcdic-check
