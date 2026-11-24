@@ -1,0 +1,62 @@
+* CBLOCK language and intrinsic examples.  This file only assembles; it is
+* not a runnable program.  Expected values are in the comments.
+CBLOCK   CSECT
+         USING CBLOCK,%r12
+         LARL  %r12,CBLOCK
+         LARL  %r10,TEMP1
+         LHI   %r2,5
+         LHI   %r3,7
+
+#pragma cblock arithmetic
+#pragma cin int32_t a=%r2, int32_t b=%r3
+#pragma cout int32_t sum=%r4
+#pragma cscratch %r0, %r1, %r5, %r6
+#pragma ctemp %r10, 128, down
+#pragma cbegin
+    int32_t i;
+    int32_t t = 0;
+
+    for (i = 0; i < a; i++) {
+        if (i == 2)
+            continue;
+        t += b;                 /* 5 iterations, one skipped: 28 */
+    }
+    switch (t) {
+    case 28:
+        t += 1;                 /* 29 */
+        break;
+    default:
+        t = 0;
+    }
+    sum = t;
+#pragma cend
+
+* Pointer arithmetic and every memory/scan intrinsic.
+         LARL  %r2,SRC
+         LARL  %r3,DST
+         LARL  %r10,TEMP2
+#pragma cblock memory
+#pragma cin uint8_t *s=%r2, uint8_t *d=%r3
+#pragma cout int32_t n=%r4
+#pragma cscratch %r0, %r1, %r5, %r6, %r7
+#pragma ctemp %r10, 128, down
+#pragma cbegin
+    uint8_t *q;
+
+    n = (int32_t)__strlen(s);   /* 5 */
+    q = __memchr(s, 67, n);     /* pointer to 'C', offset 2 */
+    n += (q != 0);              /* 6 */
+    __memcpy(d, s, n);          /* ABCDEx */
+    __memmove(d + 1, d, n - 1); /* shift right by one */
+    __memset(d, 65, 1);         /* 'A' */
+#pragma cend
+
+         DS    0H
+SRC      DC    C'ABCDE',X'00'
+         DS    0H
+DST      DS    CL16
+         DS    0D
+TEMP1    DS    128D
+TEMP2    DS    128D
+         LTORG
+         END   CBLOCK

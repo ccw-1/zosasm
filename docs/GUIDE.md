@@ -43,6 +43,7 @@ printed here is that file, and the test suite assembles each of them.
 19. Macros: the C-like macro language
 20. Formatting source: `zafmt`
 21. Debug information for dbx and LLDB: `-g`
+22. Inline C blocks (`#pragma cblock`)
 
 ### Feature index
 
@@ -71,6 +72,8 @@ printed here is that file, and the test suite assembles each of them.
 | debug on z/OS with dbx or LLDB (`-g`: DWARF in the object; `-gside`: also the `.dbg` file) | 21 | |
 | write objects for Linux on Z (ELF, ASCII text) | 17 | `linux-hello.za` |
 | let an AI agent assemble, inspect and read this guide (MCP) | 18 | |
+| write inline C-like arithmetic, control flow, pointers and memory intrinsics | 22 | `cblock.za` |
+| run a CBLOCK program on Linux on Z and print its results | 22, 17 | `cblock-linux.za` |
 
 ---
 
@@ -2887,3 +2890,154 @@ Not the same as `as -g`:
   holds the DWARF itself (section 17), so there is no `.dbg` file.
 * DBGNAME holds at most 200 bytes of path.
 
+
+---
+
+## 22. Inline C blocks (`#pragma cblock`)
+
+A CBLOCK is inline code, not a function. It reads registers named in
+`#pragma cin`, writes registers named in `#pragma cout`, uses the registers in
+`#pragma cscratch`, and keeps locals and temporary values in the area named by
+`#pragma ctemp`. The body is a closed integer C subset. It creates no symbol
+and does not touch the stack pointer.
+
+The first example uses a loop, `switch`, byte pointers, and every memory and
+scan intrinsic. It only assembles; the comments give the expected values.
+
+<!-- example: cblock.za -->
+```za
+* CBLOCK language and intrinsic examples.  This file only assembles; it is
+* not a runnable program.  Expected values are in the comments.
+CBLOCK   CSECT
+         USING CBLOCK,%r12
+         LARL  %r12,CBLOCK
+         LARL  %r10,TEMP1
+         LHI   %r2,5
+         LHI   %r3,7
+
+#pragma cblock arithmetic
+#pragma cin int32_t a=%r2, int32_t b=%r3
+#pragma cout int32_t sum=%r4
+#pragma cscratch %r0, %r1, %r5, %r6
+#pragma ctemp %r10, 128, down
+#pragma cbegin
+    int32_t i;
+    int32_t t = 0;
+
+    for (i = 0; i < a; i++) {
+        if (i == 2)
+            continue;
+        t += b;                 /* 5 iterations, one skipped: 28 */
+    }
+    switch (t) {
+    case 28:
+        t += 1;                 /* 29 */
+        break;
+    default:
+        t = 0;
+    }
+    sum = t;
+#pragma cend
+
+* Pointer arithmetic and every memory/scan intrinsic.
+         LARL  %r2,SRC
+         LARL  %r3,DST
+         LARL  %r10,TEMP2
+#pragma cblock memory
+#pragma cin uint8_t *s=%r2, uint8_t *d=%r3
+#pragma cout int32_t n=%r4
+#pragma cscratch %r0, %r1, %r5, %r6, %r7
+#pragma ctemp %r10, 128, down
+#pragma cbegin
+    uint8_t *q;
+
+    n = (int32_t)__strlen(s);   /* 5 */
+    q = __memchr(s, 67, n);     /* pointer to 'C', offset 2 */
+    n += (q != 0);              /* 6 */
+    __memcpy(d, s, n);          /* ABCDEx */
+    __memmove(d + 1, d, n - 1); /* shift right by one */
+    __memset(d, 65, 1);         /* 'A' */
+#pragma cend
+
+         DS    0H
+SRC      DC    C'ABCDE',X'00'
+         DS    0H
+DST      DS    CL16
+         DS    0D
+TEMP1    DS    128D
+TEMP2    DS    128D
+         LTORG
+         END   CBLOCK
+```
+
+The second example is a runnable Linux on Z program. It builds the line
+`strlen=5 pos=2` in a stack buffer with `__strlen`, `__memchr`, `__memcpy`
+and `__memset`, then writes the buffer with the Linux write system call.
+
+<!-- example: cblock-linux.za -->
+```za
+* Linux on Z CBLOCK demo.
+*
+* Assemble:  zosasm -elf docs/examples/cblock-linux.za
+* Link:      s390x-linux-gnu-ld -e START -o cblock cblock-linux.o
+* Run:       qemu-s390x ./cblock
+*
+* The block uses the scan and memory intrinsics to build the line
+*     strlen=5 pos=2
+* and the program writes it with the Linux write system call.
+START    CSECT
+         ENTRY START
+* Stack scratch: OUT at -256, S at -512, CBLOCK temp at -1024.
+         LARL  %r2,STR
+         LGR   %r3,%r15
+         AGHI  %r3,-256
+         LGR   %r10,%r15
+         AGHI  %r10,-1024
+         LARL  %r6,PFX_LEN
+         LARL  %r7,PFX_POS
+
+#pragma cblock demo
+#pragma cin uint8_t *s=%r2, uint8_t *out=%r3, uint8_t *pfx1=%r6, uint8_t *pfx2=%r7
+#pragma cscratch %r0, %r1, %r8, %r9
+#pragma ctemp %r10, 128, down
+#pragma cbegin
+    int32_t n;
+    int32_t off;
+    uint8_t *q;
+
+    n = (int32_t)__strlen(s);
+    __memcpy(out, pfx1, 7);
+    __memset(out + 7, 48 + n, 1);
+    __memcpy(out + 8, pfx2, 5);
+    q = __memchr(s, 67, n);       /* find 'C' */
+    off = (int32_t)(q - s);
+    __memset(out + 13, 48 + off, 1);
+    __memset(out + 14, 10, 1);    /* newline */
+#pragma cend
+
+         LGHI  %r2,1
+         LGR   %r3,%r15
+         AGHI  %r3,-256
+         LGHI  %r4,15
+         SVC   4                    write(1, out, 15)
+         LGHI  %r2,0
+         SVC   1                    exit(0)
+
+STR      DC    C'ABCDE',X'00'
+         DS    0H
+PFX_LEN  DC    C'strlen='
+         DS    0H
+PFX_POS  DC    C' pos='
+         END   START
+```
+
+Assemble, link and run the second example with:
+
+```text
+zosasm -elf -o cblock-linux.o docs/examples/cblock-linux.za
+s390x-linux-gnu-ld -e START -o cblock-linux cblock-linux.o
+qemu-s390x ./cblock-linux
+```
+
+The reference for the pragmas, types, error codes and current limits is
+`docs/CBLOCK.md`. The design record is `PLAN-CBLOCK.md`.

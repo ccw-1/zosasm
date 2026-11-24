@@ -232,5 +232,16 @@ run_case memchrno '         LGR   %r3,%r15
     '#pragma cin uint8_t *s=%r3' '#pragma cout int32_t c=%r4' \
     'uint8_t *q = __memchr(s, 90, 4); c = (q == 0);' 1
 
+# the runnable Linux example in docs/examples
+case_n=$((case_n + 1))
+if "$z" -elf -o "$tmp/example.o" "$root/docs/examples/cblock-linux.za" >"$tmp/example.zerr" 2>&1 &&
+   "$ld" -e START -o "$tmp/example.elf" "$tmp/example.o" >"$tmp/example.ld" 2>&1 &&
+   [ "$("$qemu" "$tmp/example.elf" 2>/dev/null)" = "strlen=5 pos=2" ]; then
+    echo "ok   example: strlen=5 pos=2"
+else
+    echo "FAIL example: docs/examples/cblock-linux.za"
+    fail=$((fail + 1))
+fi
+
 echo "test_cblock_runtime: $((case_n - fail))/$case_n passed"
 [ "$fail" -eq 0 ]

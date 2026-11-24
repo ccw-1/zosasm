@@ -1,0 +1,53 @@
+* Linux on Z CBLOCK demo.
+*
+* Assemble:  zosasm -elf docs/examples/cblock-linux.za
+* Link:      s390x-linux-gnu-ld -e START -o cblock cblock-linux.o
+* Run:       qemu-s390x ./cblock
+*
+* The block uses the scan and memory intrinsics to build the line
+*     strlen=5 pos=2
+* and the program writes it with the Linux write system call.
+START    CSECT
+         ENTRY START
+* Stack scratch: OUT at -256, S at -512, CBLOCK temp at -1024.
+         LARL  %r2,STR
+         LGR   %r3,%r15
+         AGHI  %r3,-256
+         LGR   %r10,%r15
+         AGHI  %r10,-1024
+         LARL  %r6,PFX_LEN
+         LARL  %r7,PFX_POS
+
+#pragma cblock demo
+#pragma cin uint8_t *s=%r2, uint8_t *out=%r3, uint8_t *pfx1=%r6, uint8_t *pfx2=%r7
+#pragma cscratch %r0, %r1, %r8, %r9
+#pragma ctemp %r10, 128, down
+#pragma cbegin
+    int32_t n;
+    int32_t off;
+    uint8_t *q;
+
+    n = (int32_t)__strlen(s);
+    __memcpy(out, pfx1, 7);
+    __memset(out + 7, 48 + n, 1);
+    __memcpy(out + 8, pfx2, 5);
+    q = __memchr(s, 67, n);       /* find 'C' */
+    off = (int32_t)(q - s);
+    __memset(out + 13, 48 + off, 1);
+    __memset(out + 14, 10, 1);    /* newline */
+#pragma cend
+
+         LGHI  %r2,1
+         LGR   %r3,%r15
+         AGHI  %r3,-256
+         LGHI  %r4,15
+         SVC   4                    write(1, out, 15)
+         LGHI  %r2,0
+         SVC   1                    exit(0)
+
+STR      DC    C'ABCDE',X'00'
+         DS    0H
+PFX_LEN  DC    C'strlen='
+         DS    0H
+PFX_POS  DC    C' pos='
+         END   START

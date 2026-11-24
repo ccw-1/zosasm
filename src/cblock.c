@@ -2221,7 +2221,7 @@ static void free_block(CBlock *b) {
 }
 
 int cblock_compile(const char *file, int line, const char *head, const CBlockLine *body,
-                   size_t n, Reporter *rep, SrcVec *out) {
+                   size_t n, Reporter *rep, SrcVec *out, int *label_counter) {
     CBlock b;
     Parser p;
     CBStmtVec stmts = {0};
@@ -2239,6 +2239,10 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
     b.temp_reg = -1;
     b.name = xstrdup(head && *head ? head : "cblock");
     b.temp_down = 1;
+    if (label_counter) {
+        b.label_no = *label_counter;
+        b.label_seq = *label_counter;
+    }
     p.b = &b;
     /* metadata */
     for (i = 0; i < n; i++) {
@@ -2413,6 +2417,10 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
         free(src.p);
     }
 done:
+    if (label_counter) {
+        int used = b.label_no > b.label_seq ? b.label_no : b.label_seq;
+        if (used > *label_counter) *label_counter = used;
+    }
     for (i = 0; i < stmts.n; i++) cblock_expr_free(stmts.v[i].expr);
     if (!ok) {
         size_t k;

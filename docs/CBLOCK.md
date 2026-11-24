@@ -31,6 +31,15 @@ The block reads `%r2` and `%r3`, writes `%r4`, uses `%r0`, `%r1` and `%r5`
 as scratch, and keeps locals and spills in the 96-byte area based at `%r12`.
 It creates no symbol and does not touch `%r14` or the stack pointer.
 
+## Examples
+
+* `docs/examples/cblock.za` assembles only. It shows a loop, `switch`, byte
+  pointers, `__memcpy`, `__memmove`, `__memset`, `__strlen` and `__memchr`.
+  Comments give the expected values.
+* `docs/examples/cblock-linux.za` is a runnable Linux on Z program. It builds
+  `strlen=5 pos=2` and writes it with `SVC 4`.
+* `docs/GUIDE.md` section 22 prints both examples.
+
 ## Pragmas
 
 | pragma | meaning |
@@ -52,7 +61,8 @@ therefore cannot be `%r0` or `%r1`.
 
 `ctemp` size is in bytes and must be a multiple of 8. The compiler computes the
 slots it needs and reports `ZA5006` when the area is too small. The base
-register is preserved.
+register is preserved. Private labels are unique across all CBLOCKs in one
+assembly, so a source file may contain several blocks.
 
 ## Language
 
@@ -182,10 +192,10 @@ expanded assembly.
 ## Tests
 
 * `make test` runs `tests/test_cblock.c`.
-* `make test-cblock-runtime` runs 30 generated ELF cases under `qemu-s390x`
+* `make test-cblock-runtime` runs 31 generated ELF cases under `qemu-s390x`
   when `s390x-linux-gnu-ld` and `qemu-s390x` are installed. The suite covers
   arithmetic, control flow, pointer arithmetic, `__memcpy`, `__memmove`,
-  `__memset`, `__strlen` and `__memchr`.
+  `__memset`, `__strlen`, `__memchr`, and the runnable example.
 * `tools/cblock_oracle.sh SRC.za pok56` expands a CBLOCK with `zosasm -E`,
   converts it to HLASM source and compares the GOFF structure with HLASM
   through `tryhlasm.sh`.

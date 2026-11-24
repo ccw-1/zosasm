@@ -77,6 +77,7 @@ typedef struct {
     StrMap msyn; /* OPSYN of macro names: upper case name -> macro name ("" = deleted) */
     /* the file line being read, blanked and as written (block comments) */
     const char *cur_text, *cur_orig;
+    int cblock_label; /* next private label number, shared by all CBLOCKs */
 } Pp;
 
 /* ---- lexical helpers --------------------------------------------------- */
@@ -1563,7 +1564,7 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
                     l.line = lines.v[j].line;
                     vec_push(&body, l);
                 }
-                cblock_compile(file, ln, head, body.v, body.n, pp->rep, pp->out);
+                cblock_compile(file, ln, head, body.v, body.n, pp->rep, pp->out, &pp->cblock_label);
                 free(body.v);
                 if (pp->opt->events) {
                     size_t q;

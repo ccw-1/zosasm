@@ -63,7 +63,16 @@ static void test_compiled_assembly(void) {
         "c = a*a + b*b;\n"
         "#pragma cend\n"
         "         ST    %r4,RES\n"
+        "#pragma cblock second\n"
+        "#pragma cout int32_t d=%r5\n"
+        "#pragma cscratch %r0, %r1, %r6\n"
+        "#pragma ctemp %r12, 96, down\n"
+        "#pragma cbegin\n"
+        "int32_t i = 0; while (i < 2) { i++; } d = i;\n"
+        "#pragma cend\n"
+        "         ST    %r5,RES2\n"
         "RES      DS    F\n"
+        "RES2     DS    F\n"
         "AREA     DS    12F\n"
         "         END\n";
     Out o = run_pp(src);
