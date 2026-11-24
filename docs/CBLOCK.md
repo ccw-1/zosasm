@@ -1,7 +1,10 @@
 # Inline C blocks (`#pragma cblock`)
 
-Status: experimental on branch `ccw-inc`. The M1 expression subset and M2
-control flow are implemented. The full design is in `PLAN-CBLOCK.md`.
+Status: experimental on branch `ccw-inc`. Capture, integer expressions,
+control flow including `switch`, labels and `goto`, byte pointers, the memory
+intrinsics, and the `__strlen`/`__memchr` scan intrinsics are implemented.
+C variable DWARF is not implemented. The original design is in
+`PLAN-CBLOCK.md`.
 
 A CBLOCK is inline code, not a function. It appears where it is written,
 reads and writes named registers, and falls through to the next assembler
@@ -79,10 +82,11 @@ Expressions:
 * comparisons, `&&`, `||`, `!`, `?:`;
 * prefix and postfix `++` and `--`.
 
-There are no arrays, structures, strings, floating point, function calls,
-global variables or recursion. Byte pointers are address values only; `*p`
-and `p[i]` are not implemented. `return` is not allowed; the block ends
-at `#pragma cend`.
+There are no arrays, structures, strings, floating point, user-defined
+function calls, global variables or recursion. The `__strlen` and `__memchr`
+expression intrinsics are the only call-like forms. Byte pointers are address
+values only; `*p` and `p[i]` are not implemented. `return` is not allowed; the
+block ends at `#pragma cend`.
 
 Signed overflow wraps two's complement. Division by a constant zero is a
 compile-time error; runtime division by zero traps. A constant shift count
@@ -178,8 +182,10 @@ expanded assembly.
 ## Tests
 
 * `make test` runs `tests/test_cblock.c`.
-* `make test-cblock-runtime` runs generated ELF programs under
-  `qemu-s390x` when `s390x-linux-gnu-ld` and `qemu-s390x` are installed.
+* `make test-cblock-runtime` runs 30 generated ELF cases under `qemu-s390x`
+  when `s390x-linux-gnu-ld` and `qemu-s390x` are installed. The suite covers
+  arithmetic, control flow, pointer arithmetic, `__memcpy`, `__memmove`,
+  `__memset`, `__strlen` and `__memchr`.
 * `tools/cblock_oracle.sh SRC.za pok56` expands a CBLOCK with `zosasm -E`,
   converts it to HLASM source and compares the GOFF structure with HLASM
   through `tryhlasm.sh`.

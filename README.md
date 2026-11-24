@@ -191,7 +191,10 @@ make test
 * `CHANGELOG.md` - what each version contains.
 * `DESIGN.md` - design, source syntax, GOFF mapping, instruction table
   (section 5), diagnostics, tests.
+* `docs/CBLOCK.md` - inline C blocks (`#pragma cblock`), experimental on
+  branch `ccw-inc`.
 * `PLAN.md` - status and open work.
+* `PLAN-CBLOCK.md` - original CBLOCK design plan.
 
 ## Versions
 

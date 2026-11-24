@@ -1,13 +1,14 @@
 # CBLOCK plan: inline scalar C expressions and statements in zosasm
 
-Status: M0 (capture), M1 (integer expressions), M2 (control flow), the M3
-integration work and M5 byte pointers/memory intrinsics are implemented on
-branch `ccw-inc`. C source lines now
-appear in the listing, `%r0`/`%r1` are saved in `ctemp` when needed, and
-`tools/cblock_oracle.sh` compares a block with HLASM. `switch`, `goto`, labels and the `%r0`/`%r1` `STMG`/`LMG` save are
-implemented. C variable DWARF remains.
+> Historical design plan. For current status and user documentation, see
+> `docs/CBLOCK.md`. Later work added `switch`, labels, `goto`, byte pointers,
+> memory intrinsics, and `__strlen`/`__memchr`.
 
-Implemented in M1:
+Status: capture, integer expressions, control flow including `switch` and
+`goto`, byte pointers, memory intrinsics, and the `__strlen`/`__memchr` scan
+intrinsics are implemented on branch `ccw-inc`. C variable DWARF remains.
+
+Implemented so far:
 
 * `#pragma cblock` capture and the pragma validation.
 * `cin`, `cout`, `cinout`, `cscratch` and `ctemp`.
@@ -23,14 +24,14 @@ Implemented in M1:
 * byte pointers (`uint8_t *`, `void *`, `char *`) with assignment, comparison,
   integer byte offsets and pointer difference, but no dereference yet;
 * `__memcpy`, `__memmove` and `__memset` with constant and runtime sizes;
+* `__strlen` and `__memchr` expression intrinsics;
 * generated assembly lines and the `ZA5xxx` diagnostics;
 * `test_cblock` and the optional qemu runtime suite (`make
   test-cblock-runtime`).
 
-Not implemented yet: typed pointer dereference (`*p`, `p[i]`), a faster
-chunked runtime `memset`/`memmove`, and C variable debug information.
-The listing, switch/goto and the `%r0`/`%r1` `STMG`/`LMG` save are
-implemented.
+Not implemented yet: typed pointer dereference (`*p`, `p[i]`), `SRST`-based
+string and byte scans, a faster chunked runtime `memset`/`memmove`, and C
+variable debug information.
 
 ## 1. Goal
 
@@ -52,7 +53,8 @@ and a hand-written instruction sequence, not a separately callable routine.
 
 ## 2. Non-goals for the first version
 
-* pointers, arrays, structures, unions, strings and general memory access;
+* general pointers, arrays, structures, unions, strings, and memory access
+  beyond byte addresses;
 * floating point;
 * function calls and recursion;
 * callable CBLOCK entry points;
@@ -62,8 +64,8 @@ and a hand-written instruction sequence, not a separately callable routine.
 * a full C type system;
 * optimized code.
 
-`switch`, `goto` and helper blocks can come later if the inline version is
-useful.
+`switch`, `goto`, byte pointers and helper blocks were added after the first
+version.
 
 ## 3. Source syntax
 
@@ -434,7 +436,7 @@ loads the input registers and stores the output registers, link it with a C
 main and run it under `qemu-s390x`. Use a C reference evaluator or clang on
 the same integer expressions as the oracle for values and edge cases.
 
-Add a `make test-cblock-qemu` target for this. It is optional when the
+The implemented target is `make test-cblock-runtime`. It is optional when the
 cross toolchain is absent; CI can install `gcc-s390x-linux-gnu` and
 `qemu-user` or skip the target.
 
@@ -483,10 +485,10 @@ a diagnostic, not a crash, hang or out-of-memory exit.
 
 ### M4: optional extensions
 
-* `switch`;
+* `switch`, `goto`, labels, byte pointers, memory intrinsics and scan
+  intrinsics were implemented after the first version;
 * holding locals in registers;
 * C line and variable information in DWARF;
-* `goto`;
 * helper blocks called from another CBLOCK.
 
 Each extension gets its own design note and tests.

@@ -474,7 +474,7 @@ static CBExpr *parse_primary(Parser *p) {
                 cb_error(p->b, line, col, "ZA5003", "__memchr takes an integer byte and length");
                 p->err = 1;
             }
-            if (want == 1) e->type = type_of(64, 0);
+            if (want == 1) e->type = type_of(64, 1);
             else e->type = type_ptr();
             return e;
         }
