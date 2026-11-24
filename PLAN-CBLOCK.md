@@ -3,7 +3,7 @@
 Status: M0 (capture), M1 (integer expressions), M2 (control flow) and the
 M3 integration work are implemented on branch `ccw-inc`. C source lines now
 appear in the listing, `%r0`/`%r1` are saved in `ctemp` when needed, and
-`tools/cblock_oracle.sh` compares a block with HLASM. `switch`, `goto`, a
+`tools/cblock_oracle.sh` compares a block with HLASM. `switch`, `goto` and labels are now implemented. A
 full `STMG`/`LMG` save mode and C variable DWARF remain.
 
 Implemented in M1:
@@ -22,9 +22,8 @@ Implemented in M1:
 * `test_cblock` and the optional qemu runtime suite (`make
   test-cblock-runtime`).
 
-Not implemented yet: the save area in `ctemp` (`STMG`/`LMG`), the structured
-listing of C source lines, `switch`, `goto`/labels, and C variable debug
-information.
+Not implemented yet: a full `STMG`/`LMG` save mode and C variable debug
+information. The listing and the scalar save/restore are implemented.
 
 ## 1. Goal
 

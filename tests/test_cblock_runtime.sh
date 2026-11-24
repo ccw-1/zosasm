@@ -120,5 +120,18 @@ run_case incshort '         LHI   %r2,0
     '#pragma cin int32_t a=%r2, int32_t b=%r3' '#pragma cout int32_t c=%r4' \
     'int32_t x = a; int32_t y = x++; int32_t z = ++x; c = y + z + (a && (10 / b));' 2
 
+run_case switchcase '         LHI   %r2,2' \
+    '#pragma cin int32_t a=%r2' '#pragma cout int32_t c=%r4' \
+    'switch (a) { case 1: c = 10; break; case 2: c = 20; break; default: c = 30; }' 20
+run_case switchfall '         LHI   %r2,1' \
+    '#pragma cin int32_t a=%r2' '#pragma cout int32_t c=%r4' \
+    'int32_t t = 0; switch (a) { case 1: t = 1; case 2: t += 2; break; default: t = 9; } c = t;' 3
+run_case switchloop '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'int32_t t = 0; for (int32_t i = 0; i < 4; i++) { switch (i) { case 1: continue; case 3: break; default: t++; } t += 10; } c = t;' 32
+run_case gotolabel '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'int32_t t = 1; goto skip; t = 99; skip: t += 2; c = t;' 3
+
 echo "test_cblock_runtime: $((case_n - fail))/$case_n passed"
 [ "$fail" -eq 0 ]

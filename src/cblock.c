@@ -43,7 +43,8 @@ struct CBExpr {
     int line, col;
 };
 
-typedef enum { S_EXPR, S_ASSIGN, S_DECL, S_IF, S_WHILE, S_DO, S_FOR, S_BREAK, S_CONTINUE } CBSKind;
+typedef enum { S_EXPR, S_ASSIGN, S_DECL, S_IF, S_WHILE, S_DO, S_FOR, S_BREAK, S_CONTINUE,
+               S_LABEL, S_GOTO, S_SWITCH, S_CASE, S_DEFAULT } CBSKind;
 typedef struct CBStmt CBStmt;
 typedef Vec(CBStmt) CBStmtVec;
 struct CBStmt {
@@ -53,6 +54,8 @@ struct CBStmt {
     CBExpr *expr;
     CBExpr *cond;
     CBExpr *step;
+    char *label; /* S_LABEL internal name, S_GOTO target, S_CASE/S_DEFAULT label */
+    int64_t num; /* S_CASE value */
     CBStmtVec body;
     CBStmtVec other;
     CBStmtVec init;
@@ -73,6 +76,8 @@ typedef struct {
     int save_r0, save_r1;
     int base_slots;
     int label_no;
+    int label_seq;
+    StrMap labels; /* C label name -> internal assembler label */
     Reporter *rep;
     SrcVec *out;
     const CBlockLine *body;
@@ -282,6 +287,12 @@ static int tok_id(const Lex *l, const char *s) {
     return l->tok.kind == TK_ID && za_streqi(l->tok.s, s);
 }
 
+static int after_tok_colon(const Lex *l) {
+    const char *s = l->src + l->pos;
+    while (*s == ' ' || *s == '\t') s++;
+    return *s == ':' && s[1] != ':';
+}
+
 /* ---- parser ------------------------------------------------------------- */
 
 typedef struct {
@@ -289,6 +300,8 @@ typedef struct {
     Lex l;
     int err;
     int loop_depth;
+    int switch_depth;
+    int switch_default[16];
 } Parser;
 
 static CBExpr *parse_cond(Parser *p);
@@ -607,16 +620,163 @@ static int assign_base(int op) {
     }
 }
 
+static int const_eval(CBExpr *e, int64_t *out) {
+    int64_t a, b;
+    if (!e) return 0;
+    switch (e->kind) {
+    case E_NUM: *out = e->num; return 1;
+    case E_UN:
+        if (!const_eval(e->a, &a)) return 0;
+        if (e->op == '+') *out = a;
+        else if (e->op == '-') *out = (int64_t)(0 - (uint64_t)a);
+        else if (e->op == '~') *out = ~a;
+        else if (e->op == '!') *out = !a;
+        else return 0;
+        return 1;
+    case E_BIN:
+        if (!const_eval(e->a, &a) || !const_eval(e->b, &b)) return 0;
+        switch (e->op) {
+        case '+': *out = (int64_t)((uint64_t)a + (uint64_t)b); return 1;
+        case '-': *out = (int64_t)((uint64_t)a - (uint64_t)b); return 1;
+        case '*': *out = (int64_t)((uint64_t)a * (uint64_t)b); return 1;
+        case '/': if (!b) return 0; *out = a / b; return 1;
+        case '%': if (!b) return 0; *out = a % b; return 1;
+        case '&': *out = a & b; return 1;
+        case '|': *out = a | b; return 1;
+        case '^': *out = a ^ b; return 1;
+        case OP_SHL: *out = (int64_t)((uint64_t)a << (b & 63)); return 1;
+        case OP_SHR: *out = a >> (b & 63); return 1;
+        default: return 0;
+        }
+    default:
+        return 0;
+    }
+}
+
 static void parse_stmt(Parser *p, CBStmtVec *st) {
     CType t;
     CBExpr *e;
     int line = p->l.tok.line;
+    if (p->switch_depth > 0 && p->l.tok.kind == TK_ID && tok_id(&p->l, "case")) {
+        CBStmt s;
+        CBExpr *v;
+        int64_t cv;
+        lex_next(&p->l);
+        v = parse_assignment(p);
+        if (!v || !const_eval(v, &cv)) {
+            cb_error(p->b, line, 1, "ZA5003", "case value must be an integer constant");
+            p->err = 1;
+            return;
+        }
+        if (!tok_is(&p->l, ':')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected ':' after case");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        memset(&s, 0, sizeof s);
+        s.kind = S_CASE;
+        s.num = cv;
+        s.label = xasprintf("$CB_C%d", ++p->b->label_seq);
+        s.line = line;
+        vec_push(st, s);
+        return;
+    }
+    if (p->switch_depth > 0 && p->l.tok.kind == TK_ID && tok_id(&p->l, "default")) {
+        CBStmt s;
+        if (p->switch_default[p->switch_depth - 1]) {
+            cb_error(p->b, line, p->l.tok.col, "ZA5004", "duplicate default in switch");
+            p->err = 1;
+            return;
+        }
+        p->switch_default[p->switch_depth - 1] = 1;
+        lex_next(&p->l);
+        if (!tok_is(&p->l, ':')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected ':' after default");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        memset(&s, 0, sizeof s);
+        s.kind = S_DEFAULT;
+        s.label = xasprintf("$CB_D%d", ++p->b->label_seq);
+        s.line = line;
+        vec_push(st, s);
+        return;
+    }
+    if (p->l.tok.kind == TK_ID && after_tok_colon(&p->l)) {
+        char *name = xstrdup(p->l.tok.s);
+        char *lab;
+        CBStmt s;
+        if (strmap_get(&p->b->labels, name)) {
+            cb_error(p->b, line, p->l.tok.col, "ZA5004", "label \"%s\" is already defined", name);
+            free(name);
+            p->err = 1;
+            return;
+        }
+        lab = xasprintf("$CB_L%d", ++p->b->label_seq);
+        strmap_put(&p->b->labels, name, lab);
+        free(name);
+        lex_next(&p->l); /* name */
+        lex_next(&p->l); /* : */
+        memset(&s, 0, sizeof s);
+        s.kind = S_LABEL;
+        s.label = xstrdup(lab);
+        s.line = line;
+        vec_push(st, s);
+        if (!tok_is(&p->l, '}') && p->l.tok.kind != TK_EOF) parse_stmt(p, st);
+        return;
+    }
     if (tok_is(&p->l, ';')) { lex_next(&p->l); return; }
     if (tok_is(&p->l, '{')) {
         lex_next(&p->l);
         while (!tok_is(&p->l, '}') && p->l.tok.kind != TK_EOF && !p->err) parse_stmt(p, st);
         if (tok_is(&p->l, '}')) lex_next(&p->l);
         else cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected '}'");
+        return;
+    }
+    if (p->l.tok.kind == TK_ID && tok_id(&p->l, "switch")) {
+        CBStmt s;
+        memset(&s, 0, sizeof s);
+        s.kind = S_SWITCH;
+        s.line = line;
+        lex_next(&p->l);
+        if (!tok_is(&p->l, '(')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected '(' after switch");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        s.cond = parse_assignment(p);
+        if (!tok_is(&p->l, ')')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected ')' after switch expression");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        if (!tok_is(&p->l, '{')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected '{' after switch");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        if (p->switch_depth >= 16) {
+            cb_error(p->b, line, 1, "ZA5008", "switch nested too deeply");
+            p->err = 1;
+            return;
+        }
+        p->switch_depth++;
+        p->switch_default[p->switch_depth - 1] = 0;
+        while (!tok_is(&p->l, '}') && p->l.tok.kind != TK_EOF && !p->err)
+            parse_stmt(p, &s.body);
+        p->switch_depth--;
+        if (!tok_is(&p->l, '}')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected '}' after switch");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        vec_push(st, s);
         return;
     }
     if (p->l.tok.kind == TK_ID && tok_id(&p->l, "if")) {
@@ -744,11 +904,33 @@ static void parse_stmt(Parser *p, CBStmtVec *st) {
         vec_push(st, s);
         return;
     }
+    if (p->l.tok.kind == TK_ID && tok_id(&p->l, "goto")) {
+        CBStmt s;
+        lex_next(&p->l);
+        if (p->l.tok.kind != TK_ID) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "goto needs a label");
+            p->err = 1;
+            return;
+        }
+        memset(&s, 0, sizeof s);
+        s.kind = S_GOTO;
+        s.label = xstrdup(p->l.tok.s);
+        s.line = line;
+        lex_next(&p->l);
+        if (!tok_is(&p->l, ';')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected ';' after goto");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        vec_push(st, s);
+        return;
+    }
     if (p->l.tok.kind == TK_ID && (tok_id(&p->l, "break") || tok_id(&p->l, "continue"))) {
         int brk = tok_id(&p->l, "break");
-        if (p->loop_depth == 0) {
-            cb_error(p->b, line, p->l.tok.col, "ZA5008", "%s is only valid in a loop",
-                     brk ? "break" : "continue");
+        if (p->loop_depth == 0 && (!brk || p->switch_depth == 0)) {
+            cb_error(p->b, line, p->l.tok.col, "ZA5008", "%s is only valid in a loop%s",
+                     brk ? "break" : "continue", brk ? " or switch" : "");
             p->err = 1;
             return;
         }
@@ -826,6 +1008,20 @@ static void parse_stmt(Parser *p, CBStmtVec *st) {
         cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected ';' after statement");
         p->err = 1;
     } else lex_next(&p->l);
+}
+
+static int check_gotos(CBlock *b, CBStmtVec *v) {
+    size_t i;
+    for (i = 0; i < v->n; i++) {
+        CBStmt *s = &v->v[i];
+        if (s->kind == S_GOTO && !strmap_get(&b->labels, s->label)) {
+            cb_error(b, s->line, 1, "ZA5004", "goto target \"%s\" is not defined", s->label);
+            return 0;
+        }
+        if (!check_gotos(b, &s->body) || !check_gotos(b, &s->other) || !check_gotos(b, &s->init))
+            return 0;
+    }
+    return 1;
 }
 
 /* ---- metadata parsing --------------------------------------------------- */
@@ -984,6 +1180,7 @@ static void cblock_stmt_free(CBStmt *s) {
     cblock_expr_free(s->expr);
     cblock_expr_free(s->cond);
     cblock_expr_free(s->step);
+    free(s->label);
     cblock_stmt_vec_free(&s->body);
     cblock_stmt_vec_free(&s->other);
     cblock_stmt_vec_free(&s->init);
@@ -1003,9 +1200,10 @@ typedef struct {
     int base_slots;
     int slot_top;
     int max_slot;
-    int loop_depth;
-    const char *loop_break[16];
-    const char *loop_continue[16];
+    int ctrl_depth;
+    int ctrl_loop[16];
+    const char *ctrl_break[16];
+    const char *ctrl_continue[16];
 } Cg;
 
 static int alloc_slot(Cg *cg) {
@@ -1358,39 +1556,83 @@ static int codegen_stmt(Cg *cg, CBStmt *st) {
         free(els);
         return 1;
     }
+    if (st->kind == S_SWITCH) {
+        char *end = new_label(b);
+        const char *def = NULL;
+        size_t i;
+        int s;
+        for (i = 0; i < st->body.n; i++)
+            if (st->body.v[i].kind == S_DEFAULT) def = st->body.v[i].label;
+        if (!eval(cg, st->cond, &s)) { free(end); return 0; }
+        for (i = 0; i < st->body.n; i++) {
+            CBStmt *c = &st->body.v[i];
+            if (c->kind != S_CASE) continue;
+            load_slot(b, c->line, s, st->cond->type, 0);
+            load_imm(b, c->line, c->num, st->cond->type, 1);
+            asm_line(b, c->line, st->cond->type.bits == 64
+                                    ? (st->cond->type.unsig ? "CLGR %%r0,%%r1" : "CGR %%r0,%%r1")
+                                    : (st->cond->type.unsig ? "CLR %%r0,%%r1" : "CR %%r0,%%r1"));
+            asm_line(b, c->line, "BRCL 8,%s", c->label);
+        }
+        asm_line(b, st->line, "BRCL 15,%s", def ? def : end);
+        if (cg->ctrl_depth >= 16) {
+            cb_error(b, st->line, 1, "ZA5008", "control flow nested too deeply");
+            free(end);
+            return 0;
+        }
+        cg->ctrl_break[cg->ctrl_depth] = end;
+        cg->ctrl_continue[cg->ctrl_depth] = "";
+        cg->ctrl_loop[cg->ctrl_depth] = 0;
+        cg->ctrl_depth++;
+        for (i = 0; i < st->body.n; i++) {
+            CBStmt *c = &st->body.v[i];
+            if (c->kind == S_CASE || c->kind == S_DEFAULT) emit_label(b, c->line, c->label);
+            else if (!codegen_stmt(cg, c)) {
+                cg->ctrl_depth--;
+                free(end);
+                return 0;
+            }
+        }
+        cg->ctrl_depth--;
+        emit_label(b, st->line, end);
+        free(end);
+        return 1;
+    }
     if (st->kind == S_WHILE) {
         char *top = new_label(b), *end = new_label(b);
-        if (cg->loop_depth >= 16) {
+        if (cg->ctrl_depth >= 16) {
             cb_error(b, st->line, 1, "ZA5008", "loops nested too deeply");
             free(top); free(end);
             return 0;
         }
-        cg->loop_break[cg->loop_depth] = end;
-        cg->loop_continue[cg->loop_depth] = top;
-        cg->loop_depth++;
+        cg->ctrl_break[cg->ctrl_depth] = end;
+        cg->ctrl_continue[cg->ctrl_depth] = top;
+        cg->ctrl_loop[cg->ctrl_depth] = 1;
+        cg->ctrl_depth++;
         emit_label(b, st->line, top);
         if (!emit_cond_zero(cg, st->cond, end)) goto while_fail;
         if (!codegen_block(cg, &st->body)) goto while_fail;
         asm_line(b, st->line, "BRCL 15,%s", top);
         emit_label(b, st->line, end);
-        cg->loop_depth--;
+        cg->ctrl_depth--;
         free(top); free(end);
         return 1;
 while_fail:
-        cg->loop_depth--;
+        cg->ctrl_depth--;
         free(top); free(end);
         return 0;
     }
     if (st->kind == S_DO) {
         char *top = new_label(b), *cont = new_label(b), *end = new_label(b);
-        if (cg->loop_depth >= 16) {
+        if (cg->ctrl_depth >= 16) {
             cb_error(b, st->line, 1, "ZA5008", "loops nested too deeply");
             free(top); free(cont); free(end);
             return 0;
         }
-        cg->loop_break[cg->loop_depth] = end;
-        cg->loop_continue[cg->loop_depth] = cont;
-        cg->loop_depth++;
+        cg->ctrl_break[cg->ctrl_depth] = end;
+        cg->ctrl_continue[cg->ctrl_depth] = cont;
+        cg->ctrl_loop[cg->ctrl_depth] = 1;
+        cg->ctrl_depth++;
         emit_label(b, st->line, top);
         if (!codegen_block(cg, &st->body)) goto do_fail;
         emit_label(b, st->line, cont);
@@ -1402,25 +1644,26 @@ while_fail:
             asm_line(b, st->line, "BRCL 7,%s", top);
         }
         emit_label(b, st->line, end);
-        cg->loop_depth--;
+        cg->ctrl_depth--;
         free(top); free(cont); free(end);
         return 1;
 do_fail:
-        cg->loop_depth--;
+        cg->ctrl_depth--;
         free(top); free(cont); free(end);
         return 0;
     }
     if (st->kind == S_FOR) {
         char *top = new_label(b), *step = new_label(b), *end = new_label(b);
         if (!codegen_block(cg, &st->init)) { free(top); free(step); free(end); return 0; }
-        if (cg->loop_depth >= 16) {
+        if (cg->ctrl_depth >= 16) {
             cb_error(b, st->line, 1, "ZA5008", "loops nested too deeply");
             free(top); free(step); free(end);
             return 0;
         }
-        cg->loop_break[cg->loop_depth] = end;
-        cg->loop_continue[cg->loop_depth] = step;
-        cg->loop_depth++;
+        cg->ctrl_break[cg->ctrl_depth] = end;
+        cg->ctrl_continue[cg->ctrl_depth] = step;
+        cg->ctrl_loop[cg->ctrl_depth] = 1;
+        cg->ctrl_depth++;
         emit_label(b, st->line, top);
         if (st->cond && !emit_cond_zero(cg, st->cond, end)) goto for_fail;
         if (!codegen_block(cg, &st->body)) goto for_fail;
@@ -1431,22 +1674,45 @@ do_fail:
         }
         asm_line(b, st->line, "BRCL 15,%s", top);
         emit_label(b, st->line, end);
-        cg->loop_depth--;
+        cg->ctrl_depth--;
         free(top); free(step); free(end);
         return 1;
 for_fail:
-        cg->loop_depth--;
+        cg->ctrl_depth--;
         free(top); free(step); free(end);
         return 0;
     }
     if (st->kind == S_BREAK || st->kind == S_CONTINUE) {
-        if (cg->loop_depth <= 0) {
+        if (cg->ctrl_depth <= 0) {
             cb_error(b, st->line, 1, "ZA5008", "break/continue outside a loop");
             return 0;
         }
-        asm_line(b, st->line, "BRCL 15,%s",
-                 st->kind == S_BREAK ? cg->loop_break[cg->loop_depth - 1]
-                                     : cg->loop_continue[cg->loop_depth - 1]);
+        {
+            int k = cg->ctrl_depth - 1;
+            if (st->kind == S_CONTINUE) {
+                while (k >= 0 && !cg->ctrl_loop[k]) k--;
+                if (k < 0) {
+                    cb_error(b, st->line, 1, "ZA5008", "continue outside a loop");
+                    return 0;
+                }
+                asm_line(b, st->line, "BRCL 15,%s", cg->ctrl_continue[k]);
+            } else {
+                asm_line(b, st->line, "BRCL 15,%s", cg->ctrl_break[k]);
+            }
+        }
+        return 1;
+    }
+    if (st->kind == S_LABEL) {
+        emit_label(b, st->line, st->label);
+        return 1;
+    }
+    if (st->kind == S_GOTO) {
+        const char *lab = strmap_get(&b->labels, st->label);
+        if (!lab) {
+            cb_error(b, st->line, 1, "ZA5004", "goto target \"%s\" is not defined", st->label);
+            return 0;
+        }
+        asm_line(b, st->line, "BRCL 15,%s", lab);
         return 1;
     }
     if (st->kind == S_DECL) {
@@ -1504,6 +1770,12 @@ static void free_block(CBlock *b) {
     for (i = 0; i < b->byname.cap; i++) free(b->byname.keys[i]);
     free(b->byname.keys);
     free(b->byname.vals);
+    for (i = 0; i < b->labels.cap; i++) {
+        free(b->labels.keys[i]);
+        free(b->labels.vals[i]);
+    }
+    free(b->labels.keys);
+    free(b->labels.vals);
     free(b->name);
 }
 
@@ -1640,6 +1912,7 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
         lex_next(&p.l);
         while (p.l.tok.kind != TK_EOF && !p.err) parse_stmt(&p, &stmts);
         if (p.err) ok = 0;
+        if (ok && !check_gotos(&b, &stmts)) ok = 0;
         if (ok) {
             Cg cg;
             b.base_slots = (int)b.vars.n;

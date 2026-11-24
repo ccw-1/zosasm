@@ -62,6 +62,8 @@ Statements:
 * declarations, scalar locals, assignment and compound assignment;
 * `if`/`else`, `while`, `do ... while`, `for`;
 * `break`, `continue` and nested loops;
+* `switch`/`case`/`default`, with fallthrough and `break`;
+* labels and `goto`;
 * expression statements.
 
 Expressions:
@@ -124,5 +126,5 @@ expanded assembly.
 
 ## Not implemented
 
-`switch`, `goto`, labels, structured DWARF for C variables, and a full
-`STMG`/`LMG` save-area mode. `%r0` and `%r1` are saved individually today.
+Structured DWARF for C variables and a full `STMG`/`LMG` save-area mode.
+`%r0` and `%r1` are saved individually today.

@@ -150,6 +150,25 @@ int main(void) {
            "#pragma cend\n"
            " END\n",
            "", "BRCL");
+    expect("switch and goto compile",
+           "#pragma cblock demo\n"
+           "#pragma cout int32_t c=%r4\n"
+           "#pragma cscratch %r0, %r1\n"
+           "#pragma ctemp %r12, 64, down\n"
+           "#pragma cbegin\n"
+           "int32_t t = 0; switch (t) { case 0: t = 1; break; default: t = 2; } goto done; done: c = t;\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "BRCL");
+    expect("undefined goto",
+           "#pragma cblock demo\n"
+           "#pragma cscratch %r0, %r1\n"
+           "#pragma ctemp %r12, 64, down\n"
+           "#pragma cbegin\n"
+           "goto nowhere;\n"
+           "#pragma cend\n"
+           " END\n",
+           "ZA5004", NULL);
     expect("break outside loop",
            "#pragma cblock demo\n"
            "#pragma cscratch %r0, %r1\n"
