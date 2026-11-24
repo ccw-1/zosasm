@@ -106,6 +106,20 @@ __memset(dst, byte, len);
 `dst` and `src` are byte pointers; `byte` and `len` are integers. The size and
 fill value may be constant expressions or runtime values.
 
+Two expression intrinsics scan bytes:
+
+```c
+uint64_t n = __strlen(str);          // length up to the first zero byte
+uint8_t *p = __memchr(str, byte, len); // pointer to byte, or 0
+```
+
+`__strlen` takes a byte pointer and returns an unsigned 64-bit length.
+`__memchr` takes a byte pointer, an integer byte, and a length, and returns a
+pointer to the first matching byte, or 0. The byte value is truncated to eight
+bits. Both use a byte loop with `LLGC`, so the loaded byte does not inherit the
+upper bits of the scratch register. `LLGC` zero-extends the byte; an `IC`
+would leave the previous high bits in place and break the zero test.
+
 * A constant `__memcpy` size up to 4096 emits `MVC` chunks.
 * Runtime `__memcpy` copies 256-byte `MVC` chunks first, then a byte loop for
   the remainder.
@@ -114,6 +128,8 @@ fill value may be constant expressions or runtime values.
   backward `MVC` byte loop.
 * None of the intrinsics uses `MVCL`. Runtime `__memset` and `__memmove` still
   use byte loops; chunked versions can follow.
+* `__strlen` and `__memchr` use byte loops. `SRST` (Search String) can replace
+  the scan loop later, but the loop is the current tested form.
 * The intrinsics need nonzero scratch registers for the addresses. The
   compiler reports `ZA5005` when the `cscratch` list is too small.
 * `__memcpy` requires non-overlapping ranges. Use `__memmove` when the ranges
@@ -161,7 +177,8 @@ expanded assembly.
 
 ## Not implemented
 
-Typed pointer dereference (`*p`, `p[i]`), a faster chunked runtime `memset`
-and `memmove`, and structured DWARF for C variables. The generated
+Typed pointer dereference (`*p`, `p[i]`), `SRST`-based string and byte scans,
+a faster chunked runtime `memset` and `memmove`, and structured DWARF for C
+variables. The generated
 code already maps line information back to the C source, but local variable
 locations and types are not described in `.debug_info`.

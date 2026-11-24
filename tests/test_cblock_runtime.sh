@@ -206,6 +206,31 @@ run_ptr_case memmovefwd '         LGR   %r3,%r15
          AGHI  %r3,-256' \
     '#pragma cin uint8_t *s=%r3' '#pragma cout uint8_t *o=%r4' \
     '__memset(s, 65, 1); __memset(s + 1, 66, 1); __memset(s + 2, 67, 1); __memset(s + 3, 68, 1); __memmove(s, s + 1, 3); o = s + 1;' 67
+run_case strlen '         LGR   %r3,%r15
+         AGHI  %r3,-256
+         MVI   0(%r3),65
+         MVI   1(%r3),66
+         MVI   2(%r3),67
+         MVI   3(%r3),68
+         MVI   4(%r3),0' \
+    '#pragma cin uint8_t *s=%r3' '#pragma cout int32_t c=%r4' \
+    'c = (int32_t)__strlen(s);' 4
+run_ptr_case memchr '         LGR   %r3,%r15
+         AGHI  %r3,-256
+         MVI   0(%r3),65
+         MVI   1(%r3),66
+         MVI   2(%r3),67
+         MVI   3(%r3),68' \
+    '#pragma cin uint8_t *s=%r3' '#pragma cout uint8_t *o=%r4' \
+    'o = __memchr(s, 67, 4);' 67
+run_case memchrno '         LGR   %r3,%r15
+         AGHI  %r3,-256
+         MVI   0(%r3),65
+         MVI   1(%r3),66
+         MVI   2(%r3),67
+         MVI   3(%r3),68' \
+    '#pragma cin uint8_t *s=%r3' '#pragma cout int32_t c=%r4' \
+    'uint8_t *q = __memchr(s, 90, 4); c = (q == 0);' 1
 
 echo "test_cblock_runtime: $((case_n - fail))/$case_n passed"
 [ "$fail" -eq 0 ]

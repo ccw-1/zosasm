@@ -30,9 +30,10 @@ typedef struct CBVar {
 
 typedef Vec(CBVar *) CBVarVec;
 
-typedef enum { E_NUM, E_VAR, E_UN, E_BIN, E_CAST, E_COND, E_INC } CBEKind;
+typedef enum { E_NUM, E_VAR, E_UN, E_BIN, E_CAST, E_COND, E_INC, E_CALL } CBEKind;
 
 typedef struct CBExpr CBExpr;
+static void cblock_expr_free(CBExpr *e);
 struct CBExpr {
     CBEKind kind;
     CType type;
@@ -40,6 +41,7 @@ struct CBExpr {
     int64_t num;
     CBVar *var;
     CBExpr *a, *b, *c;
+    char *name; /* E_CALL intrinsic */
     int read_before;
     int line, col;
 };
@@ -428,6 +430,54 @@ static CBExpr *parse_primary(Parser *p) {
     }
     if (l->tok.kind == TK_ID) {
         char *name = xstrdup(l->tok.s);
+        if (!strcmp(name, "__strlen") || !strcmp(name, "__memchr")) {
+            CBExpr *e = mk_expr(E_CALL, type_of(64, 1), line, col);
+            int want = name[2] == 's' ? 1 : 3;
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after intrinsic");
+                free(e->name); free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            e->a = parse_assignment(p);
+            if (want == 3) {
+                if (!tok_is(l, ',')) {
+                    cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected ',' in intrinsic");
+                    free(e->name); free(e); p->err = 1; return NULL;
+                }
+                lex_next(l);
+                e->b = parse_assignment(p);
+                if (!tok_is(l, ',')) {
+                    cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected ',' in intrinsic");
+                    free(e->name); free(e); p->err = 1; return NULL;
+                }
+                lex_next(l);
+                e->c = parse_assignment(p);
+            }
+            if (!tok_is(l, ')')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected ')' in intrinsic");
+                free(e->name); free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!e->a || (want == 3 && (!e->b || !e->c))) {
+                cblock_expr_free(e);
+                p->err = 1;
+                return NULL;
+            }
+            if (!e->a->type.ptr) {
+                cb_error(p->b, line, col, "ZA5003", "%s needs a pointer", e->name);
+                p->err = 1;
+            }
+            if (want == 3 && (e->b->type.ptr || e->c->type.ptr)) {
+                cb_error(p->b, line, col, "ZA5003", "__memchr takes an integer byte and length");
+                p->err = 1;
+            }
+            if (want == 1) e->type = type_of(64, 0);
+            else e->type = type_ptr();
+            return e;
+        }
         CBVar *v = strmap_get(&p->b->byname, name);
         CType t;
         if (type_parse(name, &t)) {
@@ -1328,6 +1378,7 @@ static void cblock_expr_free(CBExpr *e) {
     cblock_expr_free(e->a);
     cblock_expr_free(e->b);
     cblock_expr_free(e->c);
+    free(e->name);
     free(e);
 }
 
@@ -1486,6 +1537,7 @@ static void emit_test(CBlock *b, int line, CType t) {
     asm_line(b, line, t.bits == 64 ? "LTGR %%r0,%%r0" : "LTR %%r0,%%r0");
 }
 
+static int pick_addr(CBlock *b, int used1, int used2);
 static int eval(Cg *cg, CBExpr *e, int *slotp);
 
 static int eval_bin(Cg *cg, CBExpr *e, int *slotp) {
@@ -1675,6 +1727,71 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
         else store_slot(b, e->line, s, e->var->type, 0);
         *slotp = s;
         return 1;
+    case E_CALL: {
+        int sa, sp, sl = -1;
+        if (!strcmp(e->name, "__strlen")) {
+            int addr, chr;
+            if (!eval(cg, e->a, &sa)) return 0;
+            addr = pick_addr(b, 0, 0);
+            chr = pick_addr(b, addr, 0);
+            if (addr < 0 || chr < 0) {
+                cb_error(b, e->line, e->col, "ZA5005", "__strlen needs two nonzero scratch registers");
+                return 0;
+            }
+            load_slot(b, e->line, sa, type_ptr(), addr);
+            asm_line(b, e->line, "LGHI %%r0,0");
+            {
+                char *top = new_label(b), *end = new_label(b);
+                emit_label(b, e->line, top);
+                asm_line(b, e->line, "LLGC %%r%d,0(%%r%d)", chr, addr);
+                asm_line(b, e->line, "LTR %%r%d,%%r%d", chr, chr);
+                asm_line(b, e->line, "BRCL 8,%s", end);
+                asm_line(b, e->line, "AGHI %%r%d,1", addr);
+                asm_line(b, e->line, "AGHI %%r0,1");
+                asm_line(b, e->line, "BRCL 15,%s", top);
+                emit_label(b, e->line, end);
+                free(top); free(end);
+            }
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(64, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp) || !eval(cg, e->c, &sl)) return 0;
+        {
+            int addr = pick_addr(b, 0, 0), pat = pick_addr(b, addr, 0), chr = pick_addr(b, addr, pat);
+            char *top, *found, *notf, *end;
+            if (addr < 0 || pat < 0 || chr < 0) {
+                cb_error(b, e->line, e->col, "ZA5005", "__memchr needs three nonzero scratch registers");
+                return 0;
+            }
+            load_slot(b, e->line, sa, type_ptr(), addr);
+            load_slot(b, e->line, sp, e->b->type, pat);
+            asm_line(b, e->line, "NILF %%r%d,255", pat);
+            load_slot(b, e->line, sl, e->c->type, 0);
+            top = new_label(b); found = new_label(b); notf = new_label(b); end = new_label(b);
+            asm_line(b, e->line, "LTGR %%r0,%%r0");
+            asm_line(b, e->line, "BRCL 8,%s", notf);
+            emit_label(b, e->line, top);
+            asm_line(b, e->line, "LLGC %%r%d,0(%%r%d)", chr, addr);
+            asm_line(b, e->line, "CLR %%r%d,%%r%d", chr, pat);
+            asm_line(b, e->line, "BRCL 8,%s", found);
+            asm_line(b, e->line, "AGHI %%r%d,1", addr);
+            asm_line(b, e->line, "AGHI %%r0,-1");
+            asm_line(b, e->line, "BRCL 7,%s", top);
+            emit_label(b, e->line, notf);
+            asm_line(b, e->line, "LGHI %%r0,0");
+            asm_line(b, e->line, "BRCL 15,%s", end);
+            emit_label(b, e->line, found);
+            asm_line(b, e->line, "LGR %%r0,%%r%d", addr);
+            emit_label(b, e->line, end);
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_ptr(), 0);
+            *slotp = res;
+            free(top); free(found); free(notf); free(end);
+            return 1;
+        }
+    }
     case E_BIN:
         return eval_bin(cg, e, slotp);
     }
