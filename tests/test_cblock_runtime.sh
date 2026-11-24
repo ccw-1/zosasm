@@ -95,5 +95,30 @@ run_case cmp64 '         LGHI  %r2,100
     '#pragma cin int64_t a=%r2, int64_t b=%r3' '#pragma cout int32_t c=%r4' \
     'c = a < b;' 0
 
+run_case ifelse '         LHI   %r2,3
+         LHI   %r3,7' \
+    '#pragma cin int32_t a=%r2, int32_t b=%r3' '#pragma cout int32_t c=%r4' \
+    'int32_t t; if (a < b) { t = a; } else { t = b; } c = t + 1;' 4
+run_case whileloop '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'int32_t i = 0; int32_t t = 0; while (i < 4) { t += i; i++; } c = t;' 6
+run_case forloop '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'int32_t t = 0; for (int32_t i = 0; i < 4; i++) { t += i; } c = t;' 6
+run_case dowhile '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'int32_t i = 0; int32_t t = 0; do { t++; i++; } while (i < 3); c = t;' 3
+run_case brkcont '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'int32_t t = 0; for (int32_t i = 0; i < 10; i++) { if (i == 2) continue; if (i == 5) break; t++; } c = t;' 4
+run_case ternlog '         LHI   %r2,0
+         LHI   %r3,5' \
+    '#pragma cin int32_t a=%r2, int32_t b=%r3' '#pragma cout int32_t c=%r4' \
+    'c = (a && b) ? 7 : 9; c = c + (a || b);' 10
+run_case incshort '         LHI   %r2,0
+         LHI   %r3,0' \
+    '#pragma cin int32_t a=%r2, int32_t b=%r3' '#pragma cout int32_t c=%r4' \
+    'int32_t x = a; int32_t y = x++; int32_t z = ++x; c = y + z + (a && (10 / b));' 2
+
 echo "test_cblock_runtime: $((case_n - fail))/$case_n passed"
 [ "$fail" -eq 0 ]

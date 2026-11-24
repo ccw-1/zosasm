@@ -29,7 +29,7 @@ typedef struct CBVar {
 
 typedef Vec(CBVar *) CBVarVec;
 
-typedef enum { E_NUM, E_VAR, E_UN, E_BIN, E_CAST } CBEKind;
+typedef enum { E_NUM, E_VAR, E_UN, E_BIN, E_CAST, E_COND, E_INC } CBEKind;
 
 typedef struct CBExpr CBExpr;
 struct CBExpr {
@@ -38,20 +38,26 @@ struct CBExpr {
     int op; /* operator character or OP_* */
     int64_t num;
     CBVar *var;
-    CBExpr *a, *b;
+    CBExpr *a, *b, *c;
     int read_before;
     int line, col;
 };
 
-typedef enum { S_EXPR, S_ASSIGN, S_DECL } CBSKind;
-typedef struct {
+typedef enum { S_EXPR, S_ASSIGN, S_DECL, S_IF, S_WHILE, S_DO, S_FOR, S_BREAK, S_CONTINUE } CBSKind;
+typedef struct CBStmt CBStmt;
+typedef Vec(CBStmt) CBStmtVec;
+struct CBStmt {
     CBSKind kind;
     CBVar *var;
     int op; /* assignment operator */
     CBExpr *expr;
+    CBExpr *cond;
+    CBExpr *step;
+    CBStmtVec body;
+    CBStmtVec other;
+    CBStmtVec init;
     int line;
-} CBStmt;
-typedef Vec(CBStmt) CBStmtVec;
+};
 
 typedef struct {
     const char *file;
@@ -72,7 +78,8 @@ typedef struct {
 /* multi-character operators */
 enum { OP_SHL = 256, OP_SHR, OP_LE, OP_GE, OP_EQ, OP_NE,
        OP_ADDEQ, OP_SUBEQ, OP_MULEQ, OP_DIVEQ, OP_MODEQ,
-       OP_ANDEQ, OP_OREQ, OP_XOREQ, OP_SHLEQ, OP_SHREQ };
+       OP_ANDEQ, OP_OREQ, OP_XOREQ, OP_SHLEQ, OP_SHREQ,
+       OP_LAND, OP_LOR, OP_INC, OP_DEC };
 
 /* ---- small helpers ------------------------------------------------------ */
 
@@ -236,7 +243,11 @@ static void lex_next(Lex *l) {
     } else {
         int c = (unsigned char)l->src[l->pos++];
         int op = c;
-        if (c == '+' && l->pos < l->n && l->src[l->pos] == '=') { op = OP_ADDEQ; l->pos++; }
+        if (c == '&' && l->pos < l->n && l->src[l->pos] == '&') { op = OP_LAND; l->pos++; }
+        else if (c == '|' && l->pos < l->n && l->src[l->pos] == '|') { op = OP_LOR; l->pos++; }
+        else if (c == '+' && l->pos < l->n && l->src[l->pos] == '+') { op = OP_INC; l->pos++; }
+        else if (c == '-' && l->pos < l->n && l->src[l->pos] == '-') { op = OP_DEC; l->pos++; }
+        else if (c == '+' && l->pos < l->n && l->src[l->pos] == '=') { op = OP_ADDEQ; l->pos++; }
         else if (c == '-' && l->pos < l->n && l->src[l->pos] == '=') { op = OP_SUBEQ; l->pos++; }
         else if (c == '*' && l->pos < l->n && l->src[l->pos] == '=') { op = OP_MULEQ; l->pos++; }
         else if (c == '/' && l->pos < l->n && l->src[l->pos] == '=') { op = OP_DIVEQ; l->pos++; }
@@ -273,11 +284,13 @@ typedef struct {
     CBlock *b;
     Lex l;
     int err;
+    int loop_depth;
 } Parser;
 
 static CBExpr *parse_cond(Parser *p);
 static CBExpr *parse_assignment(Parser *p);
 static CBExpr *parse_unary(Parser *p);
+static void parse_stmt(Parser *p, CBStmtVec *st);
 
 static CBExpr *mk_expr(CBEKind k, CType t, int line, int col) {
     CBExpr *e = xcalloc(sizeof *e);
@@ -299,7 +312,8 @@ static CBExpr *mk_cast(CBExpr *e, CType t) {
 static CBExpr *mk_bin(Parser *p, int op, CBExpr *a, CBExpr *b) {
     CType t;
     (void)p;
-    if (op == OP_EQ || op == OP_NE || op == OP_LE || op == OP_GE || op == '<' || op == '>') {
+    if (op == OP_EQ || op == OP_NE || op == OP_LE || op == OP_GE || op == '<' || op == '>' ||
+        op == OP_LAND || op == OP_LOR) {
         t = type_of(32, 0);
     } else {
         t = type_usual(a->type, b->type);
@@ -393,9 +407,47 @@ static CBExpr *parse_primary(Parser *p) {
     return NULL;
 }
 
+static CBExpr *parse_postfix(Parser *p) {
+    CBExpr *e = parse_primary(p);
+    while (e && (tok_is(&p->l, OP_INC) || tok_is(&p->l, OP_DEC))) {
+        CBExpr *n;
+        if (e->kind != E_VAR) {
+            cb_error(p->b, e->line, e->col, "ZA5003", "++/-- needs a variable");
+            p->err = 1;
+            return e;
+        }
+        n = mk_expr(E_INC, e->type, e->line, e->col);
+        n->op = p->l.tok.op;
+        n->var = e->var;
+        n->num = 1; /* postfix */
+        n->read_before = e->read_before;
+        lex_next(&p->l);
+        e = n;
+    }
+    return e;
+}
+
 static CBExpr *parse_unary(Parser *p) {
     Lex *l = &p->l;
     int line = l->tok.line, col = l->tok.col;
+    if (tok_is(l, OP_INC) || tok_is(l, OP_DEC)) {
+        int op = l->tok.op;
+        CBExpr *a, *e;
+        lex_next(l);
+        a = parse_unary(p);
+        if (!a) return NULL;
+        if (a->kind != E_VAR) {
+            cb_error(p->b, a->line, a->col, "ZA5003", "++/-- needs a variable");
+            p->err = 1;
+            return a;
+        }
+        e = mk_expr(E_INC, a->type, line, col);
+        e->op = op;
+        e->var = a->var;
+        e->num = 0; /* prefix */
+        e->read_before = a->read_before;
+        return e;
+    }
     if (tok_is(l, '+') || tok_is(l, '-') || tok_is(l, '!') || tok_is(l, '~')) {
         int op = l->tok.op;
         CBExpr *a;
@@ -408,11 +460,13 @@ static CBExpr *parse_unary(Parser *p) {
         e->a = a;
         return e;
     }
-    return parse_primary(p);
+    return parse_postfix(p);
 }
 
 static int prec_of(int op) {
     switch (op) {
+    case OP_LOR: return 1;
+    case OP_LAND: return 2;
     case '*': case '/': case '%': return 10;
     case '+': case '-': return 9;
     case OP_SHL: case OP_SHR: return 8;
@@ -442,8 +496,29 @@ static CBExpr *parse_binary(Parser *p, int minprec) {
 }
 
 static CBExpr *parse_cond(Parser *p) {
-    /* M1 has no ?: yet; parse_binary is enough and a '?' is diagnosed below */
-    return parse_binary(p, 1);
+    CBExpr *c = parse_binary(p, 1);
+    if (c && tok_is(&p->l, '?')) {
+        CBExpr *a, *b, *e;
+        CType t;
+        int line = c->line, col = c->col;
+        lex_next(&p->l);
+        a = parse_cond(p);
+        if (!tok_is(&p->l, ':')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected ':' in ?:");
+            p->err = 1;
+            return c;
+        }
+        lex_next(&p->l);
+        b = parse_cond(p);
+        if (!a || !b) return c;
+        t = type_usual(a->type, b->type);
+        e = mk_expr(E_COND, t, line, col);
+        e->a = c;
+        e->b = mk_cast(a, t);
+        e->c = mk_cast(b, t);
+        return e;
+    }
+    return c;
 }
 
 static CBExpr *parse_assignment(Parser *p) { return parse_cond(p); }
@@ -540,11 +615,158 @@ static void parse_stmt(Parser *p, CBStmtVec *st) {
         else cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected '}'");
         return;
     }
+    if (p->l.tok.kind == TK_ID && tok_id(&p->l, "if")) {
+        CBStmt s;
+        memset(&s, 0, sizeof s);
+        s.kind = S_IF;
+        s.line = line;
+        lex_next(&p->l);
+        if (!tok_is(&p->l, '(')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected '(' after if");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        s.cond = parse_assignment(p);
+        if (!tok_is(&p->l, ')')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected ')' after if condition");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        parse_stmt(p, &s.body);
+        if (p->l.tok.kind == TK_ID && tok_id(&p->l, "else")) {
+            lex_next(&p->l);
+            parse_stmt(p, &s.other);
+        }
+        vec_push(st, s);
+        return;
+    }
+    if (p->l.tok.kind == TK_ID && tok_id(&p->l, "while")) {
+        CBStmt s;
+        memset(&s, 0, sizeof s);
+        s.kind = S_WHILE;
+        s.line = line;
+        lex_next(&p->l);
+        if (!tok_is(&p->l, '(')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected '(' after while");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        s.cond = parse_assignment(p);
+        if (!tok_is(&p->l, ')')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected ')' after while condition");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        p->loop_depth++;
+        parse_stmt(p, &s.body);
+        p->loop_depth--;
+        vec_push(st, s);
+        return;
+    }
+    if (p->l.tok.kind == TK_ID && tok_id(&p->l, "do")) {
+        CBStmt s;
+        memset(&s, 0, sizeof s);
+        s.kind = S_DO;
+        s.line = line;
+        lex_next(&p->l);
+        p->loop_depth++;
+        parse_stmt(p, &s.body);
+        p->loop_depth--;
+        if (!(p->l.tok.kind == TK_ID && tok_id(&p->l, "while"))) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected while after do body");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        if (!tok_is(&p->l, '(')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected '(' after while");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        s.cond = parse_assignment(p);
+        if (!tok_is(&p->l, ')')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected ')' after do-while condition");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        if (!tok_is(&p->l, ';')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected ';' after do-while");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        vec_push(st, s);
+        return;
+    }
+    if (p->l.tok.kind == TK_ID && tok_id(&p->l, "for")) {
+        CBStmt s;
+        memset(&s, 0, sizeof s);
+        s.kind = S_FOR;
+        s.line = line;
+        lex_next(&p->l);
+        if (!tok_is(&p->l, '(')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected '(' after for");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        if (tok_is(&p->l, ';')) lex_next(&p->l);
+        else parse_stmt(p, &s.init);
+        if (!tok_is(&p->l, ';')) {
+            s.cond = parse_assignment(p);
+            if (!tok_is(&p->l, ';')) {
+                cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected ';' in for");
+                p->err = 1;
+                return;
+            }
+        }
+        lex_next(&p->l);
+        if (!tok_is(&p->l, ')')) s.step = parse_assignment(p);
+        if (!tok_is(&p->l, ')')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected ')' in for");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        p->loop_depth++;
+        parse_stmt(p, &s.body);
+        p->loop_depth--;
+        vec_push(st, s);
+        return;
+    }
+    if (p->l.tok.kind == TK_ID && (tok_id(&p->l, "break") || tok_id(&p->l, "continue"))) {
+        int brk = tok_id(&p->l, "break");
+        if (p->loop_depth == 0) {
+            cb_error(p->b, line, p->l.tok.col, "ZA5008", "%s is only valid in a loop",
+                     brk ? "break" : "continue");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        if (!tok_is(&p->l, ';')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected ';'");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        {
+            CBStmt s;
+            memset(&s, 0, sizeof s);
+            s.kind = brk ? S_BREAK : S_CONTINUE;
+            s.line = line;
+            vec_push(st, s);
+        }
+        return;
+    }
     if (p->l.tok.kind == TK_ID &&
-        (tok_id(&p->l, "if") || tok_id(&p->l, "while") || tok_id(&p->l, "for") ||
-         tok_id(&p->l, "do") || tok_id(&p->l, "return") || tok_id(&p->l, "break") ||
-         tok_id(&p->l, "continue") || tok_id(&p->l, "switch") || tok_id(&p->l, "goto"))) {
-        cb_error(p->b, line, p->l.tok.col, "ZA5008", "\"%s\" is not implemented in M1", p->l.tok.s);
+        (tok_id(&p->l, "return") || tok_id(&p->l, "switch") || tok_id(&p->l, "goto"))) {
+        cb_error(p->b, line, p->l.tok.col, "ZA5008", "\"%s\" is not implemented", p->l.tok.s);
         p->err = 1;
         return;
     }
@@ -742,7 +964,26 @@ static void cblock_expr_free(CBExpr *e) {
     if (!e) return;
     cblock_expr_free(e->a);
     cblock_expr_free(e->b);
+    cblock_expr_free(e->c);
     free(e);
+}
+
+static void cblock_stmt_vec_free(CBStmtVec *v);
+
+static void cblock_stmt_free(CBStmt *s) {
+    cblock_expr_free(s->expr);
+    cblock_expr_free(s->cond);
+    cblock_expr_free(s->step);
+    cblock_stmt_vec_free(&s->body);
+    cblock_stmt_vec_free(&s->other);
+    cblock_stmt_vec_free(&s->init);
+}
+
+static void cblock_stmt_vec_free(CBStmtVec *v) {
+    size_t i;
+    for (i = 0; i < v->n; i++) cblock_stmt_free(&v->v[i]);
+    free(v->v);
+    memset(v, 0, sizeof *v);
 }
 
 /* ---- code generation ---------------------------------------------------- */
@@ -751,6 +992,9 @@ typedef struct {
     CBlock *b;
     int slot_top;
     int max_slot;
+    int loop_depth;
+    const char *loop_break[16];
+    const char *loop_continue[16];
 } Cg;
 
 static int alloc_slot(Cg *cg) {
@@ -859,6 +1103,12 @@ static int find_div_pair(CBlock *b, int *even, int *divisor) {
     return 0;
 }
 
+static char *new_label(CBlock *b) { return xasprintf("$CB%d", ++b->label_no); }
+
+static void emit_test(CBlock *b, int line, CType t) {
+    asm_line(b, line, t.bits == 64 ? "LTGR %%r0,%%r0" : "LTR %%r0,%%r0");
+}
+
 static int eval(Cg *cg, CBExpr *e, int *slotp);
 
 static int eval_bin(Cg *cg, CBExpr *e, int *slotp) {
@@ -866,6 +1116,27 @@ static int eval_bin(Cg *cg, CBExpr *e, int *slotp) {
     int s0, s1, res;
     CType t = e->type;
     CType ot = type_usual(e->a->type, e->b->type);
+    if (e->op == OP_LAND || e->op == OP_LOR) {
+        char *lab = new_label(b), *end = new_label(b);
+        res = alloc_slot(cg);
+        if (!eval(cg, e->a, &s0)) { free(lab); free(end); return 0; }
+        load_slot(b, e->line, s0, e->a->type, 0);
+        emit_test(b, e->line, e->a->type);
+        asm_line(b, e->line, "BRCL %d,%s", e->op == OP_LAND ? 8 : 7, lab);
+        if (!eval(cg, e->b, &s1)) { free(lab); free(end); return 0; }
+        load_slot(b, e->line, s1, e->b->type, 0);
+        emit_test(b, e->line, e->b->type);
+        asm_line(b, e->line, "BRCL 8,%s", lab);
+        asm_line(b, e->line, "LHI %%r0,1");
+        asm_line(b, e->line, "BRCL 15,%s", end);
+        emit_label(b, e->line, lab);
+        asm_line(b, e->line, "LHI %%r0,0");
+        emit_label(b, e->line, end);
+        store_slot(b, e->line, res, type_of(32, 0), 0);
+        free(lab); free(end);
+        *slotp = res;
+        return 1;
+    }
     if (!eval(cg, e->a, &s0) || !eval(cg, e->b, &s1)) return 0;
     if (e->op == OP_EQ || e->op == OP_NE || e->op == '<' || e->op == '>' || e->op == OP_LE ||
         e->op == OP_GE) {
@@ -974,16 +1245,188 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
         store_slot(b, e->line, res, e->type, 0);
         *slotp = res;
         return 1;
+    case E_COND: {
+        char *els = new_label(b), *end = new_label(b);
+        res = alloc_slot(cg);
+        if (!eval(cg, e->a, &s0)) { free(els); free(end); return 0; }
+        load_slot(b, e->line, s0, e->a->type, 0);
+        emit_test(b, e->line, e->a->type);
+        asm_line(b, e->line, "BRCL 8,%s", els);
+        if (!eval(cg, e->b, &s0)) { free(els); free(end); return 0; }
+        load_slot(b, e->line, s0, e->b->type, 0);
+        store_slot(b, e->line, res, e->type, 0);
+        asm_line(b, e->line, "BRCL 15,%s", end);
+        emit_label(b, e->line, els);
+        if (!eval(cg, e->c, &s0)) { free(els); free(end); return 0; }
+        load_slot(b, e->line, s0, e->c->type, 0);
+        store_slot(b, e->line, res, e->type, 0);
+        emit_label(b, e->line, end);
+        free(els); free(end);
+        *slotp = res;
+        return 1;
+    }
+    case E_INC:
+        if (e->var->kind == V_CIN) {
+            cb_error(b, e->line, e->col, "ZA5003", "\"%s\" is a cin variable", e->var->name);
+            return 0;
+        }
+        if (e->read_before) {
+            cb_error(b, e->line, e->col, "ZA5003", "\"%s\" is read before it is assigned",
+                     e->var->name);
+            return 0;
+        }
+        s = alloc_slot(cg);
+        load_slot(b, e->line, e->var->slot, e->var->type, 0);
+        if (e->num) {
+            /* postfix: keep the old value in r1 */
+            asm_line(b, e->line, e->var->type.bits == 64 ? "LGR %%r1,%%r0" : "LR %%r1,%%r0");
+        }
+        asm_line(b, e->line, e->var->type.bits == 64
+                                ? (e->op == OP_INC ? "AGHI %%r0,1" : "AGHI %%r0,-1")
+                                : (e->op == OP_INC ? "AHI %%r0,1" : "AHI %%r0,-1"));
+        store_slot(b, e->line, e->var->slot, e->var->type, 0);
+        if (e->num) store_slot(b, e->line, s, e->var->type, 1);
+        else store_slot(b, e->line, s, e->var->type, 0);
+        *slotp = s;
+        return 1;
     case E_BIN:
         return eval_bin(cg, e, slotp);
     }
     return 0;
 }
 
+static int codegen_stmt(Cg *cg, CBStmt *st);
+static int codegen_block(Cg *cg, CBStmtVec *v);
+
+static int emit_cond_zero(Cg *cg, CBExpr *e, const char *label) {
+    CBlock *b = cg->b;
+    int s;
+    if (!eval(cg, e, &s)) return 0;
+    load_slot(b, e->line, s, e->type, 0);
+    emit_test(b, e->line, e->type);
+    asm_line(b, e->line, "BRCL 8,%s", label);
+    return 1;
+}
+
+static int codegen_block(Cg *cg, CBStmtVec *v) {
+    size_t i;
+    for (i = 0; i < v->n; i++)
+        if (!codegen_stmt(cg, &v->v[i])) return 0;
+    return 1;
+}
+
 static int codegen_stmt(Cg *cg, CBStmt *st) {
     CBlock *b = cg->b;
     int s;
     cg->slot_top = (int)b->vars.n;
+    if (st->kind == S_IF) {
+        char *els = new_label(b), *end = NULL;
+        if (!emit_cond_zero(cg, st->cond, els)) { free(els); return 0; }
+        if (!codegen_block(cg, &st->body)) { free(els); return 0; }
+        if (st->other.n) {
+            end = new_label(b);
+            asm_line(b, st->line, "BRCL 15,%s", end);
+            emit_label(b, st->line, els);
+            if (!codegen_block(cg, &st->other)) { free(els); free(end); return 0; }
+            emit_label(b, st->line, end);
+            free(end);
+        } else {
+            emit_label(b, st->line, els);
+        }
+        free(els);
+        return 1;
+    }
+    if (st->kind == S_WHILE) {
+        char *top = new_label(b), *end = new_label(b);
+        if (cg->loop_depth >= 16) {
+            cb_error(b, st->line, 1, "ZA5008", "loops nested too deeply");
+            free(top); free(end);
+            return 0;
+        }
+        cg->loop_break[cg->loop_depth] = end;
+        cg->loop_continue[cg->loop_depth] = top;
+        cg->loop_depth++;
+        emit_label(b, st->line, top);
+        if (!emit_cond_zero(cg, st->cond, end)) goto while_fail;
+        if (!codegen_block(cg, &st->body)) goto while_fail;
+        asm_line(b, st->line, "BRCL 15,%s", top);
+        emit_label(b, st->line, end);
+        cg->loop_depth--;
+        free(top); free(end);
+        return 1;
+while_fail:
+        cg->loop_depth--;
+        free(top); free(end);
+        return 0;
+    }
+    if (st->kind == S_DO) {
+        char *top = new_label(b), *cont = new_label(b), *end = new_label(b);
+        if (cg->loop_depth >= 16) {
+            cb_error(b, st->line, 1, "ZA5008", "loops nested too deeply");
+            free(top); free(cont); free(end);
+            return 0;
+        }
+        cg->loop_break[cg->loop_depth] = end;
+        cg->loop_continue[cg->loop_depth] = cont;
+        cg->loop_depth++;
+        emit_label(b, st->line, top);
+        if (!codegen_block(cg, &st->body)) goto do_fail;
+        emit_label(b, st->line, cont);
+        {
+            int s;
+            if (!eval(cg, st->cond, &s)) goto do_fail;
+            load_slot(b, st->cond->line, s, st->cond->type, 0);
+            emit_test(b, st->cond->line, st->cond->type);
+            asm_line(b, st->line, "BRCL 7,%s", top);
+        }
+        emit_label(b, st->line, end);
+        cg->loop_depth--;
+        free(top); free(cont); free(end);
+        return 1;
+do_fail:
+        cg->loop_depth--;
+        free(top); free(cont); free(end);
+        return 0;
+    }
+    if (st->kind == S_FOR) {
+        char *top = new_label(b), *step = new_label(b), *end = new_label(b);
+        if (!codegen_block(cg, &st->init)) { free(top); free(step); free(end); return 0; }
+        if (cg->loop_depth >= 16) {
+            cb_error(b, st->line, 1, "ZA5008", "loops nested too deeply");
+            free(top); free(step); free(end);
+            return 0;
+        }
+        cg->loop_break[cg->loop_depth] = end;
+        cg->loop_continue[cg->loop_depth] = step;
+        cg->loop_depth++;
+        emit_label(b, st->line, top);
+        if (st->cond && !emit_cond_zero(cg, st->cond, end)) goto for_fail;
+        if (!codegen_block(cg, &st->body)) goto for_fail;
+        emit_label(b, st->line, step);
+        if (st->step) {
+            int s;
+            if (!eval(cg, st->step, &s)) goto for_fail;
+        }
+        asm_line(b, st->line, "BRCL 15,%s", top);
+        emit_label(b, st->line, end);
+        cg->loop_depth--;
+        free(top); free(step); free(end);
+        return 1;
+for_fail:
+        cg->loop_depth--;
+        free(top); free(step); free(end);
+        return 0;
+    }
+    if (st->kind == S_BREAK || st->kind == S_CONTINUE) {
+        if (cg->loop_depth <= 0) {
+            cb_error(b, st->line, 1, "ZA5008", "break/continue outside a loop");
+            return 0;
+        }
+        asm_line(b, st->line, "BRCL 15,%s",
+                 st->kind == S_BREAK ? cg->loop_break[cg->loop_depth - 1]
+                                     : cg->loop_continue[cg->loop_depth - 1]);
+        return 1;
+    }
     if (st->kind == S_DECL) {
         if (st->expr) {
             if (!eval(cg, st->expr, &s)) return 0;

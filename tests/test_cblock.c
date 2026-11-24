@@ -140,6 +140,25 @@ int main(void) {
            "#pragma cend\n"
            " END\n",
            "ZA5001", NULL);
+    expect("if and while compile",
+           "#pragma cblock demo\n"
+           "#pragma cout int32_t c=%r4\n"
+           "#pragma cscratch %r0, %r1\n"
+           "#pragma ctemp %r12, 64, down\n"
+           "#pragma cbegin\n"
+           "int32_t i = 0; while (i < 2) { i++; } c = i;\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "BRCL");
+    expect("break outside loop",
+           "#pragma cblock demo\n"
+           "#pragma cscratch %r0, %r1\n"
+           "#pragma ctemp %r12, 64, down\n"
+           "#pragma cbegin\n"
+           "break;\n"
+           "#pragma cend\n"
+           " END\n",
+           "ZA5008", NULL);
     expect("cbegin outside",
            "#pragma cbegin\n"
            " END\n",
