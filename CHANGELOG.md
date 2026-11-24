@@ -6,6 +6,12 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 
 ## Unreleased
 
+CBLOCK (`#pragma cblock`): inline integer C blocks with bound registers,
+scalar locals, expressions, control flow including `switch` and `goto`, byte
+pointers, `__memcpy`/`__memmove`/`__memset`, and `__strlen`/`__memchr`.
+Private labels are unique across blocks. See `docs/CBLOCK.md`; examples are
+`docs/examples/cblock.za` and `docs/examples/cblock-linux.za`.
+
 Review fixes (2026-11-24): `asm_free()`/`rep_free()` correctness, an arena
 for `Value` terms owned by the Module, operand/expression/emitter
 destructors, `#define` recursion and macro string/list limits,

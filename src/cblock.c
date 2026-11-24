@@ -1,8 +1,9 @@
-/* cblock.c - inline scalar C-like blocks. See PLAN-CBLOCK.md.
+/* cblock.c - inline scalar C-like blocks. See docs/CBLOCK.md.
  *
- * M1: expressions, bound registers, scalar locals, assignments and the
- * integer operators. Control flow and the full listing integration follow in
- * M2/M3. The parser is deliberately small and reports ZA5xxx diagnostics. */
+ * The implementation covers expressions, bound registers, scalar locals,
+ * assignments, integer operators, control flow including switch and goto,
+ * byte pointers, and the memory and scan intrinsics. The parser is
+ * deliberately small and reports ZA5xxx diagnostics. */
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>

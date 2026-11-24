@@ -1,6 +1,6 @@
 # Inline C blocks (`#pragma cblock`)
 
-Status: experimental on branch `ccw-inc`. Capture, integer expressions,
+Status: experimental. Capture, integer expressions,
 control flow including `switch`, labels and `goto`, byte pointers, the memory
 intrinsics, and the `__strlen`/`__memchr` scan intrinsics are implemented.
 C variable DWARF is not implemented. The original design is in

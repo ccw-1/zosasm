@@ -84,15 +84,16 @@ Status key: [x] done, [-] in progress, [ ] open.
 ## Phase 5 - CBLOCK inline scalar blocks
 
 `#pragma cblock` implements the inline scalar C-like block designed in
-`PLAN-CBLOCK.md`. It is implemented on branch `ccw-inc`, not merged to main.
-It is not a callable function: the block falls through, reads and writes
+`PLAN-CBLOCK.md`. It is experimental. It is not a callable function: the block falls through, reads and writes
 explicitly bound registers, and uses an optional caller-provided temp area.
 The implemented subset covers 32-bit and 64-bit integers, scalar locals,
 expressions, casts, assignments, `if`/`else`, `while`, `do`, `for`,
-`break`/`continue`, short-circuit `&&`/`||`, `?:`, `++`/`--`, and the
-CBLOCK listing and oracle checks. It compiles to ordinary assembler
-statements. Pointers, arrays, floating point, calls, recursion, `switch`,
-`goto`, C variable DWARF and a full `STMG`/`LMG` save mode stay out of scope.
+`break`/`continue`, short-circuit `&&`/`||`, `?:`, `++`/`--`, `switch`,
+labels, `goto`, byte pointers, the memory intrinsics (`__memcpy`,
+`__memmove`, `__memset`) and the scan intrinsics (`__strlen`, `__memchr`).
+It compiles to ordinary assembler statements. Typed pointer dereference,
+arrays, floating point, user-defined calls, recursion, C variable DWARF,
+chunked runtime `memset`/`memmove`, and `SRST`-based scans stay out of scope.
 
 Docs: `docs/CBLOCK.md`, design and milestones in `PLAN-CBLOCK.md`.
 
