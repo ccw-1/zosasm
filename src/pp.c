@@ -9,6 +9,7 @@
 #include <time.h>
 
 #include "pp.h"
+#include "cblock.h"
 #include "ebcdic.h"
 #include "macro.h"
 #include "version.h"
@@ -941,6 +942,17 @@ static void do_include(Pp *pp, const char *rest, Span sp) {
     pp->depth--;
 }
 
+/* is this line "#pragma WORD" (the word case insensitive, first word only)? */
+static int pragma_word(const char *line, const char *word) {
+    const char *dir, *rest;
+    size_t n = 0;
+    dir = directive_of(line, &rest);
+    if (!dir || strcmp(dir, "pragma")) return 0;
+    rest = skip_blanks(rest);
+    while (rest[n] && !is_blank((unsigned char)rest[n])) n++;
+    return n == strlen(word) && !za_strncmpi(rest, word, n);
+}
+
 static void do_pragma(Pp *pp, const char *rest, Span sp) {
     char *r = str_trim(rest), *word, *arg;
     size_t n = 0;
@@ -964,6 +976,11 @@ static void do_pragma(Pp *pp, const char *rest, Span sp) {
         for (k = 0; arg[k] && za_isdigit((unsigned char)arg[k]); k++) {
         }
         if (arg[k]) rep_errorf(pp->rep, "ZA4061", sp, "#pragma space takes a number of lines");
+    } else if (!strcmp(word, "cblock") || !strcmp(word, "cbegin") || !strcmp(word, "cend") ||
+               !strcmp(word, "cin") || !strcmp(word, "cout") || !strcmp(word, "cinout") ||
+               !strcmp(word, "cscratch") || !strcmp(word, "ctemp")) {
+        rep_errorf(pp->rep, "ZA5001", sp,
+                   "#pragma %s is only valid inside a #pragma cblock block", word);
     } else if (!strcmp(word, "print")) {
         char *a = za_strlower(xstrdup(arg));
         if (strcmp(a, "on") && strcmp(a, "off") && strcmp(a, "data") && strcmp(a, "nodata") &&
@@ -1517,6 +1534,40 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
             }
         }
         dir = directive_of(t, &rest);
+        if (dir && !strcmp(dir, "pragma") && pragma_word(t, "cblock")) {
+            size_t j, end = lines.n;
+            int nested = 0;
+            for (j = i + 1; j < lines.n; j++) {
+                if (pragma_word(lines.v[j].text, "cend")) { end = j; break; }
+                if (pragma_word(lines.v[j].text, "cblock")) nested = 1;
+            }
+            if (end == lines.n) {
+                rep_errorf(pp->rep, "ZA5001", span_make(file, ln, 1, 1),
+                           "unterminated #pragma cblock (no #pragma cend)");
+                free(joined_bs); free(joined_pl); free(joined_po);
+                i = nxt = lines.n;
+                continue;
+            }
+            if (nested)
+                rep_errorf(pp->rep, "ZA5001", span_make(file, lines.v[end].line, 1, 1),
+                           "a #pragma cblock cannot be nested");
+            if (active(pp)) {
+                CBlockLineVec body = {0};
+                const char *head = skip_blanks(rest);
+                for (j = i + 1; j < end; j++) {
+                    CBlockLine l;
+                    l.text = lines.v[j].text;
+                    l.line = lines.v[j].line;
+                    vec_push(&body, l);
+                }
+                cblock_compile(file, ln, head, body.v, body.n, pp->rep, pp->out);
+                free(body.v);
+            }
+            pp->line = lines.v[end].line;
+            free(joined_bs); free(joined_pl); free(joined_po);
+            i = nxt = end + 1;
+            continue;
+        }
         if (!dir && active(pp) && !pp->comma) {
             /* a call of a macro continues on the next lines while its operands end in a comma */
             StmtFields f;
