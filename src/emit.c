@@ -14,6 +14,13 @@
 
 static const char *sect_name(const Section *s) { return s->name[0] ? s->name : PRIV_NAME; }
 
+/* a blank/whitespace-only section name cannot be referenced by name */
+static int is_blank_name(const char *n) {
+    for (; *n; n++)
+        if (*n != ' ' && *n != '\t') return 0;
+    return 1;
+}
+
 static void set_name(GoffESD *e, const char *s) {
     e->name = ebcdic_from_source(s, strlen(s), &e->name_len);
 }
@@ -437,6 +444,12 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
         sd.name_space = GOFF_NS_NORMAL;
         set_name(&sd, sect_name(s));
         sd.attr.common = s->kind == K_COM;
+        apply_xattr(&sd.attr, xattr_of(m, s->name));
+        /* a blank CSECT name cannot be referenced by name; scope it to the
+         * section so two blank-named CSECTs in different objects do not
+         * collide at bind time (XL C does this for dir1/a.c and dir2/a.c) */
+        if (s->name[0] && sd.attr.scope == GOFF_SCOPE_UNSPEC && is_blank_name(s->name))
+            sd.attr.scope = GOFF_SCOPE_SECTION;
         TRY(put_esd(w, &sd));
         s->esd = sd.id;
         for (ci = 0; ci < s->classes.n; ci++) TRY(emit_class(w, m, s, s->classes.v[ci]));
@@ -448,6 +461,8 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
             Symbol *sym;
             init_ld(&ld, s, s->name, s->classes.v[0], 1);
             apply_xattr(&ld.attr, xattr_of(m, s->name));
+            if (s->name[0] && ld.attr.scope == GOFF_SCOPE_UNSPEC && is_blank_name(s->name))
+                ld.attr.scope = GOFF_SCOPE_SECTION;
             TRY(put_esd(w, &ld));
             sym = module_symbol(m, s->name);
             if (sym) sym->ld_esd = ld.id;

@@ -369,6 +369,38 @@ static void test_sub_relocs(void) {
 /* golden GOFF structure test: testdata/golden.za assembles to a stable
  * GOFF layout that we can check structurally (this guards against silent
  * changes to ESD/TXT/RLD/END emission). */
+static void test_blank_name_scope(void) {
+    /* a blank-named CSECT is implicitly section-scoped so two such CSECTs
+     * in different objects do not collide at bind time */
+    GoffModule *g = emit_src("\" \"     CSECT\n"
+                             "         BR    14\n"
+                             "         END\n");
+    const GoffESD *sd, *ld;
+    if (!g) return;
+    sd = find_esd(g, GOFF_SD, " ");
+    CHECK(sd != NULL);
+    CHECK(sd && sd->attr.scope == GOFF_SCOPE_SECTION);
+    ld = find_esd(g, GOFF_LD, " ");
+    CHECK(ld != NULL);
+    CHECK(ld && ld->attr.scope == GOFF_SCOPE_SECTION);
+}
+
+static void test_blank_name_explicit_scope(void) {
+    /* explicit XATTR SCOPE overrides the implicit SECTION scope */
+    GoffModule *g = emit_src("\" \"     CSECT\n"
+                             "\" \"     XATTR SCOPE(MODULE)\n"
+                             "         BR    14\n"
+                             "         END\n");
+    const GoffESD *sd, *ld;
+    if (!g) return;
+    sd = find_esd(g, GOFF_SD, " ");
+    CHECK(sd != NULL);
+    CHECK(sd && sd->attr.scope == GOFF_SCOPE_MODULE);
+    ld = find_esd(g, GOFF_LD, " ");
+    CHECK(ld != NULL);
+    CHECK(ld && ld->attr.scope == GOFF_SCOPE_MODULE);
+}
+
 static void test_golden_goff(void) {
     size_t n;
     char *text = read_file("testdata/golden.za", &n);
@@ -410,6 +442,8 @@ int main(void) {
     test_dsect_not_emitted();
     test_entry_external();
     test_quoted_names();
+    test_blank_name_scope();
+    test_blank_name_explicit_scope();
     test_samples();
     test_golden_goff();
     test_golden_files();
