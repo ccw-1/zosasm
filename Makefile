@@ -15,7 +15,7 @@ LIBSRC := $(filter-out src/main.c src/hlasm2za.c src/mcp.c src/zafmt.c,$(wildcar
 OBJ    := $(LIBSRC:src/%.c=build/%.o)
 TESTS  := $(patsubst tests/%.c,build/%,$(wildcard tests/test_*.c))
 
-.PHONY: all test test-maclib test-mcp-asan test-free-asan clean isa isa-check ebcdic-check pdf
+.PHONY: all test test-maclib test-mcp-asan test-free-asan test-cblock-runtime clean isa isa-check ebcdic-check pdf
 all: build/zosasm build/hlasm2za build/zafmt build/zosasm-mcp
 
 build:
@@ -80,6 +80,10 @@ test-free-asan: build/zosasm build/libzosasm.a
 		-Isrc -I. -o build/test_asm_free_asan tests/test_asm_free.c build/libzosasm.a -lm \
 		-fsanitize=address,undefined
 	ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 ./build/test_asm_free_asan
+
+# CBLOCK runtime test (optional cross tools: s390x-linux-gnu-ld, qemu-s390x)
+test-cblock-runtime: build/zosasm
+	tests/test_cblock_runtime.sh
 
 # regenerate src/isa_tab.c from isa/isa.json (isa.json itself comes from the
 # Principles of Operation: python3 tools/pop2json.py SA22-7832-14.pdf > isa/isa.json)

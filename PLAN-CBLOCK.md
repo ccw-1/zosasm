@@ -1,6 +1,25 @@
 # CBLOCK plan: inline scalar C expressions and statements in zosasm
 
-Status: design proposal, not implemented.
+Status: M0 (capture) and the M1 expression subset are implemented on branch
+`ccw-inc`. Control flow, listing integration and the remaining milestones are
+not implemented yet.
+
+Implemented in M1:
+
+* `#pragma cblock` capture and the pragma validation.
+* `cin`, `cout`, `cinout`, `cscratch` and `ctemp`.
+* 32-bit and 64-bit integer values, literals, casts and the C-like usual
+  arithmetic conversions.
+* declarations, scalar locals, assignments and compound assignments;
+* unary `+ - ! ~`, arithmetic, bitwise, shifts, comparisons, division and
+  remainder;
+* a temp-slot stack machine with a computed size check;
+* generated assembly lines and the `ZA5xxx` diagnostics;
+* `test_cblock` and the optional qemu runtime suite (`make
+  test-cblock-runtime`).
+
+Not implemented yet: `if` and loops, `? :`, `&&`/`||`, `++`/`--`, the save
+area in `ctemp`, the structured listing, and C variable debug information.
 
 ## 1. Goal
 

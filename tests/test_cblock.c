@@ -1,7 +1,8 @@
-/* test_cblock.c - capture of #pragma cblock (PLAN-CBLOCK.md, M0). */
+/* test_cblock.c - capture and M1 compilation of #pragma cblock. */
 #include <stdlib.h>
 #include <string.h>
 
+#include "../src/asm.h"
 #include "../src/pp.h"
 #include "testlib.h"
 
@@ -35,46 +36,114 @@ static Out run_pp(const char *src) {
     return out;
 }
 
-static void expect(const char *name, const char *src, const char *want_text,
-                   const char *want_codes) {
+static void expect(const char *name, const char *src, const char *want_codes, const char *needle) {
     Out o = run_pp(src);
-    CHECK_MSG(!strcmp(o.text, want_text), "%s: output \"%s\", want \"%s\"", name, o.text,
-              want_text);
     CHECK_MSG(!strcmp(o.codes, want_codes), "%s: codes \"%s\", want \"%s\"", name, o.codes,
               want_codes);
+    if (needle) CHECK_MSG(strstr(o.text, needle) != NULL, "%s: output lacks \"%s\": %s", name,
+                         needle, o.text);
+    free(o.text);
+    free(o.codes);
+    rep_free(o.rep);
+}
+
+static void test_compiled_assembly(void) {
+    const char *src =
+        "MAIN CSECT\n"
+        "         USING MAIN,15\n"
+        "         LA    %r12,AREA\n"
+        "         LHI   %r2,3\n"
+        "         LHI   %r3,4\n"
+        "#pragma cblock squares\n"
+        "#pragma cin int32_t a=%r2, int32_t b=%r3\n"
+        "#pragma cout int32_t c=%r4\n"
+        "#pragma cscratch %r0, %r1, %r5\n"
+        "#pragma ctemp %r12, 96, down\n"
+        "#pragma cbegin\n"
+        "c = a*a + b*b;\n"
+        "#pragma cend\n"
+        "         ST    %r4,RES\n"
+        "RES      DS    F\n"
+        "AREA     DS    12F\n"
+        "         END\n";
+    Out o = run_pp(src);
+    Buf b = {0};
+    size_t i;
+    Reporter *rep;
+    Module *m;
+    for (i = 0; o.text[i]; i++) buf_putc(&b, o.text[i] == '|' ? '\n' : o.text[i]);
+    rep = rep_new(0);
+    m = asm_assemble_text("t.za", buf_cstr(&b), b.len, rep);
+    CHECK_MSG(!strcmp(o.codes, ""), "compiled block codes: %s", o.codes);
+    CHECK_MSG(m != NULL, "compiled block does not assemble");
+    if (m) asm_free(m);
+    rep_free(rep);
+    free(b.p);
     free(o.text);
     free(o.codes);
     rep_free(o.rep);
 }
 
 int main(void) {
-    expect("captured block",
+    expect("compiled block",
            "#pragma cblock demo\n"
+           "#pragma cin int32_t a=%r2\n"
+           "#pragma cout int32_t b=%r3\n"
+           "#pragma cscratch %r0, %r1\n"
+           "#pragma ctemp %r12, 64, down\n"
            "#pragma cbegin\n"
-           "int x = 1;\n"
+           "b = a + 1;\n"
            "#pragma cend\n"
            " END\n",
-           " END", "ZA5002");
+           "", "AR %r0,%r1");
+    expect("no cbegin",
+           "#pragma cblock demo\n"
+           " END\n",
+           "ZA5001", NULL);
     expect("unterminated",
            "#pragma cblock demo\n"
            "#pragma cbegin\n"
-           "int x = 1;\n"
+           "return;\n"
            " END\n",
-           "", "ZA5001");
-    expect("nested",
-           "#pragma cblock a\n"
-           "#pragma cblock b\n"
-           "#pragma cend\n"
+           "ZA5001", NULL);
+    expect("return unsupported",
+           "#pragma cblock demo\n"
+           "#pragma ctemp %r12, 64, down\n"
+           "#pragma cscratch %r0, %r1\n"
+           "#pragma cbegin\n"
+           "return;\n"
            "#pragma cend\n"
            " END\n",
-           " END", "ZA5001 ZA5002 ZA5001");
+           "ZA5008", NULL);
+    expect("temp too small",
+           "#pragma cblock demo\n"
+           "#pragma cin int32_t a=%r2\n"
+           "#pragma cout int32_t b=%r3\n"
+           "#pragma cscratch %r0, %r1\n"
+           "#pragma ctemp %r12, 8, down\n"
+           "#pragma cbegin\n"
+           "b = a;\n"
+           "#pragma cend\n"
+           " END\n",
+           "ZA5006", NULL);
+    expect("read before assign",
+           "#pragma cblock demo\n"
+           "#pragma cout int32_t b=%r3\n"
+           "#pragma cscratch %r0, %r1\n"
+           "#pragma ctemp %r12, 64, down\n"
+           "#pragma cbegin\n"
+           "b = b + 1;\n"
+           "#pragma cend\n"
+           " END\n",
+           "ZA5003", NULL);
     expect("cend outside",
            "#pragma cend\n"
            " END\n",
-           " END", "ZA5001");
+           "ZA5001", NULL);
     expect("cbegin outside",
            "#pragma cbegin\n"
            " END\n",
-           " END", "ZA5001");
+           "ZA5001", NULL);
+    test_compiled_assembly();
     TEST_MAIN_END();
 }

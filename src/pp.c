@@ -1553,7 +1553,9 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
                            "a #pragma cblock cannot be nested");
             if (active(pp)) {
                 CBlockLineVec body = {0};
-                const char *head = skip_blanks(rest);
+                const char *head = skip_blanks(rest), *hp = head;
+                while (*hp && !is_blank((unsigned char)*hp)) hp++;
+                head = skip_blanks(hp);
                 for (j = i + 1; j < end; j++) {
                     CBlockLine l;
                     l.text = lines.v[j].text;
