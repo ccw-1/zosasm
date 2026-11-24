@@ -16,6 +16,7 @@ typedef struct {
     int bits;  /* 32 or 64 */
     int unsig; /* unsigned */
     int ptr;   /* a byte/void pointer value */
+    int target; /* named opaque pointer target: 0 byte/void, else CBlock->ptypenames index + 1 */
 } CType;
 
 typedef enum { V_CIN, V_COUT, V_CINOUT, V_LOCAL } VKind;
@@ -43,6 +44,7 @@ struct CBExpr {
     CBVar *var;
     CBExpr *a, *b, *c;
     char *name; /* E_CALL intrinsic */
+    char *sym, *field; /* __sizeof/__offsetof symbol arguments */
     int read_before;
     int line, col;
 };
@@ -76,6 +78,7 @@ typedef struct {
     StrMap byname;
     int scratch[16];
     int nscratch;
+    Vec(char *) ptypenames; /* opaque pointer target names, index + 1 in CType.target */
     int temp_reg;
     long temp_size;
     int temp_down;
@@ -105,6 +108,7 @@ static CType type_of(int bits, int unsig) {
     t.bits = bits;
     t.unsig = unsig;
     t.ptr = 0;
+    t.target = 0;
     return t;
 }
 static CType type_ptr(void) {
@@ -112,9 +116,25 @@ static CType type_ptr(void) {
     t.bits = 64;
     t.unsig = 1;
     t.ptr = 1;
+    t.target = 0;
     return t;
 }
-static int type_same(CType a, CType b) { return a.bits == b.bits && a.unsig == b.unsig && a.ptr == b.ptr; }
+static CType type_ptr_named(CBlock *b, const char *name) {
+    CType t = type_ptr();
+    size_t i;
+    for (i = 0; i < b->ptypenames.n; i++)
+        if (!strcmp(b->ptypenames.v[i], name)) {
+            t.target = (int)i + 1;
+            return t;
+        }
+    vec_push(&b->ptypenames, xstrdup(name));
+    t.target = (int)b->ptypenames.n;
+    return t;
+}
+
+static int type_same(CType a, CType b) {
+    return a.bits == b.bits && a.unsig == b.unsig && a.ptr == b.ptr && a.target == b.target;
+}
 
 static int type_parse(const char *s, CType *t) {
     char *p = xstrdup(s);
@@ -140,6 +160,34 @@ static int type_parse(const char *s, CType *t) {
     free(p);
     return r;
 }
+static int type_text_parse(CBlock *b, const char *text, CType *t) {
+    char *p = xstrdup(text), *q = str_trim(p);
+    size_t n = strlen(q);
+    int r = 0;
+    while (n > 0 && (q[n - 1] == ' ' || q[n - 1] == '\t')) q[--n] = 0;
+    if (n > 0 && q[n - 1] == '*') {
+        q[--n] = 0;
+        while (n > 0 && (q[n - 1] == ' ' || q[n - 1] == '\t')) q[--n] = 0;
+        if (za_streqi(q, "uint8_t") || za_streqi(q, "void") || za_streqi(q, "char")) {
+            *t = type_ptr();
+            r = 1;
+        } else {
+            CType base;
+            if (type_parse(q, &base)) {
+                (void)base;
+                r = 0;
+            } else {
+                *t = type_ptr_named(b, q);
+                r = 1;
+            }
+        }
+    } else {
+        r = type_parse(q, t);
+    }
+    free(p);
+    return r;
+}
+
 #if 0
 static int type_parse_old(const char *s, CType *t) {
     if (za_streqi(s, "int32_t")) { *t = type_of(32, 0); return 1; }
@@ -334,6 +382,22 @@ static int tok_id(const Lex *l, const char *s) {
     return l->tok.kind == TK_ID && za_streqi(l->tok.s, s);
 }
 
+static int peek_is_star(Lex *l) {
+    Lex t = *l;
+    int r;
+    t.ids.v = NULL;
+    t.ids.n = t.ids.cap = 0;
+    t.tok.s = NULL;
+    lex_next(&t);
+    r = tok_is(&t, '*');
+    {
+        size_t i;
+        for (i = 0; i < t.ids.n; i++) free(t.ids.v[i]);
+        free(t.ids.v);
+    }
+    return r;
+}
+
 static int after_tok_colon(const Lex *l) {
     const char *s = l->src + l->pos;
     while (*s == ' ' || *s == '\t') s++;
@@ -388,7 +452,7 @@ static CBExpr *mk_bin(Parser *p, int op, CBExpr *a, CBExpr *b) {
             p->err = 1;
             return a;
         }
-        t = type_ptr();
+        t = a->type.ptr ? a->type : b->type;
     } else if (op == '-' && a->type.ptr && b->type.ptr) {
         t = type_of(64, 0); /* byte pointer difference */
     } else if (op == '-' && a->type.ptr) {
@@ -434,6 +498,54 @@ static CBExpr *parse_primary(Parser *p) {
     }
     if (l->tok.kind == TK_ID) {
         char *name = xstrdup(l->tok.s);
+        if (!strcmp(name, "__sizeof") || !strcmp(name, "__offsetof")) {
+            int is_off = !strcmp(name, "__offsetof");
+            char *sym = NULL, *field = NULL, *iname = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(') || (lex_next(l), l->tok.kind != TK_ID)) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001",
+                         "expected a section name in %s", iname);
+                free(iname); free(sym); free(field);
+                p->err = 1;
+                return NULL;
+            }
+            sym = xstrdup(l->tok.s);
+            lex_next(l);
+            if (is_off) {
+                if (!tok_is(l, ',')) {
+                    cb_error(p->b, l->tok.line, l->tok.col, "ZA5001",
+                             "expected ',' in __offsetof");
+                    free(iname); free(sym);
+                    p->err = 1;
+                    return NULL;
+                }
+                lex_next(l);
+                if (l->tok.kind != TK_ID) {
+                    cb_error(p->b, l->tok.line, l->tok.col, "ZA5001",
+                             "expected a field name in __offsetof");
+                    free(iname); free(sym);
+                    p->err = 1;
+                    return NULL;
+                }
+                field = xstrdup(l->tok.s);
+                lex_next(l);
+            }
+            if (!tok_is(l, ')')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected ')' after %s", iname);
+                free(iname); free(sym); free(field);
+                p->err = 1;
+                return NULL;
+            }
+            lex_next(l);
+            {
+                CBExpr *e = mk_expr(E_CALL, type_of(64, 1), line, col);
+                e->name = iname;
+                e->sym = sym;
+                e->field = field;
+                return e;
+            }
+        }
         if (!strcmp(name, "__strlen") || !strcmp(name, "__memchr")) {
             CBExpr *e = mk_expr(E_CALL, type_of(64, 1), line, col);
             int want = name[2] == 's' ? 1 : 3;
@@ -510,6 +622,27 @@ static CBExpr *parse_primary(Parser *p) {
             char *tn = xstrdup(l->tok.s);
             if (type_parse(tn, &ct)) {
                 lex_next(l);
+                free(tn);
+                if (tok_is(l, '*')) {
+                    cb_error(p->b, l->tok.line, l->tok.col, "ZA5002",
+                             "typed scalar pointers are not implemented; use a byte pointer");
+                    p->err = 1;
+                    return NULL;
+                }
+                if (!tok_is(l, ')')) {
+                    cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected ')' after a cast type");
+                    p->err = 1;
+                    return NULL;
+                }
+                lex_next(l);
+                e = parse_unary(p);
+                if (!e) return NULL;
+                return mk_cast(e, ct);
+            }
+            if (peek_is_star(l)) {
+                lex_next(l); /* move to * */
+                lex_next(l); /* past * */
+                ct = type_ptr_named(p->b, tn);
                 free(tn);
                 if (!tok_is(l, ')')) {
                     cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected ')' after a cast type");
@@ -590,6 +723,12 @@ static CBExpr *parse_unary(Parser *p) {
         if (!a) return NULL;
         if (!a->type.ptr) {
             cb_error(p->b, a->line, a->col, "ZA5003", "cannot dereference a non-pointer");
+            p->err = 1;
+            return a;
+        }
+        if (a->type.target) {
+            cb_error(p->b, a->line, a->col, "ZA5002",
+                     "cannot dereference a named DSECT pointer; use __offsetof and a byte pointer");
             p->err = 1;
             return a;
         }
@@ -739,6 +878,22 @@ static int parse_type(Parser *p, CType *t) {
         }
         lex_next(&p->l);
         *t = type_ptr();
+        return 1;
+    }
+    if (peek_is_star(&p->l)) {
+        char *name = xstrdup(p->l.tok.s);
+        CType base;
+        if (type_parse(name, &base) && !base.ptr) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5002",
+                     "typed scalar pointers are not implemented; use a byte pointer");
+            free(name);
+            p->err = 1;
+            return 1;
+        }
+        lex_next(&p->l);
+        lex_next(&p->l);
+        *t = type_ptr_named(p->b, name);
+        free(name);
         return 1;
     }
     if (!type_parse(p->l.tok.s, t)) return 0;
@@ -1354,7 +1509,7 @@ static int binding_parse(CBlock *b, const char *rest, int line, VKind kind) {
                     char *type_text = xstrndup(decl, n);
                     vn = xstrdup(name_start);
                     rn = trim(eq + 1);
-                    if (!type_parse(type_text, &t)) {
+                    if (!type_text_parse(b, type_text, &t)) {
                         cb_error(b, line, 1, "ZA5002", "unsupported cblock type \"%s\"", type_text);
                         bad = 1;
                     } else if (!reg_parse(rn, &reg)) {
@@ -1447,6 +1602,8 @@ static void cblock_expr_free(CBExpr *e) {
     cblock_expr_free(e->b);
     cblock_expr_free(e->c);
     free(e->name);
+    free(e->sym);
+    free(e->field);
     free(e);
 }
 
@@ -1829,6 +1986,16 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
         return 1;
     case E_CALL: {
         int sa, sp, sl = -1;
+        if (!strcmp(e->name, "__sizeof") || !strcmp(e->name, "__offsetof")) {
+            if (e->field)
+                asm_line(b, e->line, "LGFI %%r0,offsetof(%s,%s)", e->sym, e->field);
+            else
+                asm_line(b, e->line, "LGFI %%r0,sizeof(%s)", e->sym);
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(64, 1), 0);
+            *slotp = res;
+            return 1;
+        }
         if (!strcmp(e->name, "__strlen")) {
             int addr, chr;
             if (!eval(cg, e->a, &sa)) return 0;
@@ -2341,6 +2508,8 @@ static void free_block(CBlock *b) {
     }
     free(b->labels.keys);
     free(b->labels.vals);
+    for (i = 0; i < b->ptypenames.n; i++) free(b->ptypenames.v[i]);
+    free(b->ptypenames.v);
     free(b->name);
 }
 

@@ -84,6 +84,9 @@ static void test_debug_metadata(void) {
 
 static void test_compiled_assembly(void) {
     const char *src =
+        "P        DSECT\n"
+        "P_A      DS    F\n"
+        "P_B      DS    CL4\n"
         "MAIN CSECT\n"
         "         USING MAIN,15\n"
         "         LA    %r12,AREA\n"
@@ -106,8 +109,17 @@ static void test_compiled_assembly(void) {
         "int32_t i = 0; while (i < 2) { i++; } d = i;\n"
         "#pragma cend\n"
         "         ST    %r5,RES2\n"
+        "#pragma cblock typed\n"
+        "#pragma cout int32_t n=%r4, P *o=%r5\n"
+        "#pragma cscratch %r0, %r1, %r6\n"
+        "#pragma ctemp %r12, 96, down\n"
+        "#pragma cbegin\n"
+        "P *p; p = (P *)0; o = p; n = (int32_t)__sizeof(P) + (int32_t)__offsetof(P, P_B);\n"
+        "#pragma cend\n"
+        "         ST    %r4,RES3\n"
         "RES      DS    F\n"
         "RES2     DS    F\n"
+        "RES3     DS    F\n"
         "AREA     DS    12F\n"
         "         END\n";
     Out o = run_pp(src);

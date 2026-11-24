@@ -70,6 +70,8 @@ Types:
 * `int32_t`, `uint32_t`, `int64_t`, `uint64_t`
 * `int` and `unsigned` as 32-bit aliases
 * `uint8_t *`, `void *` and `char *` byte pointers
+* opaque named pointers such as `PARM *p`, where `PARM` is a DSECT or
+  section name
 
 Pointers can be assigned, compared, adjusted by an integer byte count
 (`p + 4`, `p - 4`, `p += 4`) and subtracted (`p - q`, a byte difference).
@@ -77,7 +79,11 @@ Pointers can be assigned, compared, adjusted by an integer byte count
 to `*p` or `p[i]` writes the low byte of the value. `&local` returns a byte
 pointer to the local's slot in `ctemp`; `&*p` is just `p`. A bound
 `cin`/`cout` register has no storage, so `&` rejects it. There is no typed
-pointer-to-integer distinction beyond these byte pointers.
+pointer-to-integer distinction beyond these byte pointers. A named pointer
+is still byte addressed and opaque: it can be assigned, compared, passed to
+the memory intrinsics and adjusted by a byte count, but it cannot be
+dereferenced with `*p` or `p[i]` and has no `p->field` operator. Use
+`__offsetof(PARM, field)` with a byte pointer for manual field access.
 
 Statements:
 
@@ -91,6 +97,7 @@ Statements:
 Expressions:
 
 * integer literals, variables, casts;
+* `__sizeof(section)` and `__offsetof(section, field)`;
 * unary `*` (byte load) and `&` (address of a local);
 * postfix `p[i]` (byte load from `p + i`);
 * `+ - * / %`, shifts, bitwise operators;
@@ -124,6 +131,17 @@ __memset(dst, byte, len);
 
 `dst` and `src` are byte pointers; `byte` and `len` are integers. The size and
 fill value may be constant expressions or runtime values.
+
+Two assembly-time lookup intrinsics are also available:
+
+```c
+uint64_t n = __sizeof(PARM);             // sizeof(PARM)
+uint64_t o = __offsetof(PARM, P_TABLE);  // offsetof(PARM, P_TABLE)
+```
+
+They emit the assembler's `sizeof` and `offsetof` expressions as `LGFI`
+immediates. The section or DSECT must be visible to the assembler. They do not
+give CBLOCK a layout: `__offsetof` returns an integer, not a typed field.
 
 Two expression intrinsics scan bytes:
 
@@ -221,7 +239,8 @@ expanded assembly.
 
 ## Not implemented
 
-Typed pointers (`uint32_t *` and pointer-to-pointer), arrays, `SRST`-based
-string and byte scans, a faster chunked runtime `memset` and `memmove`,
-nested CBLOCK scopes, and C source line mapping in DWARF. Debug lines still
-use the `.za` line that contains the generated statement.
+Typed scalar pointers (`uint32_t *`), pointer-to-pointer types, `p->field`
+access, arrays, `SRST`-based string and byte scans, a faster chunked runtime
+`memset` and `memmove`, nested CBLOCK scopes, and C source line mapping in
+DWARF. Debug lines still use the `.za` line that contains the generated
+statement.
