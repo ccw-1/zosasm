@@ -83,11 +83,13 @@ Status key: [x] done, [-] in progress, [ ] open.
 
 ## Phase 5 - proposal: CBLOCK scalar expressions
 
-A design proposal for a small C-like scalar block (`#pragma cblock`) lives in
-`PLAN-CBLOCK.md`. It is not implemented. The first version is limited to
-32-bit and 64-bit integers, scalar locals, expressions, and `if`/loop control
-flow. It compiles to ordinary assembler statements, with a caller-provided
-temp area and explicit register mappings. C source appears in the listing.
+A design proposal for a small inline C-like scalar block (`#pragma cblock`)
+lives in `PLAN-CBLOCK.md`. It is not implemented and is not a callable
+function: the block falls through, reads and writes explicitly bound
+registers, and uses an optional caller-provided temp area. The first version
+is limited to 32-bit and 64-bit integers, scalar locals, expressions, and
+`if`/loop control flow. It compiles to ordinary assembler statements. C
+source appears in the listing.
 Pointers, arrays, floating point, calls, recursion, and C semantics outside
 the documented subset stay out of scope.
 

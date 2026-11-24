@@ -1,4 +1,4 @@
-# CBLOCK plan: scalar C expressions and statements in zosasm
+# CBLOCK plan: inline scalar C expressions and statements in zosasm
 
 Status: design proposal, not implemented.
 
@@ -8,72 +8,85 @@ Make complex integer expressions and short control-flow sequences easier to
 write and review, without making zosasm a general C compiler, a linker, or a
 runtime library.
 
-A CBLOCK is a leaf code block written in a small C subset. zosasm compiles it
-to ordinary assembler statements. The statements go through the normal
+A CBLOCK is inline code. It is not a function, it is not called, and it does
+not create an entry label. It executes at the point where it appears and
+falls through to the next assembler statement. It reads and writes named
+registers, uses an optional caller-provided temporary area, and compiles to
+ordinary assembler statements. Those statements go through the normal
 assembler passes, so labels, `USING`, listing, ZSYM and object emission work
-unchanged. The listing shows the C source next to the generated instructions.
+unchanged.
 
 The primary user is a person or agent writing assembly who wants to express
-arithmetic and branching clearly. Performance is secondary to predictable
-code and a readable listing.
+arithmetic and branching clearly. The block is a convenience between a macro
+and a hand-written instruction sequence, not a separately callable routine.
 
 ## 2. Non-goals for the first version
 
-* pointers, arrays, structures, unions, strings and memory access;
+* pointers, arrays, structures, unions, strings and general memory access;
 * floating point;
 * function calls and recursion;
+* callable CBLOCK entry points;
 * external symbols, relocations or literal pools from CBLOCK code;
 * a C preprocessor inside a CBLOCK;
 * global variables;
 * a full C type system;
-* optimized code. Correct, simple code comes first.
+* optimized code.
 
-`switch`, `goto` and inlining of helper blocks can come later if the first
-version is useful.
+`switch`, `goto` and helper blocks can come later if the inline version is
+useful.
 
 ## 3. Source syntax
 
-A CBLOCK starts with `#pragma cblock`, carries ABI metadata in `#pragma`
-lines, starts its body at `#pragma cbegin`, and ends at `#pragma cend`.
+A CBLOCK starts with `#pragma cblock`, carries a register and temporary-area
+contract in `#pragma` lines, starts its body at `#pragma cbegin`, and ends at
+`#pragma cend`.
 
 ```asm
-#pragma cblock int32_t clamp(int32_t x, int32_t lo, int32_t hi)
-#pragma cargs    x=%r2, lo=%r3, hi=%r4
-#pragma cresult  %r2
-#pragma cscratch %r0, %r1, %r5, %r14
-#pragma ctemp    %r12, 64, down
+        L      %r2,X
+        L      %r3,Y
+#pragma cblock squares
+#pragma cin     int32_t a=%r2, int32_t b=%r3
+#pragma cout    int32_t c=%r4
+#pragma cscratch %r0, %r1, %r5
+#pragma ctemp   %r12, 64, down
 #pragma cbegin
-    int32_t t = x;
-    if (t < lo) t = lo;
-    if (t > hi) t = hi;
-    return t;
+    c = a*a + b*b;
 #pragma cend
+        ST     %r4,Z
 ```
 
-The function name becomes the entry label. Internal labels use a reserved
-prefix, for example `clamp$c1`, and cannot collide with user symbols.
+The optional name after `cblock` is for diagnostics and the listing only. It
+does not define a symbol. Put a normal assembler label before the block when
+the code needs a branch target.
 
 The preprocessor captures the block before it processes comments, `#` lines
 or continuations. The C lexer handles `//` and `/* */` itself. A `#pragma`
 line inside a body is an error except `cend`.
 
-The ABI pragmas are:
+The pragmas are:
 
 | pragma | meaning |
 |---|---|
-| `cargs name=%rN,...` | parameter name and its entry register |
-| `cresult %rN` | register that holds the result |
+| `cin type name=%rN,...` | variable read from a register; the block may also write it unless declared with `cout` |
+| `cout type name=%rN,...` | variable written to a register; the block must assign it before reading it |
+| `cinout type name=%rN,...` | variable read from and written to the same register |
 | `cscratch %rN,...` | registers the generated code may use and clobber |
 | `ctemp %rN,SIZE,DIR` | caller-provided scalar temporary area, size in bytes, `up` or `down` |
-| `ctemp` omitted | the compiler may use only `cscratch` registers and must not spill |
+| `ctemp` omitted | the compiler may use only bound registers and `cscratch`; no spills |
 
-`cscratch` accepts ranges, for example `%r5-%r7`. The temp base register
-cannot be `%r0` because `%r0` cannot be a base register in many address forms.
-The temp base register is preserved by the generated code.
+`cscratch` accepts ranges, for example `%r5-%r7`. A bound register may not
+appear in `cscratch`. The temp base register may not be `%r0` because `%r0`
+cannot be a base register in many address forms. The temp base register is
+preserved by the generated code.
 
 The compiler reports the temp area it actually needs. It is a diagnostic if
 the declared size is smaller. A block with no `ctemp` produces a diagnostic
 when an expression needs a spill.
+
+`cinout` is the common case for a register that already holds a value and
+should hold the updated value afterwards. `cout` is for a fresh result. A
+`cout` variable uses the register only at the point where the C code assigns
+it.
 
 ## 4. Language semantics
 
@@ -103,8 +116,10 @@ undefined:
   instruction does;
 * a constant shift count outside `0..width-1` is a compile-time error;
 * a variable shift count is masked to the operand width;
-* a scalar local without an initializer is zero-initialized. This is an
-  extension to C and is stated in the guide;
+* an unbound scalar local without an initializer is zero-initialized. This is
+  an extension to C and is stated in the guide;
+* a `cout` variable must be assigned before it is read. The type checker
+  rejects an obvious read before assignment;
 * comparisons produce `0` or `1` in the result type;
 * `&&`, `||`, the ternary operator and assignments evaluate in the usual C
   order. Operands with side effects are only variables and `++`/`--` in the
@@ -117,8 +132,12 @@ Statements:
 * declarations with or without an initializer;
 * expression statements;
 * assignment and compound assignment;
-* `if`, `else`, `while`, `for`, `do`, `break`, `continue`, `return`;
+* `if`, `else`, `while`, `for`, `do`, `break`, `continue`;
 * nested blocks and scalar locals.
+
+`return` is not allowed. A CBLOCK has no function boundary. The block ends at
+`#pragma cend` and falls through to the next statement. `break` and
+`continue` apply only to loops inside the block.
 
 Expressions:
 
@@ -137,64 +156,68 @@ help line.
 
 ### 4.4 Variables and scope
 
-Locals are block scoped and have a fixed slot in the temp area, or a register
-in a later optimization. The first version assigns every local a slot. A
-variable declared inside a loop is reinitialized on entry to its block.
+The `cin`, `cout` and `cinout` pragmas declare variables that are bound to
+physical registers. Their type is written in the pragma. The body uses them
+without redeclaration.
 
-Labels generated for `if`, loops and `return` are private to the block and
-appear in the listing.
+Locals declared in the body are block scoped and have a fixed slot in the
+temp area, or a register in a later optimization. The first version assigns
+every local a slot. A variable declared inside a loop is reinitialized on
+entry to its block.
 
-## 5. ABI and generated code
+Labels generated for `if` and loops are private to the block and appear in
+the listing. They use a reserved prefix based on the block name or line
+number.
 
-The generated code is leaf code:
+## 5. Register contract and generated code
 
-* arguments arrive in the registers named by `cargs`;
-* the result is left in the register named by `cresult`;
-* `%r14` holds the return address; the block returns with `BR %r14`;
-* the block preserves every register not in `cscratch` and preserves the
-  `ctemp` base register;
+The block has a contract with the surrounding code, not a call ABI:
+
+* `cin` variables contain their register value at block entry;
+* `cout` and `cinout` variables contain their final value at block exit;
+* the block preserves every register not in `cscratch` and not bound by
+  `cout`/`cinout`;
+* bound registers are never used as scratch;
 * no save area is created, no stack pointer is changed, and no call is made;
-* the temp area is a caller-owned scalar frame. The block only loads and
-  stores fixed slots in it.
+* the temporary area is caller-owned and the block only loads and stores
+  fixed slots in it;
+* the block may use the condition code and leaves it undefined at the end.
 
-Illustrative output for the clamp block:
+Illustrative output for the multiplication example:
 
 ```asm
-CLAMP     DS    0H
-         LR    %r5,%r2
-         CR    %r5,%r3
-         BRCL  4,CLAMP$C1
-         LR    %r5,%r3
-CLAMP$C1 CR    %r5,%r4
-         BRCL  2,CLAMP$C2
-         LR    %r5,%r4
-CLAMP$C2 LR    %r2,%r5
-         BR    %r14
+        * cblock squares
+        MSR   %r2,%r2
+        MSR   %r3,%r3
+        AR    %r4,%r2
+        AR    %r4,%r3
+        * end cblock squares
 ```
 
-The exact mnemonics and condition masks are code generator decisions. The
-generator uses `BRCL` first for a simple and safe branch range, then can
-switch to `BRC` when the block is small.
+In practice the generator evaluates `a*a`, then `b*b`, and combines the
+results with the available scratch registers. The exact sequence depends on
+the expression tree and the register pool.
 
 The listing shows the original C line as a generated note and then the
 instructions it produced:
 
 ```text
-        CBLOCK clamp, C source at demo.asm:10
-10      int32_t t = x;
-        CLAMP     DS    0H
-        LR        %r5,%r2
-10      if (t < lo) t = lo;
-        CR        %r5,%r3
-        BRCL      4,CLAMP$C1
-        LR        %r5,%r3
-        ...
+        CBLOCK squares, C source at demo.asm:12
+12      c = a*a + b*b;
+        MSR       %r5,%r2
+        MSR       %r6,%r3
+        AR        %r5,%r6
+        LR        %r4,%r5
         * cblock temp used: 0 of 64 bytes
 ```
 
 `-disasm` shows the generated assembly, not the C source. ZSYM stores the
 generated statements like any other statements. `-g` initially has no C
 variable types; line mapping to C lines is a later phase.
+
+If a `cout` variable is assigned several times, only the final value must be
+in the register at block exit. The generator may keep it in a temp slot and
+move it at the end, unless it is cheaper to keep it in the bound register.
 
 ## 6. Compiler architecture
 
@@ -234,8 +257,9 @@ existing assembler consumes.
 The lexer and parser handle the subset directly. The AST keeps source spans
 so every diagnostic names the C file, line and column.
 
-The type checker resolves integer types, inserts explicit conversions and
-rejects mixed operations outside the subset.
+The type checker resolves integer types, inserts explicit conversions, checks
+`cout` assignment before use, and rejects mixed operations outside the
+subset.
 
 ### 6.2 IR and code generation
 
@@ -244,7 +268,8 @@ Lower the AST to a small three address form:
 * `const`, `var`, `temp`;
 * unary and binary operations;
 * `load`, `store`;
-* `label`, `branch`, `cond_branch`, `return`.
+* `label`, `branch`, `cond_branch`;
+* `end` for the implicit fall through.
 
 Control flow becomes explicit labels and branches. Short-circuit operators
 and the ternary operator become conditional branches.
@@ -252,12 +277,13 @@ and the ternary operator become conditional branches.
 The first code generator is deliberately simple:
 
 * every local lives in a temp slot;
+* bound registers are loaded and stored only when the C code uses them;
 * every expression evaluates left to right into `cscratch` registers;
 * an expression may spill to a temp slot when the scratch registers are
   exhausted;
-* the result is loaded from a temp slot into the result register at
-  `return`;
-* no register is kept live across statements.
+* no register is kept live across statements except bound variables that the
+  generator chooses to keep in their register;
+* the generated code falls through to the next assembler statement.
 
 This produces verbose but predictable code. Holding locals in registers is a
 later optimization.
@@ -306,9 +332,9 @@ lines carry the original C line number and text. `listing.c` prints the C
 line as a generated note and the assembler line below it. Diagnostics use the
 C span.
 
-If the listing format is too invasive for the first version, emit `* C: ...`
-comment lines before each generated group. The final design should use the
-structured generated lines.
+If the structured listing format is too invasive for the first version, emit
+`* C: ...` comment lines before each generated group. The final design should
+use the structured generated lines.
 
 ### 7.3 ZSYM, disassembly and debug information
 
@@ -335,14 +361,14 @@ Reserve `ZA5xxx` for CBLOCK diagnostics:
 | ZA5002 | unsupported type or operation |
 | ZA5003 | type mismatch or invalid cast |
 | ZA5004 | undeclared variable |
-| ZA5005 | invalid register mapping or scratch list |
+| ZA5005 | invalid register binding or scratch list |
 | ZA5006 | temp area too small, or spill without `ctemp` |
 | ZA5007 | constant division by zero or invalid shift |
-| ZA5008 | unsupported statement |
+| ZA5008 | unsupported statement, including `return` |
 | ZA5009 | internal compiler error, with a note to report it |
 
 Every diagnostic points at the C source. A note points at the `#pragma
-cblock` line and shows the entry name.
+cblock` line and shows the block name or source line.
 
 ## 9. Testing
 
@@ -352,6 +378,7 @@ cblock` line and shows the entry name.
 
 * lexer and parser acceptance and rejection;
 * type checking and constant folding;
+* register binding, `cin`/`cout`/`cinout` and `cscratch` validation;
 * golden assembler text for expressions and control flow;
 * temp slot allocation and size checks;
 * diagnostic codes and source positions;
@@ -365,22 +392,25 @@ Compile CBLOCK probes with `zosasm -gz0 -o` and check the object with
 where the sequence is stable.
 
 For GOFF correctness, write an equivalent hand-written HLASM probe and
-compare the generated object structure with `tools/oracle_obj.py`. This
-checks the ABI and the encoded instructions, not the C source.
+compare the generated object structure with `tools/oracle_obj.py`. Put the
+block inside a small assembly routine that loads the input registers and
+stores the output registers. This checks the encoded instructions and the
+register contract, not the C source.
 
 ### 9.3 Runtime tests
 
-Compile a CBLOCK to ELF with `-elf`, link it with a small assembly driver and
-run it under `qemu-s390x`. Use a C reference evaluator or clang on the same
-integer expressions as the oracle for values and edge cases.
+Compile a CBLOCK to ELF with `-elf`, wrap it in a small assembly driver that
+loads the input registers and stores the output registers, link it with a C
+main and run it under `qemu-s390x`. Use a C reference evaluator or clang on
+the same integer expressions as the oracle for values and edge cases.
 
 Add a `make test-cblock-qemu` target for this. It is optional when the
 cross toolchain is absent; CI can install `gcc-s390x-linux-gnu` and
 `qemu-user` or skip the target.
 
-For z/OS, a small pok56 probe can call one generated function with a few
-arguments and print the result. This is useful once the ABI is stable, but
-the ELF path gives faster feedback.
+For z/OS, a small pok56 probe can run one block with a few inputs and print
+the result. This is useful once the register contract is stable, but the ELF
+path gives faster feedback.
 
 ### 9.4 Fuzzing
 
@@ -391,8 +421,8 @@ a diagnostic, not a crash, hang or out-of-memory exit.
 
 ### M0: skeleton and capture
 
-* Define `#pragma cblock`, `cargs`, `cresult`, `cscratch`, `ctemp`, `cbegin`,
-  `cend`.
+* Define `#pragma cblock`, `cin`, `cout`, `cinout`, `cscratch`, `ctemp`,
+  `cbegin`, `cend`.
 * Capture the block in `pp.c` and reject malformed pragmas.
 * Add `src/cblock.c` with an empty compiler that returns an error.
 * Tests for capture and diagnostics.
@@ -400,7 +430,7 @@ a diagnostic, not a crash, hang or out-of-memory exit.
 ### M1: expressions
 
 * Lexer, parser and type checker for the integer expression subset.
-* Locals with initializers, assignments and `return`.
+* Bound variables and unbound locals with initializers.
 * Simple register evaluation with spills to `ctemp`.
 * Golden assembler output and parser/type tests.
 * Listing of generated lines as comments.
@@ -435,15 +465,13 @@ Each extension gets its own design note and tests.
 
 * **Scope creep into C.** Keep the type set and statement set closed. Reject
   pointers, arrays, calls and floats in the first version.
-* **Register allocation bugs.** The simple stack of scratch registers with
-  explicit spills is easier to test than an optimizer. Do not optimize until
-  the semantics and the ABI tests are stable.
-* **ABI misuse.** The generated code must preserve the declared registers and
-  the temp base. Test every register mapping, including `%r0` rejection.
+* **Register binding bugs.** The block must never use a bound register as
+  scratch and must preserve registers outside the contract. Test every
+  binding direction, including `%r0` rejection for `ctemp`.
 * **Temp area accounting.** Compute the exact requirement and make the
   listing show it. A wrong slot offset is a hard-to-find runtime failure.
-* **Listing integration.** Keep the generated source lines separate from
-  user source, and keep ZSYM/disassembly behavior explicit.
+* **Listing integration.** Keep generated source lines separate from user
+  source, and keep ZSYM/disassembly behavior explicit.
 * **Branch range.** Start with `BRCL` and only use `BRC` after checking the
   range.
 * **Hostile input.** The parser is a new attack surface. Use the same caps and
@@ -453,19 +481,20 @@ Each extension gets its own design note and tests.
 
 ## 12. Open decisions
 
-1. Exact pragma spelling: `cargs`, `cresult`, `cscratch`, `ctemp` as above,
-   or a single `#pragma cabi ...` line.
-2. Whether the function signature is part of the `cblock` line or supplied by
-   `cargs`/`cresult` only.
-3. Whether locals default to zero or the compiler requires an initializer.
+1. Whether the interface uses `cin`/`cout`/`cinout` or one `cbind` pragma
+   with a direction word.
+2. Whether bound variables are declared in the pragma (as above) or in the C
+   body with a separate binding pragma.
+3. Whether unbound locals default to zero or the compiler requires an
+   initializer.
 4. Whether `int` and `unsigned` should be aliases for 32-bit types or
    rejected in favor of fixed-width names only.
 5. Whether the first version includes `do` and `for`, or only `while`.
 6. Whether the first version emits `BRC` with range checks or always `BRCL`.
 7. Whether the listing shows C lines as structured notes or as `*` comment
    lines.
-8. Whether a CBLOCK may define more than one entry function in one block.
+8. Whether a block may declare `cin`/`cout` aliases for the same register.
 
-The recommended answers for the first version are: the syntax in section 3,
-fixed-width types plus 32-bit `int`/`unsigned`, zero-initialized locals,
-`while` and `for`, always `BRCL`, and one entry function per block.
+The recommended answers for the first version are: `cin`/`cout`/`cinout`,
+fixed-width types plus 32-bit `int`/`unsigned`, zero-initialized unbound
+locals, `while` and `for`, always `BRCL`, and one CBLOCK per source line.
