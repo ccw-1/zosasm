@@ -91,10 +91,10 @@ expressions, casts, assignments, `if`/`else`, `while`, `do`, `for`,
 `break`/`continue`, short-circuit `&&`/`||`, `?:`, `++`/`--`, `switch`,
 labels, `goto`, byte pointers, the memory intrinsics (`__memcpy`,
 `__memmove`, `__memset`) and the scan intrinsics (`__strlen`, `__memchr`).
-It compiles to ordinary assembler statements. Typed scalar pointers
-(`uint32_t *`), pointer-to-pointer types, `p->field`, arrays, floating point,
-user-defined calls, recursion, nested CBLOCK scopes, chunked runtime
-`memset`/`memmove`, and `SRST`-based scans stay out of scope.
+It compiles to ordinary assembler statements. Pointer-to-pointer types,
+`p->field`, arrays, floating point, user-defined calls, recursion, nested
+CBLOCK scopes, chunked runtime `memset`/`memmove`, and `SRST`-based scans stay
+out of scope.
 
 Docs: `docs/CBLOCK.md`, design and milestones in `PLAN-CBLOCK.md`.
 

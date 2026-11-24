@@ -8,10 +8,12 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 
 CBLOCK (`#pragma cblock`): inline integer C blocks with bound registers,
 scalar locals, expressions, control flow including `switch` and `goto`, byte
-pointers with `*p`, `p[i]` and `&local`, `__memcpy`/`__memmove`/`__memset`,
-and `__strlen`/`__memchr`.
-Private labels are unique across blocks. See `docs/CBLOCK.md`; examples are
-`docs/examples/cblock.za` and `docs/examples/cblock-linux.za`.
+and typed scalar pointers with `*p`, `p[i]` and `&local`, opaque named
+pointers, `__sizeof`/`__offsetof`, `__memcpy`/`__memmove`/`__memset`, and
+`__strlen`/`__memchr`; `-g` writes DWARF lexical blocks and locals for
+CBLOCK variables. Private labels are unique across blocks. See
+`docs/CBLOCK.md`; examples are `docs/examples/cblock.za` and
+`docs/examples/cblock-linux.za`.
 
 Review fixes (2026-11-24): `asm_free()`/`rep_free()` correctness, an arena
 for `Value` terms owned by the Module, operand/expression/emitter

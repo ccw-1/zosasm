@@ -134,6 +134,36 @@ Registers can be written as numbers, as names you defined (`R1 EQU 1`; a bare
 `-strict-registers` only the GNU style and names made with `NAME EQU %r12`
 are accepted in register positions (guide section 6.1).
 
+## Inline C blocks (`#pragma cblock`)
+
+CBLOCK is an experimental integer-only C subset for short inline algorithms.
+It is not a function and has no call ABI. The block falls through, reads and
+writes registers named in `#pragma cin`/`#pragma cout`, uses `#pragma
+cscratch` registers, and keeps locals in the caller-provided `#pragma ctemp`
+area.
+
+```asm
+         L      %r2,X
+         L      %r3,Y
+#pragma cblock sum
+#pragma cin     int32_t a=%r2, int32_t b=%r3
+#pragma cout    int32_t c=%r4
+#pragma cscratch %r0, %r1, %r5
+#pragma ctemp   %r12, 64, down
+#pragma cbegin
+    c = a + b;
+#pragma cend
+```
+
+The subset includes expressions, casts, `if`/`else`, loops, `switch`, `goto`,
+byte and typed scalar pointers, `*p`, `p[i]`, `&local`, opaque DSECT pointers,
+`__sizeof`, `__offsetof`, `__memcpy`, `__memmove`, `__memset`, `__strlen` and
+`__memchr`. With `-g`, CBLOCK locals appear in DWARF.
+
+Reference: `docs/CBLOCK.md`. Examples: `docs/examples/cblock.za` (assembles)
+and `docs/examples/cblock-linux.za` (runs on Linux on Z). The original design
+record is `PLAN-CBLOCK.md`.
+
 ## HLASM macros
 
 zosasm's macro language (`#macro NAME(a, b = 1) {` ... `#}`, `#if`, `#for`,

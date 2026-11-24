@@ -29,10 +29,9 @@ Implemented so far:
 * `test_cblock` and the optional qemu runtime suite (`make
   test-cblock-runtime`).
 
-Not implemented yet: typed scalar pointers (`uint32_t *`), pointer-to-pointer
-types, `p->field`, arrays, `SRST`-based string and byte scans, a faster
-chunked runtime `memset`/`memmove`, nested CBLOCK scopes, and C source line
-mapping.
+Not implemented yet: pointer-to-pointer types, `p->field`, arrays,
+`SRST`-based string and byte scans, a faster chunked runtime `memset` and
+`memmove`, nested CBLOCK scopes, and C source line mapping.
 
 ## 1. Goal
 

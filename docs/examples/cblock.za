@@ -41,7 +41,7 @@ CBLOCK   CSECT
 #pragma cblock pointers
 #pragma cout int32_t value=%r4
 #pragma cscratch %r0, %r1, %r5, %r6
-#pragma ctemp %r10, 64, down
+#pragma ctemp %r10, 128, down
 #pragma cbegin
     int32_t x = 65;
     uint8_t *q;
@@ -56,13 +56,17 @@ CBLOCK   CSECT
 #pragma cblock typed
 #pragma cout int32_t size=%r4, PARM *out=%r5
 #pragma cscratch %r0, %r1, %r6, %r7
-#pragma ctemp %r10, 64, down
+#pragma ctemp %r10, 128, down
 #pragma cbegin
     PARM *p;
+    int32_t x = 65;
+    int32_t *ip;
 
     p = (PARM *)0;
     out = p;
-    size = (int32_t)__sizeof(PARM) + (int32_t)__offsetof(PARM, P_NAME);
+    ip = &x;
+    *ip = 66;
+    size = (int32_t)__sizeof(PARM) + (int32_t)__offsetof(PARM, P_NAME) + *ip;
 #pragma cend
 
 * Pointer arithmetic and every memory/scan intrinsic.

@@ -70,18 +70,26 @@ Types:
 * `int32_t`, `uint32_t`, `int64_t`, `uint64_t`
 * `int` and `unsigned` as 32-bit aliases
 * `uint8_t *`, `void *` and `char *` byte pointers
+* typed scalar pointers: `int32_t *`, `uint32_t *`, `int64_t *` and
+  `uint64_t *`
 * opaque named pointers such as `PARM *p`, where `PARM` is a DSECT or
   section name
 
-Pointers can be assigned, compared, adjusted by an integer byte count
-(`p + 4`, `p - 4`, `p += 4`) and subtracted (`p - q`, a byte difference).
-`*p` and `p[i]` read one byte and yield an unsigned 32-bit value. Assignment
-to `*p` or `p[i]` writes the low byte of the value. `&local` returns a byte
-pointer to the local's slot in `ctemp`; `&*p` is just `p`. A bound
-`cin`/`cout` register has no storage, so `&` rejects it. There is no typed
-pointer-to-integer distinction beyond these byte pointers. A named pointer
-is still byte addressed and opaque: it can be assigned, compared, passed to
-the memory intrinsics and adjusted by a byte count, but it cannot be
+Pointers can be assigned, compared, adjusted by an integer count
+(`p + 4`, `p - 4`, `p += 4`) and subtracted (`p - q`). For byte pointers and
+opaque named pointers the count is in bytes. For typed scalar pointers the
+count is in elements: `p + 1` advances by 4 bytes for `int32_t *` and by 8
+bytes for `int64_t *`; `p - q` returns an element count.
+
+`*p` and `p[i]` load the pointer's element type. A byte pointer loads one
+byte as unsigned 32-bit data; `int32_t *` loads 32 bits and `int64_t *` loads
+64 bits. Assignment stores the same element width. `&local` returns a byte
+pointer to the local's slot in `ctemp`; cast it to a typed pointer when
+needed. `&*p` is just `p`. A bound `cin`/`cout` register has no storage, so
+`&` rejects it.
+
+A named pointer is opaque. It can be assigned, compared, passed to the
+memory intrinsics and adjusted by a byte count, but it cannot be
 dereferenced with `*p` or `p[i]` and has no `p->field` operator. Use
 `__offsetof(PARM, field)` with a byte pointer for manual field access.
 
@@ -98,8 +106,8 @@ Expressions:
 
 * integer literals, variables, casts;
 * `__sizeof(section)` and `__offsetof(section, field)`;
-* unary `*` (byte load) and `&` (address of a local);
-* postfix `p[i]` (byte load from `p + i`);
+* unary `*` (element load) and `&` (address of a local);
+* postfix `p[i]` (element load from `p + i`);
 * `+ - * / %`, shifts, bitwise operators;
 * comparisons, `&&`, `||`, `!`, `?:`;
 * prefix and postfix `++` and `--` on variables, not on `*p`.
@@ -239,8 +247,7 @@ expanded assembly.
 
 ## Not implemented
 
-Typed scalar pointers (`uint32_t *`), pointer-to-pointer types, `p->field`
-access, arrays, `SRST`-based string and byte scans, a faster chunked runtime
-`memset` and `memmove`, nested CBLOCK scopes, and C source line mapping in
-DWARF. Debug lines still use the `.za` line that contains the generated
+Pointer-to-pointer types, `p->field` access, arrays, `SRST`-based string and
+byte scans, a faster chunked runtime `memset` and `memmove`, nested CBLOCK
+scopes, and C source line mapping in DWARF. Debug lines still use the `.za` line that contains the generated
 statement.

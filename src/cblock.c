@@ -17,6 +17,8 @@ typedef struct {
     int unsig; /* unsigned */
     int ptr;   /* a byte/void pointer value */
     int target; /* named opaque pointer target: 0 byte/void, else CBlock->ptypenames index + 1 */
+    int elem_bits;  /* typed pointer element width: 0 byte/void/named, else 32 or 64 */
+    int elem_unsig;
 } CType;
 
 typedef enum { V_CIN, V_COUT, V_CINOUT, V_LOCAL } VKind;
@@ -109,6 +111,8 @@ static CType type_of(int bits, int unsig) {
     t.unsig = unsig;
     t.ptr = 0;
     t.target = 0;
+    t.elem_bits = 0;
+    t.elem_unsig = 0;
     return t;
 }
 static CType type_ptr(void) {
@@ -117,11 +121,22 @@ static CType type_ptr(void) {
     t.unsig = 1;
     t.ptr = 1;
     t.target = 0;
+    t.elem_bits = 8; /* byte pointer: pointer arithmetic in bytes, *p is one byte */
+    t.elem_unsig = 1;
     return t;
 }
+static CType type_ptr_scalar(int bits, int unsig) {
+    CType t = type_ptr();
+    t.elem_bits = bits;
+    t.elem_unsig = unsig;
+    return t;
+}
+
 static CType type_ptr_named(CBlock *b, const char *name) {
     CType t = type_ptr();
     size_t i;
+    t.elem_bits = 0;
+    t.elem_unsig = 0;
     for (i = 0; i < b->ptypenames.n; i++)
         if (!strcmp(b->ptypenames.v[i], name)) {
             t.target = (int)i + 1;
@@ -133,7 +148,8 @@ static CType type_ptr_named(CBlock *b, const char *name) {
 }
 
 static int type_same(CType a, CType b) {
-    return a.bits == b.bits && a.unsig == b.unsig && a.ptr == b.ptr && a.target == b.target;
+    return a.bits == b.bits && a.unsig == b.unsig && a.ptr == b.ptr && a.target == b.target &&
+           a.elem_bits == b.elem_bits && a.elem_unsig == b.elem_unsig;
 }
 
 static int type_parse(const char *s, CType *t) {
@@ -174,8 +190,8 @@ static int type_text_parse(CBlock *b, const char *text, CType *t) {
         } else {
             CType base;
             if (type_parse(q, &base)) {
-                (void)base;
-                r = 0;
+                *t = type_ptr_scalar(base.bits, base.unsig);
+                r = 1;
             } else {
                 *t = type_ptr_named(b, q);
                 r = 1;
@@ -440,6 +456,17 @@ static CBExpr *mk_cast(CBExpr *e, CType t) {
 static CBExpr *mk_bin(Parser *p, int op, CBExpr *a, CBExpr *b) {
     CType t;
     (void)p;
+    if ((op == '+' || op == '-') && b->type.ptr && !a->type.ptr) {
+        if (op == '+') {
+            CBExpr *sw = a;
+            a = b;
+            b = sw;
+        } else {
+            cb_error(p->b, a->line, a->col, "ZA5002", "pointer subtraction needs a pointer on the left");
+            p->err = 1;
+            return a;
+        }
+    }
     if (op == OP_EQ || op == OP_NE || op == OP_LE || op == OP_GE || op == '<' || op == '>' ||
         op == OP_LAND || op == OP_LOR) {
         t = type_of(32, 0);
@@ -624,10 +651,18 @@ static CBExpr *parse_primary(Parser *p) {
                 lex_next(l);
                 free(tn);
                 if (tok_is(l, '*')) {
-                    cb_error(p->b, l->tok.line, l->tok.col, "ZA5002",
-                             "typed scalar pointers are not implemented; use a byte pointer");
-                    p->err = 1;
-                    return NULL;
+                    ct = type_ptr_scalar(ct.bits, ct.unsig);
+                    lex_next(l);
+                    if (!tok_is(l, ')')) {
+                        cb_error(p->b, l->tok.line, l->tok.col, "ZA5001",
+                                 "expected ')' after a cast type");
+                        p->err = 1;
+                        return NULL;
+                    }
+                    lex_next(l);
+                    e = parse_unary(p);
+                    if (!e) return NULL;
+                    return mk_cast(e, ct);
                 }
                 if (!tok_is(l, ')')) {
                     cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected ')' after a cast type");
@@ -689,9 +724,16 @@ static CBExpr *parse_postfix(Parser *p) {
             p->err = 1;
             return e;
         }
+        if (e->type.target) {
+            cb_error(p->b, line, col, "ZA5002",
+                     "cannot index a named DSECT pointer; use __offsetof and a byte pointer");
+            p->err = 1;
+            return e;
+        }
         base = mk_bin(p, '+', e, idx);
         if (!base) { p->err = 1; return e; }
-        d = mk_expr(E_DEREF, type_of(32, 1), line, col);
+        d = mk_expr(E_DEREF, e->type.elem_bits ? type_of(e->type.elem_bits, e->type.elem_unsig)
+                                               : type_of(8, 1), line, col);
         d->a = base;
         e = d;
     }
@@ -732,7 +774,8 @@ static CBExpr *parse_unary(Parser *p) {
             p->err = 1;
             return a;
         }
-        e = mk_expr(E_DEREF, type_of(32, 1), line, col);
+        e = mk_expr(E_DEREF, a->type.elem_bits ? type_of(a->type.elem_bits, a->type.elem_unsig)
+                                               : type_of(8, 1), line, col);
         e->a = a;
         return e;
     }
@@ -884,15 +927,12 @@ static int parse_type(Parser *p, CType *t) {
         char *name = xstrdup(p->l.tok.s);
         CType base;
         if (type_parse(name, &base) && !base.ptr) {
-            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5002",
-                     "typed scalar pointers are not implemented; use a byte pointer");
-            free(name);
-            p->err = 1;
-            return 1;
+            *t = type_ptr_scalar(base.bits, base.unsig);
+        } else {
+            *t = type_ptr_named(p->b, name);
         }
         lex_next(&p->l);
         lex_next(&p->l);
-        *t = type_ptr_named(p->b, name);
         free(name);
         return 1;
     }
@@ -1802,9 +1842,17 @@ static int eval_bin(Cg *cg, CBExpr *e, int *slotp) {
         return 1;
     }
     if (e->a->type.ptr || e->b->type.ptr) {
+        CType pt = e->a->type.ptr ? e->a->type : e->b->type;
+        int shift = pt.elem_bits == 64 ? 3 : pt.elem_bits == 32 ? 2 : 0;
         load_slot(b, e->line, s0, e->a->type, 0);
         load_slot(b, e->line, s1, e->b->type, 1);
-        asm_line(b, e->line, e->op == '-' ? "SGR %%r0,%%r1" : "AGR %%r0,%%r1");
+        if (e->a->type.ptr && e->b->type.ptr) {
+            asm_line(b, e->line, "SGR %%r0,%%r1");
+            if (shift) asm_line(b, e->line, "SRLG %%r0,%%r0,%d", shift);
+        } else {
+            if (shift) asm_line(b, e->line, "SLLG %%r1,%%r1,%d", shift);
+            asm_line(b, e->line, e->op == '-' ? "SGR %%r0,%%r1" : "AGR %%r0,%%r1");
+        }
         res = alloc_slot(cg);
         store_slot(b, e->line, res, e->type, 0);
         *slotp = res;
@@ -1883,7 +1931,9 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             return 0;
         }
         load_slot(b, e->line, sa, type_ptr(), addr);
-        asm_line(b, e->line, "LLGC %%r0,0(%%r%d)", addr);
+        if (e->type.bits == 64) asm_line(b, e->line, "LG %%r0,0(%%r%d)", addr);
+        else if (e->type.bits == 32) asm_line(b, e->line, "L %%r0,0(%%r%d)", addr);
+        else asm_line(b, e->line, "LLGC %%r0,0(%%r%d)", addr);
         res = alloc_slot(cg);
         store_slot(b, e->line, res, e->type, 0);
         *slotp = res;
@@ -2456,7 +2506,9 @@ for_fail:
             }
             load_slot(b, st->line, rs, st->lval->type, 0);
             load_slot(b, st->line, sa, type_ptr(), addr);
-            asm_line(b, st->line, "STC %%r0,0(%%r%d)", addr);
+            if (st->lval->type.bits == 64) asm_line(b, st->line, "STG %%r0,0(%%r%d)", addr);
+            else if (st->lval->type.bits == 32) asm_line(b, st->line, "ST %%r0,0(%%r%d)", addr);
+            else asm_line(b, st->line, "STC %%r0,0(%%r%d)", addr);
             return 1;
         }
         if (st->op != '=') {
