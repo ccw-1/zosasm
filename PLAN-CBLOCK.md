@@ -5,8 +5,8 @@
 > memory intrinsics, and `__strlen`/`__memchr`.
 
 Status: capture, integer expressions, control flow including `switch` and
-`goto`, byte pointers, memory intrinsics, and the `__strlen`/`__memchr` scan
-intrinsics are implemented on branch `ccw-inc`. C variable DWARF remains.
+`goto`, byte pointers, memory intrinsics, the `__strlen`/`__memchr` scan
+intrinsics, and DWARF locals for `-g` are implemented on branch `ccw-inc`.
 
 Implemented so far:
 
@@ -31,7 +31,7 @@ Implemented so far:
 
 Not implemented yet: typed pointers (`uint32_t *` and pointer-to-pointer),
 arrays, `SRST`-based string and byte scans, a faster chunked runtime
-`memset`/`memmove`, and C variable debug information.
+`memset`/`memmove`, nested CBLOCK scopes, and C source line mapping.
 
 ## 1. Goal
 

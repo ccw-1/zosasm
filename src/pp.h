@@ -8,6 +8,7 @@
 #define ZA_PP_H
 
 #include "asm.h"
+#include "cblock_dbg.h"
 
 /* What happened to each source line (for the listing). */
 typedef enum { PE_LINE, PE_DIRECTIVE, PE_SKIPPED } PpKind;
@@ -35,6 +36,7 @@ typedef struct {
     int reproducible;               /* -reproducible: no unstable built-ins (__DATE__ needs a fixed time) */
     int has_epoch;                  /* epoch is the time for __DATE__ and __TIME__ */
     int64_t epoch;                  /* seconds since 1970-01-01 UTC; else SOURCE_DATE_EPOCH, else the clock */
+    CBlockDebugVec *cblock_debug;    /* -g: collect CBLOCK locals for DWARF */
 } PpOptions;
 
 /* Preprocess text (the contents of file) and append the resulting lines to

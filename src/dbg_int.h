@@ -43,6 +43,15 @@ typedef struct {
 
 typedef struct DStruct DStruct;
 
+/* A CBLOCK local: its lexical block range, ctemp base register and slot offset. */
+typedef struct {
+    char *name;
+    int64_t lo, hi;
+    int reg;
+    int64_t off;
+    int type;
+} DVar;
+
 /* a USING of a DSECT over a range of the CSECT: a variable of the structure type at register - off */
 typedef struct {
     int64_t lo, hi; /* addresses in the CSECT */
@@ -68,6 +77,7 @@ typedef struct {
     Vec(DLab) labs;
     Vec(DRow) rows;
     Vec(DUse) uses;
+    Vec(DVar) cvars;
     Vec(DCfi) cfis;
 } DSect;
 

@@ -47,6 +47,41 @@ static void expect(const char *name, const char *src, const char *want_codes, co
     rep_free(o.rep);
 }
 
+
+static void test_debug_metadata(void) {
+    const char *src =
+        "#pragma cblock dbg\n"
+        "#pragma cout int32_t c=%r4\n"
+        "#pragma cscratch %r0, %r1, %r5\n"
+        "#pragma ctemp %r12, 64, down\n"
+        "#pragma cbegin\n"
+        "int32_t x = 5; c = x;\n"
+        "#pragma cend\n"
+        " END\n";
+    PpOptions o;
+    SrcVec lines = {0};
+    Reporter *rep = rep_new(0);
+    CBlockDebugVec dbg = {0};
+    memset(&o, 0, sizeof o);
+    o.cblock_debug = &dbg;
+    rep_add_source(rep, "t.za", src, strlen(src));
+    pp_run("t.za", src, strlen(src), &o, rep, &lines);
+    CHECK_MSG(dbg.n == 1, "debug: %zu cblocks", dbg.n);
+    if (dbg.n == 1) {
+        CHECK_MSG(dbg.v[0].nvars == 1, "debug: %zu vars", dbg.v[0].nvars);
+        if (dbg.v[0].nvars == 1) {
+            CHECK_STR(dbg.v[0].vars[0].name, "x");
+            CHECK_MSG(dbg.v[0].vars[0].bits == 32, "debug: bits %d", dbg.v[0].vars[0].bits);
+        }
+        CHECK_MSG(dbg.v[0].temp_reg == 12, "debug: temp reg %d", dbg.v[0].temp_reg);
+        CHECK_MSG(dbg.v[0].start_label != NULL && dbg.v[0].end_label != NULL,
+                  "debug: missing range labels");
+    }
+    cblock_debug_free(&dbg);
+    rep_free(rep);
+    free(lines.v);
+}
+
 static void test_compiled_assembly(void) {
     const char *src =
         "MAIN CSECT\n"
@@ -211,6 +246,7 @@ int main(void) {
            "#pragma cbegin\n"
            " END\n",
            "ZA5001", NULL);
+    test_debug_metadata();
     test_compiled_assembly();
     TEST_MAIN_END();
 }

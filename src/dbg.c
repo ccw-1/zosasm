@@ -302,6 +302,34 @@ static void collect(Dbg *g) {
         DStruct *st = g->structs.v[i];
         if (st->mems.n) qsort(st->mems.v, st->mems.n, sizeof *st->mems.v, cmp_lab);
     }
+    /* CBLOCK locals: each block is a lexical range and its locals live at
+     * the ctemp base register plus their slot offset. */
+    for (i = 0; i < m->cblocks.n; i++) {
+        const CBlockDebug *cb = &m->cblocks.v[i];
+        Symbol *s0 = module_symbol(m, cb->start_label);
+        Symbol *s1 = module_symbol(m, cb->end_label);
+        DSect *d;
+        int64_t lo, hi;
+        size_t j;
+        if (!s0 || !s1 || !s0->piece || !s1->piece || s0->piece->cls != s1->piece->cls) continue;
+        d = dsect_of(g, s0->piece->cls);
+        if (!d) continue;
+        lo = s0->piece->start + s0->off;
+        hi = s1->piece->start + s1->off;
+        if (hi <= lo) continue;
+        for (j = 0; j < cb->nvars; j++) {
+            const CBlockVarDebug *cv = &cb->vars[j];
+            DVar v;
+            v.name = xstrdup(cv->name);
+            v.lo = lo;
+            v.hi = hi;
+            v.reg = cb->temp_reg;
+            v.off = cv->off;
+            v.type = cv->ptr ? type_add(g, 7, 8, 1)
+                             : type_add(g, cv->unsig ? 7 : 5, cv->bits / 8, 1);
+            vec_push(&d->cvars, v);
+        }
+    }
     /* USINGs of a DSECT with a base register: the structure is at register - off while it lasts */
     for (i = 0; i < m->usings.n; i++) {
         const UsingRec *u = &m->usings.v[i];

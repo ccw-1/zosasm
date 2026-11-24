@@ -1466,5 +1466,6 @@ void asm_free(Module *m) {
     free(m->lits.v);
     for (i = 0; i < m->usings.n; i++) asm_free_using_rec(&m->usings.v[i]);
     free(m->usings.v);
+    cblock_debug_free(&m->cblocks);
     free(m);
 }

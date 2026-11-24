@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include "asm.h"
+#include "cblock_dbg.h"
 
 /* One raw line of a captured block, with its physical line number. */
 typedef struct {
@@ -18,6 +19,7 @@ typedef Vec(CBlockLine) CBlockLineVec;
  * after "cblock" (the optional block name). Generated assembler lines are
  * appended to out. Returns 0 on success, nonzero after reporting an error. */
 int cblock_compile(const char *file, int line, const char *head, const CBlockLine *body,
-                   size_t n, Reporter *rep, SrcVec *out, int *label_counter);
+                   size_t n, Reporter *rep, SrcVec *out, int *label_counter,
+                   CBlockDebugVec *debug);
 
 #endif

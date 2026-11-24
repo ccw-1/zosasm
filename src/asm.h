@@ -17,6 +17,7 @@
 #include "isa.h"
 #include "util.h"
 #include "goff.h"
+#include "cblock_dbg.h"
 
 /* ---- object model ---------------------------------------------------- */
 
@@ -260,6 +261,7 @@ typedef struct {
     StmtVec synth;       /* synthetic statements of literals, owned here */
     Vec(LitRec) lits;
     Vec(UsingRec) usings;
+    CBlockDebugVec cblocks; /* -g: CBLOCK locals and their ctemp ranges */
 } Module;
 
 Symbol *module_symbol(const Module *m, const char *name);

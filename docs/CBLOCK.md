@@ -2,9 +2,8 @@
 
 Status: experimental. Capture, integer expressions,
 control flow including `switch`, labels and `goto`, byte pointers, the memory
-intrinsics, and the `__strlen`/`__memchr` scan intrinsics are implemented.
-C variable DWARF is not implemented. The original design is in
-`PLAN-CBLOCK.md`.
+intrinsics, the `__strlen`/`__memchr` scan intrinsics, and DWARF locals with
+`-g` are implemented. The original design is in `PLAN-CBLOCK.md`.
 
 A CBLOCK is inline code, not a function. It appears where it is written,
 reads and writes named registers, and falls through to the next assembler
@@ -166,6 +165,19 @@ would leave the previous high bits in place and break the zero test.
 * Addresses are caller-supplied values. The caller is responsible for AMODE
   and for keeping the ranges valid and writable.
 
+## Debug information
+
+With `-g`, each CBLOCK emits a lexical block and a DWARF variable for every
+local. The variable location is `DW_OP_breg<ctemp-reg> <slot-offset>`. A
+32-bit local is `int32` or `uint32`, a 64-bit local is `int64` or `uint64`,
+and a byte pointer local is represented as an unsigned 64-bit value. Bound
+`cin`/`cout` registers are not variables with storage, so they get no DWARF
+variable.
+
+The block is one scope. Locals declared inside nested blocks or loops are
+visible for the whole CBLOCK range. Debug line mapping still uses the `.za`
+line that contains the generated statement, not the C source line.
+
 ## Generated code
 
 The block compiles to ordinary assembler statements. They pass through the
@@ -210,7 +222,6 @@ expanded assembly.
 ## Not implemented
 
 Typed pointers (`uint32_t *` and pointer-to-pointer), arrays, `SRST`-based
-string and byte scans, a faster chunked runtime `memset` and `memmove`, and
-structured DWARF for C variables. The generated
-code already maps line information back to the C source, but local variable
-locations and types are not described in `.debug_info`.
+string and byte scans, a faster chunked runtime `memset` and `memmove`,
+nested CBLOCK scopes, and C source line mapping in DWARF. Debug lines still
+use the `.za` line that contains the generated statement.

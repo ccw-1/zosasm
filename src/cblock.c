@@ -88,6 +88,8 @@ typedef struct {
     SrcVec *out;
     const CBlockLine *body;
     size_t body_n;
+    CBlockDebugVec *debug;
+    char *start_label, *end_label;
 } CBlock;
 
 /* multi-character operators */
@@ -2342,8 +2344,26 @@ static void free_block(CBlock *b) {
     free(b->name);
 }
 
+void cblock_debug_free(CBlockDebugVec *v) {
+    size_t i, j;
+    if (!v) return;
+    for (i = 0; i < v->n; i++) {
+        CBlockDebug *d = &v->v[i];
+        free(d->file);
+        free(d->name);
+        free(d->start_label);
+        free(d->end_label);
+        for (j = 0; j < d->nvars; j++) free(d->vars[j].name);
+        free(d->vars);
+    }
+    free(v->v);
+    v->v = NULL;
+    v->n = v->cap = 0;
+}
+
 int cblock_compile(const char *file, int line, const char *head, const CBlockLine *body,
-                   size_t n, Reporter *rep, SrcVec *out, int *label_counter) {
+                   size_t n, Reporter *rep, SrcVec *out, int *label_counter,
+                   CBlockDebugVec *debug) {
     CBlock b;
     Parser p;
     CBStmtVec stmts = {0};
@@ -2361,11 +2381,17 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
     b.temp_reg = -1;
     b.name = xstrdup(head && *head ? head : "cblock");
     b.temp_down = 1;
+    b.debug = debug;
     if (label_counter) {
         b.label_no = *label_counter;
         b.label_seq = *label_counter;
     }
     p.b = &b;
+    if (b.debug) {
+        b.start_label = new_label(&b);
+        b.end_label = new_label(&b);
+        emit_label(&b, line, b.start_label);
+    }
     /* metadata */
     for (i = 0; i < n; i++) {
         char *w = NULL, *rest = NULL;
@@ -2532,6 +2558,36 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
                     if (b.save_r0 >= 0) load_slot(&b, line, b.save_r0, type_of(64, 1), 0);
                 }
             }
+            if (b.debug) {
+                emit_label(&b, line, b.end_label);
+                if (ok) {
+                    CBlockDebug cd;
+                    size_t nv = 0, vi;
+                    memset(&cd, 0, sizeof cd);
+                    cd.file = xstrdup(file);
+                    cd.name = xstrdup(b.name);
+                    cd.start_label = b.start_label;
+                    cd.end_label = b.end_label;
+                    cd.line = line;
+                    cd.temp_reg = b.temp_reg;
+                    b.start_label = b.end_label = NULL;
+                    for (vi = 0; vi < b.vars.n; vi++)
+                        if (b.vars.v[vi]->kind == V_LOCAL) nv++;
+                    if (nv) cd.vars = xcalloc(nv * sizeof *cd.vars);
+                    for (vi = 0; vi < b.vars.n; vi++) {
+                        CBVar *v = b.vars.v[vi];
+                        CBlockVarDebug *cv;
+                        if (v->kind != V_LOCAL) continue;
+                        cv = &cd.vars[cd.nvars++];
+                        cv->name = xstrdup(v->name);
+                        cv->bits = v->type.ptr ? 0 : v->type.bits;
+                        cv->unsig = v->type.unsig;
+                        cv->ptr = v->type.ptr;
+                        cv->off = slot_off(&b, v->slot);
+                    }
+                    vec_push(b.debug, cd);
+                }
+            }
         }
         for (i = 0; i < p.l.ids.n; i++) free(p.l.ids.v[i]);
         free(p.l.ids.v);
@@ -2539,6 +2595,8 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
         free(src.p);
     }
 done:
+    free(b.start_label);
+    free(b.end_label);
     if (label_counter) {
         int used = b.label_no > b.label_seq ? b.label_no : b.label_seq;
         if (used > *label_counter) *label_counter = used;

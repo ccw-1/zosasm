@@ -386,6 +386,7 @@ int main(int argc, char **argv) {
     const char *listfile = NULL;
     ListOptions lo;
     PpEventVec events = {0};
+    CBlockDebugVec cbdbg = {0};
 
     memset(&ppo, 0, sizeof ppo);
     memset(&lo, 0, sizeof lo);
@@ -595,6 +596,7 @@ int main(int argc, char **argv) {
     rep_set_warn_error(rep, werror);
     rep_add_source(rep, in, text, n);
     if (listfile) ppo.events = &events;
+    if (gflag) ppo.cblock_debug = &cbdbg;
     pp_run(in, text, n, &ppo, rep, &lines);
     if (only_pp) {
         size_t k;
@@ -631,8 +633,11 @@ int main(int argc, char **argv) {
     if (json) rep_print_json(rep, stderr);
     else rep_print(rep, stderr, color);
     if (!mod || rep_error_count(rep) > 0) {
+        cblock_debug_free(&cbdbg);
         return 1;
     }
+    mod->cblocks = cbdbg;
+    memset(&cbdbg, 0, sizeof cbdbg);
     mod->zlevel = zlevel;
     if (zlevel >= 2) {
         const char *sn, *st;

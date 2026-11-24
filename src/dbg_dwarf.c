@@ -171,6 +171,35 @@ static int cmp_i64(const void *x, const void *y) {
     return a < b ? -1 : a > b;
 }
 
+/* CBLOCK locals: one lexical block per block, with a variable at the ctemp
+ * base register plus the slot offset. */
+static void build_cvars(Dbg *g, size_t si, const DSect *d) {
+    Buf *b = &g->sec[SEC_INFO].d;
+    size_t i = 0;
+    while (i < d->cvars.n) {
+        int64_t lo = d->cvars.v[i].lo, hi = d->cvars.v[i].hi;
+        size_t j = i;
+        duleb(b, AB_BLOCK);
+        d64rel(g, SEC_INFO, (int)si, (uint64_t)(d->base + lo));
+        d64rel(g, SEC_INFO, (int)si, (uint64_t)(d->base + hi));
+        while (j < d->cvars.n && d->cvars.v[j].lo == lo && d->cvars.v[j].hi == hi) {
+            const DVar *v = &d->cvars.v[j];
+            Buf ex = {0};
+            duleb(b, AB_VARIABLE);
+            dstr(b, v->name);
+            d32(b, g->types.v[v->type].off);
+            d8(&ex, 0x70 + (unsigned)v->reg); /* DW_OP_breg<reg> */
+            dsleb(&ex, v->off);
+            duleb(b, ex.len);
+            buf_write(b, ex.p, ex.len);
+            free(ex.p);
+            j++;
+        }
+        d8(b, 0);
+        i = j;
+    }
+}
+
 /* The USINGs of DSECTs of a CSECT: lexical blocks that do not overlap (a debugger finds one block
  * at an address), each with a variable of the structure type per USING that holds there. The
  * variable is at register - offset of the USING; its name is the USING label or the DSECT name. */
@@ -320,6 +349,7 @@ static void build_info(Dbg *g, uint32_t **sub_off) {
                 d64rel(g, SEC_INFO, (int)i, (uint64_t)(d->base + l->off));
             }
         }
+        if (code) build_cvars(g, i, d);
         if (code) build_uses(g, i, d);
         if (code) d8(b, 0);
     }

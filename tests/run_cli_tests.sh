@@ -318,6 +318,11 @@ grep -q 'Hello from s390x' $T/lh.o; check "-elf implies ASCII text" $? 0
 $X -elf -charset ebcdic -o $T/lh2.o docs/examples/linux-hello.za 2>/dev/null; grep -q 'Hello from s390x' $T/lh2.o; [ $? = 1 ]; check "-charset ebcdic overrides" $? 0
 $X -ascii -o $T/lh3.o docs/examples/linux-hello.za 2>/dev/null; check "-ascii exit" $? 0
 $X -dump $T/lh3.o | grep -q ESD; check "-ascii still writes GOFF" $? 0
+$X -g -gside -o $T/cbg.o docs/examples/cblock.za 2>$T/err; check "-g CBLOCK object exit" $? 0
+if command -v readelf >/dev/null 2>&1; then
+    readelf --debug-dump=info $T/cbg.dbg 2>/dev/null | grep -q 'DW_AT_name.*: x'; check "CBLOCK local in DWARF" $? 0
+    readelf --debug-dump=info $T/cbg.dbg 2>/dev/null | grep -q 'DW_OP_breg'; check "CBLOCK local has a breg location" $? 0
+fi
 $X -charset latin -o $T/x.o docs/examples/linux-hello.za 2>/dev/null; check "-charset bad value" $? 2
 printf '#ifdef __ELF__\nE\n#endif\n#ifdef __GOFF__\nG\n#endif\n#ifdef __ASCII__\nA\n#endif\n#ifdef __EBCDIC__\nB\n#endif\n' > $T/pd.za
 [ "$($X -E $T/pd.za | tr -d '\n')" = "GB" ]; check "predefined macros: GOFF, EBCDIC" $? 0
