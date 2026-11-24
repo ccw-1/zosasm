@@ -383,12 +383,9 @@ static CBExpr *mk_bin(Parser *p, int op, CBExpr *a, CBExpr *b) {
             return a;
         }
         t = type_ptr();
+    } else if (op == '-' && a->type.ptr && b->type.ptr) {
+        t = type_of(64, 0); /* byte pointer difference */
     } else if (op == '-' && a->type.ptr) {
-        if (b->type.ptr) {
-            cb_error(p->b, a->line, a->col, "ZA5002", "pointer subtraction is not implemented");
-            p->err = 1;
-            return a;
-        }
         t = type_ptr();
     } else if (a->type.ptr || b->type.ptr) {
         cb_error(p->b, a->line, a->col, "ZA5002", "unsupported pointer operation");
@@ -1134,7 +1131,16 @@ static void parse_stmt(Parser *p, CBStmtVec *st) {
         s.kind = S_ASSIGN;
         s.var = v;
         s.op = assign_base(op);
-        s.expr = mk_cast(rhs, v->type);
+        if (v->type.ptr) {
+            if (op != '=' && s.op != '+' && s.op != '-') {
+                cb_error(p->b, line, 1, "ZA5003", "a pointer supports only =, += and -=");
+                p->err = 1;
+                return;
+            }
+            s.expr = op == '=' ? mk_cast(rhs, v->type) : rhs;
+        } else {
+            s.expr = mk_cast(rhs, v->type);
+        }
         s.line = line;
         vec_push(st, s);
         v->initialized = 1;
@@ -1518,12 +1524,12 @@ static int eval_bin(Cg *cg, CBExpr *e, int *slotp) {
         *slotp = res;
         return 1;
     }
-    if (e->type.ptr) {
+    if (e->a->type.ptr || e->b->type.ptr) {
         load_slot(b, e->line, s0, e->a->type, 0);
         load_slot(b, e->line, s1, e->b->type, 1);
         asm_line(b, e->line, e->op == '-' ? "SGR %%r0,%%r1" : "AGR %%r0,%%r1");
         res = alloc_slot(cg);
-        store_slot(b, e->line, res, type_ptr(), 0);
+        store_slot(b, e->line, res, e->type, 0);
         *slotp = res;
         return 1;
     }
@@ -1805,6 +1811,17 @@ static int codegen_intrinsic(Cg *cg, CBStmt *st) {
             asm_line(b, st->line, "BRCL 7,%s", btop);
             free(back); free(btop);
         } else {
+            char *chunk = new_label(b), *after = new_label(b);
+            asm_line(b, st->line, "CGHI %%r0,256");
+            asm_line(b, st->line, "BRCL 4,%s", after);
+            emit_label(b, st->line, chunk);
+            asm_line(b, st->line, "MVC 0(256,%%r%d),0(%%r%d)", addr_d, addr_s);
+            asm_line(b, st->line, "AGHI %%r%d,256", addr_d);
+            asm_line(b, st->line, "AGHI %%r%d,256", addr_s);
+            asm_line(b, st->line, "AGHI %%r0,-256");
+            asm_line(b, st->line, "CGHI %%r0,256");
+            asm_line(b, st->line, "BRCL 10,%s", chunk);
+            emit_label(b, st->line, after);
             asm_line(b, st->line, "LTGR %%r0,%%r0");
             asm_line(b, st->line, "BRCL 8,%s", end);
             emit_label(b, st->line, top);
@@ -1813,6 +1830,7 @@ static int codegen_intrinsic(Cg *cg, CBStmt *st) {
             asm_line(b, st->line, "AGHI %%r%d,1", addr_s);
             asm_line(b, st->line, "AGHI %%r0,-1");
             asm_line(b, st->line, "BRCL 7,%s", top);
+            free(chunk); free(after);
         }
         emit_label(b, st->line, end);
         free(top); free(end);

@@ -20,15 +20,15 @@ Implemented in M1:
 * `if`/`else`, `while`, `do`, `for`, `break` and `continue`;
 * short-circuit `&&`/`||`, `?:`, prefix and postfix `++`/`--`;
 * `switch`/`case`/`default`, labels and `goto`;
-* byte pointers (`uint8_t *`, `void *`, `char *`) with assignment, comparison
-  and integer byte offset, but no dereference yet;
+* byte pointers (`uint8_t *`, `void *`, `char *`) with assignment, comparison,
+  integer byte offsets and pointer difference, but no dereference yet;
 * `__memcpy`, `__memmove` and `__memset` with constant and runtime sizes;
 * generated assembly lines and the `ZA5xxx` diagnostics;
 * `test_cblock` and the optional qemu runtime suite (`make
   test-cblock-runtime`).
 
-Not implemented yet: typed pointer dereference (`*p`, `p[i]`), pointer
-subtraction, a faster chunked runtime copy, and C variable debug information.
+Not implemented yet: typed pointer dereference (`*p`, `p[i]`), a faster
+chunked runtime `memset`/`memmove`, and C variable debug information.
 The listing, switch/goto and the `%r0`/`%r1` `STMG`/`LMG` save are
 implemented.
 

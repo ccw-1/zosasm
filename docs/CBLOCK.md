@@ -59,9 +59,9 @@ Types:
 * `int` and `unsigned` as 32-bit aliases
 * `uint8_t *`, `void *` and `char *` byte pointers
 
-Pointers can be assigned, compared and adjusted by an integer byte count
-(`p + 4`, `p - 4`). They cannot be dereferenced yet, and pointer subtraction
-is not implemented.
+Pointers can be assigned, compared, adjusted by an integer byte count
+(`p + 4`, `p - 4`, `p += 4`) and subtracted (`p - q`, a byte difference).
+They cannot be dereferenced yet.
 
 Statements:
 
@@ -107,11 +107,13 @@ __memset(dst, byte, len);
 fill value may be constant expressions or runtime values.
 
 * A constant `__memcpy` size up to 4096 emits `MVC` chunks.
+* Runtime `__memcpy` copies 256-byte `MVC` chunks first, then a byte loop for
+  the remainder.
 * A zero constant `__memset` emits `XC`; other fills use a byte `STC` loop.
 * `__memmove` compares the addresses at run time and uses a forward or
   backward `MVC` byte loop.
-* Runtime `__memcpy` and `__memset` currently use byte loops. They do not use
-  `MVCL`; a faster chunked `MVC` loop can replace them later.
+* None of the intrinsics uses `MVCL`. Runtime `__memset` and `__memmove` still
+  use byte loops; chunked versions can follow.
 * The intrinsics need nonzero scratch registers for the addresses. The
   compiler reports `ZA5005` when the `cscratch` list is too small.
 * `__memcpy` requires non-overlapping ranges. Use `__memmove` when the ranges
@@ -159,7 +161,7 @@ expanded assembly.
 
 ## Not implemented
 
-Typed pointer dereference (`*p`, `p[i]`), pointer subtraction, a faster
-chunked runtime copy, and structured DWARF for C variables. The generated
+Typed pointer dereference (`*p`, `p[i]`), a faster chunked runtime `memset`
+and `memmove`, and structured DWARF for C variables. The generated
 code already maps line information back to the C source, but local variable
 locations and types are not described in `.debug_info`.

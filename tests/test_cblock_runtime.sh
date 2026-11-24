@@ -188,6 +188,16 @@ run_ptr_case memrt '         LGR   %r2,%r15
          LHI   %r7,4' \
     '#pragma cin uint8_t *d=%r2, uint8_t *s=%r3, int32_t n=%r7' '#pragma cout uint8_t *o=%r4' \
     '__memset(d, 65, n); __memcpy(s, d, n); o = s;' 65
+run_ptr_case memchunk '         LGR   %r2,%r15
+         AGHI  %r2,-800
+         LGR   %r3,%r15
+         AGHI  %r3,-512
+         LHI   %r7,300' \
+    '#pragma cin uint8_t *d=%r2, uint8_t *s=%r3, int32_t n=%r7' '#pragma cout uint8_t *o=%r4' \
+    '__memset(d, 65, n); __memcpy(s, d, n); o = s + 299;' 65
+run_case ptrdiff '         LGR   %r2,%r15' \
+    '#pragma cinout uint8_t *p=%r2' '#pragma cout int32_t c=%r4' \
+    'uint8_t *q = p; p += 4; q = p - 2; c = (int32_t)(p - q);' 2
 run_ptr_case memmoveback '         LGR   %r3,%r15
          AGHI  %r3,-256' \
     '#pragma cin uint8_t *s=%r3' '#pragma cout uint8_t *o=%r4' \
