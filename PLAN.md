@@ -81,6 +81,16 @@ Status key: [x] done, [-] in progress, [ ] open.
 - [ ] documentation of every directive in `docs/`
 - [ ] (macro language: covered by the preprocessor, see Phase 1)
 
+## Phase 5 - proposal: CBLOCK scalar expressions
+
+A design proposal for a small C-like scalar block (`#pragma cblock`) lives in
+`PLAN-CBLOCK.md`. It is not implemented. The first version is limited to
+32-bit and 64-bit integers, scalar locals, expressions, and `if`/loop control
+flow. It compiles to ordinary assembler statements, with a caller-provided
+temp area and explicit register mappings. C source appears in the listing.
+Pointers, arrays, floating point, calls, recursion, and C semantics outside
+the documented subset stay out of scope.
+
 ## Reference material
 
 * the instruction encodings in `tests/test_isa_pop.c` were written out by hand
