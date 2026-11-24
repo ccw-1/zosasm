@@ -160,6 +160,26 @@ int main(void) {
            "#pragma cend\n"
            " END\n",
            "", "BRCL");
+    expect("memcpy compiles",
+           "#pragma cblock demo\n"
+           "#pragma cin uint8_t *d=%r2, uint8_t *s=%r3\n"
+           "#pragma cout uint8_t *o=%r4\n"
+           "#pragma cscratch %r0, %r1, %r5\n"
+           "#pragma ctemp %r12, 64, down\n"
+           "#pragma cbegin\n"
+           "__memcpy(d, s, 4); o = d;\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "MVC");
+    expect("memcpy needs pointers",
+           "#pragma cblock demo\n"
+           "#pragma cscratch %r0, %r1, %r5\n"
+           "#pragma ctemp %r12, 64, down\n"
+           "#pragma cbegin\n"
+           "__memcpy(1, 2, 4);\n"
+           "#pragma cend\n"
+           " END\n",
+           "ZA5003", NULL);
     expect("undefined goto",
            "#pragma cblock demo\n"
            "#pragma cscratch %r0, %r1\n"

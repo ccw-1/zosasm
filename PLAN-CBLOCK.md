@@ -1,7 +1,8 @@
 # CBLOCK plan: inline scalar C expressions and statements in zosasm
 
-Status: M0 (capture), M1 (integer expressions), M2 (control flow) and the
-M3 integration work are implemented on branch `ccw-inc`. C source lines now
+Status: M0 (capture), M1 (integer expressions), M2 (control flow), the M3
+integration work and M5 byte pointers/memory intrinsics are implemented on
+branch `ccw-inc`. C source lines now
 appear in the listing, `%r0`/`%r1` are saved in `ctemp` when needed, and
 `tools/cblock_oracle.sh` compares a block with HLASM. `switch`, `goto`, labels and the `%r0`/`%r1` `STMG`/`LMG` save are
 implemented. C variable DWARF remains.
@@ -18,12 +19,17 @@ Implemented in M1:
 * a temp-slot stack machine with a computed size check;
 * `if`/`else`, `while`, `do`, `for`, `break` and `continue`;
 * short-circuit `&&`/`||`, `?:`, prefix and postfix `++`/`--`;
+* `switch`/`case`/`default`, labels and `goto`;
+* byte pointers (`uint8_t *`, `void *`, `char *`) with assignment, comparison
+  and integer byte offset, but no dereference yet;
+* `__memcpy`, `__memmove` and `__memset` with constant and runtime sizes;
 * generated assembly lines and the `ZA5xxx` diagnostics;
 * `test_cblock` and the optional qemu runtime suite (`make
   test-cblock-runtime`).
 
-Not implemented yet: C variable debug information. The listing, the scalar
-register save (`STMG`/`LMG` for the `%r0`/`%r1` pair) and switch/goto are
+Not implemented yet: typed pointer dereference (`*p`, `p[i]`), pointer
+subtraction, a faster chunked runtime copy, and C variable debug information.
+The listing, switch/goto and the `%r0`/`%r1` `STMG`/`LMG` save are
 implemented.
 
 ## 1. Goal

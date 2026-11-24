@@ -133,5 +133,69 @@ run_case gotolabel '' '' \
     '#pragma cout int32_t c=%r4' \
     'int32_t t = 1; goto skip; t = 99; skip: t += 2; c = t;' 3
 
+# pointer/memory intrinsic cases: exit with the byte at the returned pointer
+run_ptr_case() {
+    name=$1; setup=$2; cin=$3; cout=$4; body=$5; want=$6
+    case_n=$((case_n + 1))
+    cat > "$tmp/$name.za" <<EOS
+_START CSECT
+         LGR   %r12,%r15
+         AGHI  %r12,-1024
+$setup
+#pragma cblock $name
+$cin
+$cout
+#pragma cscratch %r0, %r1, %r5, %r6
+#pragma ctemp %r12, 128, down
+#pragma cbegin
+$body
+#pragma cend
+         IC    %r2,0(%r4)
+         LGHI  %r1,1
+         SVC   1
+         END
+EOS
+    if ! "$z" -elf -o "$tmp/$name.o" "$tmp/$name.za" >"$tmp/$name.zerr" 2>&1; then
+        echo "FAIL $name: zosasm: $(head -1 "$tmp/$name.zerr")"
+        fail=$((fail + 1))
+        return
+    fi
+    if ! "$ld" -e _START -o "$tmp/$name.elf" "$tmp/$name.o" >"$tmp/$name.ld" 2>&1; then
+        echo "FAIL $name: ld: $(head -1 "$tmp/$name.ld")"
+        fail=$((fail + 1))
+        return
+    fi
+    "$qemu" "$tmp/$name.elf" >/dev/null 2>&1
+    got=$?
+    if [ "$got" -ne "$want" ]; then
+        echo "FAIL $name: exit $got, want $want"
+        fail=$((fail + 1))
+    else
+        echo "ok   $name: $got"
+    fi
+}
+
+run_ptr_case memconst '         LGR   %r2,%r15
+         AGHI  %r2,-512
+         LGR   %r3,%r15
+         AGHI  %r3,-256' \
+    '#pragma cin uint8_t *d=%r2, uint8_t *s=%r3' '#pragma cout uint8_t *o=%r4' \
+    '__memset(d, 65, 4); __memcpy(s, d, 4); o = s;' 65
+run_ptr_case memrt '         LGR   %r2,%r15
+         AGHI  %r2,-512
+         LGR   %r3,%r15
+         AGHI  %r3,-256
+         LHI   %r7,4' \
+    '#pragma cin uint8_t *d=%r2, uint8_t *s=%r3, int32_t n=%r7' '#pragma cout uint8_t *o=%r4' \
+    '__memset(d, 65, n); __memcpy(s, d, n); o = s;' 65
+run_ptr_case memmoveback '         LGR   %r3,%r15
+         AGHI  %r3,-256' \
+    '#pragma cin uint8_t *s=%r3' '#pragma cout uint8_t *o=%r4' \
+    '__memset(s, 65, 1); __memset(s + 1, 66, 1); __memset(s + 2, 67, 1); __memset(s + 3, 68, 1); __memmove(s + 1, s, 3); o = s + 3;' 67
+run_ptr_case memmovefwd '         LGR   %r3,%r15
+         AGHI  %r3,-256' \
+    '#pragma cin uint8_t *s=%r3' '#pragma cout uint8_t *o=%r4' \
+    '__memset(s, 65, 1); __memset(s + 1, 66, 1); __memset(s + 2, 67, 1); __memset(s + 3, 68, 1); __memmove(s, s + 1, 3); o = s + 1;' 67
+
 echo "test_cblock_runtime: $((case_n - fail))/$case_n passed"
 [ "$fail" -eq 0 ]

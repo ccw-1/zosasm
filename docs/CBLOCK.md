@@ -57,6 +57,11 @@ Types:
 
 * `int32_t`, `uint32_t`, `int64_t`, `uint64_t`
 * `int` and `unsigned` as 32-bit aliases
+* `uint8_t *`, `void *` and `char *` byte pointers
+
+Pointers can be assigned, compared and adjusted by an integer byte count
+(`p + 4`, `p - 4`). They cannot be dereferenced yet, and pointer subtraction
+is not implemented.
 
 Statements:
 
@@ -74,8 +79,9 @@ Expressions:
 * comparisons, `&&`, `||`, `!`, `?:`;
 * prefix and postfix `++` and `--`.
 
-There are no pointers, arrays, structures, strings, floating point, function
-calls, global variables or recursion. `return` is not allowed; the block ends
+There are no arrays, structures, strings, floating point, function calls,
+global variables or recursion. Byte pointers are address values only; `*p`
+and `p[i]` are not implemented. `return` is not allowed; the block ends
 at `#pragma cend`.
 
 Signed overflow wraps two's complement. Division by a constant zero is a
@@ -86,6 +92,32 @@ shift instruction.
 `cinout` and `cout` values are written back at block exit. A `cout` variable
 must be assigned before it is read; an obvious read before assignment is
 `ZA5003`.
+
+## Memory intrinsics
+
+Three statement intrinsics move bytes:
+
+```c
+__memcpy(dst, src, len);   // non-overlapping
+__memmove(dst, src, len);  // overlapping allowed
+__memset(dst, byte, len);
+```
+
+`dst` and `src` are byte pointers; `byte` and `len` are integers. The size and
+fill value may be constant expressions or runtime values.
+
+* A constant `__memcpy` size up to 4096 emits `MVC` chunks.
+* A zero constant `__memset` emits `XC`; other fills use a byte `STC` loop.
+* `__memmove` compares the addresses at run time and uses a forward or
+  backward `MVC` byte loop.
+* Runtime `__memcpy` and `__memset` currently use byte loops. They do not use
+  `MVCL`; a faster chunked `MVC` loop can replace them later.
+* The intrinsics need nonzero scratch registers for the addresses. The
+  compiler reports `ZA5005` when the `cscratch` list is too small.
+* `__memcpy` requires non-overlapping ranges. Use `__memmove` when the ranges
+  may overlap.
+* Addresses are caller-supplied values. The caller is responsible for AMODE
+  and for keeping the ranges valid and writable.
 
 ## Generated code
 
@@ -127,6 +159,7 @@ expanded assembly.
 
 ## Not implemented
 
-Structured DWARF for C variables. The generated code already maps line
-information back to the C source, but local variable locations and types are
-not described in `.debug_info`.
+Typed pointer dereference (`*p`, `p[i]`), pointer subtraction, a faster
+chunked runtime copy, and structured DWARF for C variables. The generated
+code already maps line information back to the C source, but local variable
+locations and types are not described in `.debug_info`.

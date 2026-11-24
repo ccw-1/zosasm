@@ -14,6 +14,7 @@
 typedef struct {
     int bits;  /* 32 or 64 */
     int unsig; /* unsigned */
+    int ptr;   /* a byte/void pointer value */
 } CType;
 
 typedef enum { V_CIN, V_COUT, V_CINOUT, V_LOCAL } VKind;
@@ -44,7 +45,8 @@ struct CBExpr {
 };
 
 typedef enum { S_EXPR, S_ASSIGN, S_DECL, S_IF, S_WHILE, S_DO, S_FOR, S_BREAK, S_CONTINUE,
-               S_LABEL, S_GOTO, S_SWITCH, S_CASE, S_DEFAULT } CBSKind;
+               S_LABEL, S_GOTO, S_SWITCH, S_CASE, S_DEFAULT,
+               S_MEMCPY, S_MEMMOVE, S_MEMSET } CBSKind;
 typedef struct CBStmt CBStmt;
 typedef Vec(CBStmt) CBStmtVec;
 struct CBStmt {
@@ -92,10 +94,48 @@ enum { OP_SHL = 256, OP_SHR, OP_LE, OP_GE, OP_EQ, OP_NE,
 
 /* ---- small helpers ------------------------------------------------------ */
 
-static CType type_of(int bits, int unsig) { CType t; t.bits = bits; t.unsig = unsig; return t; }
-static int type_same(CType a, CType b) { return a.bits == b.bits && a.unsig == b.unsig; }
+static CType type_of(int bits, int unsig) {
+    CType t;
+    t.bits = bits;
+    t.unsig = unsig;
+    t.ptr = 0;
+    return t;
+}
+static CType type_ptr(void) {
+    CType t;
+    t.bits = 64;
+    t.unsig = 1;
+    t.ptr = 1;
+    return t;
+}
+static int type_same(CType a, CType b) { return a.bits == b.bits && a.unsig == b.unsig && a.ptr == b.ptr; }
 
 static int type_parse(const char *s, CType *t) {
+    char *p = xstrdup(s);
+    char *q = str_trim(p);
+    int r = 0;
+    size_t n = strlen(q);
+    while (n > 0 && (q[n - 1] == ' ' || q[n - 1] == '\t')) q[--n] = 0;
+    if (n > 0 && q[n - 1] == '*') {
+        q[--n] = 0;
+        while (n > 0 && (q[n - 1] == ' ' || q[n - 1] == '\t')) q[--n] = 0;
+        if (za_streqi(q, "uint8_t") || za_streqi(q, "void") || za_streqi(q, "char")) {
+            *t = type_ptr();
+            free(p);
+            return 1;
+        }
+    }
+    if (za_streqi(q, "int32_t")) { *t = type_of(32, 0); r = 1; }
+    else if (za_streqi(q, "uint32_t")) { *t = type_of(32, 1); r = 1; }
+    else if (za_streqi(q, "int64_t")) { *t = type_of(64, 0); r = 1; }
+    else if (za_streqi(q, "uint64_t")) { *t = type_of(64, 1); r = 1; }
+    else if (za_streqi(q, "int")) { *t = type_of(32, 0); r = 1; }
+    else if (za_streqi(q, "unsigned")) { *t = type_of(32, 1); r = 1; }
+    free(p);
+    return r;
+}
+#if 0
+static int type_parse_old(const char *s, CType *t) {
     if (za_streqi(s, "int32_t")) { *t = type_of(32, 0); return 1; }
     if (za_streqi(s, "uint32_t")) { *t = type_of(32, 1); return 1; }
     if (za_streqi(s, "int64_t")) { *t = type_of(64, 0); return 1; }
@@ -104,6 +144,7 @@ static int type_parse(const char *s, CType *t) {
     if (za_streqi(s, "unsigned")) { *t = type_of(32, 1); return 1; }
     return 0;
 }
+#endif
 
 static CType type_usual(CType a, CType b) {
     if (a.bits == b.bits) return type_of(a.bits, a.unsig || b.unsig);
@@ -332,6 +373,27 @@ static CBExpr *mk_bin(Parser *p, int op, CBExpr *a, CBExpr *b) {
     if (op == OP_EQ || op == OP_NE || op == OP_LE || op == OP_GE || op == '<' || op == '>' ||
         op == OP_LAND || op == OP_LOR) {
         t = type_of(32, 0);
+        if (op != OP_LAND && op != OP_LOR && a->type.ptr && b->type.ptr) {
+            /* pointer comparison: the operands stay pointers */
+        }
+    } else if (op == '+' && (a->type.ptr || b->type.ptr)) {
+        if (a->type.ptr && b->type.ptr) {
+            cb_error(p->b, a->line, a->col, "ZA5002", "cannot add two pointers");
+            p->err = 1;
+            return a;
+        }
+        t = type_ptr();
+    } else if (op == '-' && a->type.ptr) {
+        if (b->type.ptr) {
+            cb_error(p->b, a->line, a->col, "ZA5002", "pointer subtraction is not implemented");
+            p->err = 1;
+            return a;
+        }
+        t = type_ptr();
+    } else if (a->type.ptr || b->type.ptr) {
+        cb_error(p->b, a->line, a->col, "ZA5002", "unsupported pointer operation");
+        p->err = 1;
+        return a;
     } else {
         t = type_usual(a->type, b->type);
         a = mk_cast(a, t);
@@ -554,7 +616,21 @@ static CBVar *var_new(CBlock *b, const char *name, CType t, VKind k, int reg) {
 }
 
 static int parse_type(Parser *p, CType *t) {
-    if (p->l.tok.kind != TK_ID || !type_parse(p->l.tok.s, t)) return 0;
+    if (p->l.tok.kind != TK_ID) return 0;
+    if (za_streqi(p->l.tok.s, "uint8_t") || za_streqi(p->l.tok.s, "void") ||
+        za_streqi(p->l.tok.s, "char")) {
+        lex_next(&p->l);
+        if (!tok_is(&p->l, '*')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5002",
+                     "only pointers to uint8_t/void/char are implemented");
+            p->err = 1;
+            return 1; /* the caller reports no declaration */
+        }
+        lex_next(&p->l);
+        *t = type_ptr();
+        return 1;
+    }
+    if (!type_parse(p->l.tok.s, t)) return 0;
     lex_next(&p->l);
     return 1;
 }
@@ -657,6 +733,72 @@ static void parse_stmt(Parser *p, CBStmtVec *st) {
     CType t;
     CBExpr *e;
     int line = p->l.tok.line;
+    if (p->l.tok.kind == TK_ID &&
+        (tok_id(&p->l, "__memcpy") || tok_id(&p->l, "__memmove") || tok_id(&p->l, "__memset"))) {
+        int kind = tok_id(&p->l, "__memcpy") ? S_MEMCPY
+                 : tok_id(&p->l, "__memmove") ? S_MEMMOVE : S_MEMSET;
+        CBStmt s;
+        memset(&s, 0, sizeof s);
+        s.kind = (CBSKind)kind;
+        s.line = line;
+        lex_next(&p->l);
+        if (!tok_is(&p->l, '(')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected '(' after intrinsic");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        s.expr = parse_assignment(p);
+        if (!tok_is(&p->l, ',')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected ',' in intrinsic");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        s.step = parse_assignment(p);
+        if (!tok_is(&p->l, ',')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected ',' in intrinsic");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        s.cond = parse_assignment(p);
+        if (!tok_is(&p->l, ')')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected ')' in intrinsic");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        if (!tok_is(&p->l, ';')) {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected ';' after intrinsic");
+            p->err = 1;
+            return;
+        }
+        lex_next(&p->l);
+        if (!s.expr || !s.step || !s.cond) { p->err = 1; return; }
+        if (!s.expr->type.ptr) {
+            cb_error(p->b, line, 1, "ZA5003", "the first argument must be a pointer");
+            p->err = 1;
+            return;
+        }
+        if (kind != S_MEMSET && !s.step->type.ptr) {
+            cb_error(p->b, line, 1, "ZA5003", "the source argument must be a pointer");
+            p->err = 1;
+            return;
+        }
+        if (kind == S_MEMSET && s.step->type.ptr) {
+            cb_error(p->b, line, 1, "ZA5003", "the fill value must be an integer");
+            p->err = 1;
+            return;
+        }
+        if (s.cond->type.ptr) {
+            cb_error(p->b, line, 1, "ZA5003", "the length must be an integer");
+            p->err = 1;
+            return;
+        }
+        vec_push(st, s);
+        return;
+    }
     if (p->switch_depth > 0 && p->l.tok.kind == TK_ID && tok_id(&p->l, "case")) {
         CBStmt s;
         CBExpr *v;
@@ -1062,49 +1204,58 @@ static int binding_parse(CBlock *b, const char *rest, int line, VKind kind) {
     char *p = s;
     for (;;) {
         char *comma = strchr(p, ',');
-        char *part = NULL, *decl = NULL, *eq, *vn = NULL, *rn = NULL;
+        char *decl = NULL, *eq, *vn = NULL, *rn = NULL;
         CType t;
         int reg, i, bad = 0;
         if (comma) *comma = 0;
-        part = trim(p);
-        if (*part) {
-            decl = part;
-            while (*decl && *decl != ' ' && *decl != '\t') decl++;
-            if (*decl) *decl++ = 0;
-            decl = trim(decl);
+        decl = trim(p);
+        if (*decl) {
+            size_t n;
+            char *name_start;
             eq = strchr(decl, '=');
-            if (!*decl || !eq) {
+            if (!eq) {
                 cb_error(b, line, 1, "ZA5005", "expected \"type name=%%rN\" in cblock metadata");
                 bad = 1;
             } else {
                 *eq = 0;
-                vn = trim(decl);
-                rn = trim(eq + 1);
-                if (!type_parse(part, &t)) {
-                    cb_error(b, line, 1, "ZA5002", "unsupported cblock type \"%s\"", part);
-                    bad = 1;
-                } else if (!*vn || !reg_parse(rn, &reg)) {
-                    cb_error(b, line, 1, "ZA5005", "\"%s\" is not a %%r0-%%r15 register binding", rn);
+                decl = trim(decl);
+                n = strlen(decl);
+                while (n > 0 && (decl[n - 1] == ' ' || decl[n - 1] == '\t')) decl[--n] = 0;
+                while (n > 0 && is_id_char((unsigned char)decl[n - 1])) n--;
+                name_start = decl + n;
+                if (!*name_start) {
+                    cb_error(b, line, 1, "ZA5005", "expected a variable name in \"%s\"", decl);
                     bad = 1;
                 } else {
-                    for (i = 0; i < (int)b->vars.n; i++)
-                        if (b->vars.v[i]->reg == reg) {
-                            cb_error(b, line, 1, "ZA5005", "register %%r%d is bound more than once", reg);
-                            bad = 1;
-                            break;
-                        }
-                    if (!bad && strmap_get(&b->byname, vn)) {
-                        cb_error(b, line, 1, "ZA5004", "\"%s\" is already defined", vn);
+                    char *type_text = xstrndup(decl, n);
+                    vn = xstrdup(name_start);
+                    rn = trim(eq + 1);
+                    if (!type_parse(type_text, &t)) {
+                        cb_error(b, line, 1, "ZA5002", "unsupported cblock type \"%s\"", type_text);
                         bad = 1;
+                    } else if (!reg_parse(rn, &reg)) {
+                        cb_error(b, line, 1, "ZA5005", "\"%s\" is not a %%r0-%%r15 register binding", rn);
+                        bad = 1;
+                    } else {
+                        for (i = 0; i < (int)b->vars.n; i++)
+                            if (b->vars.v[i]->reg == reg) {
+                                cb_error(b, line, 1, "ZA5005", "register %%r%d is bound more than once", reg);
+                                bad = 1;
+                                break;
+                            }
+                        if (!bad && strmap_get(&b->byname, vn)) {
+                            cb_error(b, line, 1, "ZA5004", "\"%s\" is already defined", vn);
+                            bad = 1;
+                        }
+                        if (!bad) var_new(b, vn, t, kind, reg);
                     }
-                    if (!bad) var_new(b, vn, t, kind, reg);
+                    free(type_text);
                 }
             }
         }
         free(vn);
         free(rn);
-        free(decl == part ? NULL : decl);
-        free(part);
+        free(decl);
         if (bad) { free(s); return 0; }
         if (!comma) break;
         p = comma + 1;
@@ -1363,7 +1514,16 @@ static int eval_bin(Cg *cg, CBExpr *e, int *slotp) {
         load_slot(b, e->line, s0, e->a->type, 0);
         load_slot(b, e->line, s1, e->b->type, 1);
         res = alloc_slot(cg);
-        emit_compare(b, e->line, ot, e->op, 0, 1, res);
+        emit_compare(b, e->line, (e->a->type.ptr || e->b->type.ptr) ? type_ptr() : ot, e->op, 0, 1, res);
+        *slotp = res;
+        return 1;
+    }
+    if (e->type.ptr) {
+        load_slot(b, e->line, s0, e->a->type, 0);
+        load_slot(b, e->line, s1, e->b->type, 1);
+        asm_line(b, e->line, e->op == '-' ? "SGR %%r0,%%r1" : "AGR %%r0,%%r1");
+        res = alloc_slot(cg);
+        store_slot(b, e->line, res, type_ptr(), 0);
         *slotp = res;
         return 1;
     }
@@ -1535,6 +1695,131 @@ static int codegen_block(Cg *cg, CBStmtVec *v) {
     return 1;
 }
 
+/* pick a nonzero register for an address operand; avoids r0 and used */
+static int pick_addr(CBlock *b, int used1, int used2) {
+    int i;
+    for (i = 0; i < b->nscratch; i++)
+        if (b->scratch[i] != 0 && b->scratch[i] != used1 && b->scratch[i] != used2)
+            return b->scratch[i];
+    if (used1 != 1 && used2 != 1) return 1;
+    return -1;
+}
+
+static int codegen_intrinsic(Cg *cg, CBStmt *st) {
+    CBlock *b = cg->b;
+    int sd, ss, sl = -1, addr_d, addr_s = -1;
+    int64_t len_cv = 0, pat_cv = 0;
+    int have_len = const_eval(st->cond, &len_cv);
+    int have_pat = st->kind == S_MEMSET ? const_eval(st->step, &pat_cv) : 0;
+    int64_t pat = pat_cv;
+    if (!eval(cg, st->expr, &sd)) return 0;
+    if (st->kind != S_MEMSET && !eval(cg, st->step, &ss)) return 0;
+    if (st->kind == S_MEMSET && !eval(cg, st->step, &ss)) return 0;
+    if (!have_len && !eval(cg, st->cond, &sl)) return 0;
+    if (have_len && len_cv < 0) {
+        cb_error(b, st->line, 1, "ZA5003", "the length of a memory intrinsic is negative");
+        return 0;
+    }
+    if (st->kind == S_MEMSET) {
+        addr_d = pick_addr(b, 0, 1);
+        if (addr_d < 0) {
+            cb_error(b, st->line, 1, "ZA5005", "memset needs a nonzero scratch address register");
+            return 0;
+        }
+        load_slot(b, st->line, sd, type_ptr(), addr_d);
+        if (!have_pat) {
+            load_slot(b, st->line, ss, st->step->type, 0);
+        } else {
+            asm_line(b, st->line, "LHI %%r0,%d", (int)(pat & 0xFF));
+        }
+        if (!have_len) load_slot(b, st->line, sl, st->cond->type, 1);
+        else asm_line(b, st->line, "LGHI %%r1,%lld", (long long)len_cv);
+        if (have_len && len_cv == 0) return 1;
+        if (have_len && have_pat && (pat & 0xFF) == 0 && len_cv <= 4096) {
+            int64_t off;
+            for (off = 0; off < len_cv; off += 256) {
+                int64_t n = len_cv - off > 256 ? 256 : len_cv - off;
+                asm_line(b, st->line, "XC %lld(%lld,%%r%d),%lld(%%r%d)", (long long)off,
+                         (long long)n, addr_d, (long long)off, addr_d);
+            }
+            return 1;
+        }
+        {
+            char *top = new_label(b), *end = new_label(b);
+            asm_line(b, st->line, "LTGR %%r1,%%r1");
+            asm_line(b, st->line, "BRCL 8,%s", end);
+            emit_label(b, st->line, top);
+            asm_line(b, st->line, "STC %%r0,0(%%r%d)", addr_d);
+            asm_line(b, st->line, "AGHI %%r%d,1", addr_d);
+            asm_line(b, st->line, "AGHI %%r1,-1");
+            asm_line(b, st->line, "BRCL 7,%s", top);
+            emit_label(b, st->line, end);
+            free(top); free(end);
+        }
+        return 1;
+    }
+    addr_d = pick_addr(b, 0, 1);
+    addr_s = pick_addr(b, addr_d, 0);
+    if (addr_d < 0 || addr_s < 0) {
+        cb_error(b, st->line, 1, "ZA5005",
+                 "%s needs two nonzero scratch address registers", st->kind == S_MEMCPY ? "__memcpy" : "__memmove");
+        return 0;
+    }
+    load_slot(b, st->line, sd, type_ptr(), addr_d);
+    load_slot(b, st->line, ss, type_ptr(), addr_s);
+    if (!have_len) load_slot(b, st->line, sl, st->cond->type, 0);
+    else asm_line(b, st->line, "LGHI %%r0,%lld", (long long)len_cv);
+    if (have_len && len_cv == 0) return 1;
+    if (st->kind == S_MEMCPY && have_len && len_cv <= 4096) {
+        int64_t off;
+        for (off = 0; off < len_cv; off += 256) {
+            int64_t n = len_cv - off > 256 ? 256 : len_cv - off;
+            asm_line(b, st->line, "MVC %lld(%lld,%%r%d),%lld(%%r%d)", (long long)off,
+                     (long long)n, addr_d, (long long)off, addr_s);
+        }
+        return 1;
+    }
+    {
+        char *top = new_label(b), *end = new_label(b);
+        if (st->kind == S_MEMMOVE) {
+            char *back = new_label(b), *btop = new_label(b);
+            asm_line(b, st->line, "LTGR %%r0,%%r0");
+            asm_line(b, st->line, "BRCL 8,%s", end);
+            asm_line(b, st->line, "CLGR %%r%d,%%r%d", addr_d, addr_s);
+            asm_line(b, st->line, "BRCL 2,%s", back);
+            emit_label(b, st->line, top);
+            asm_line(b, st->line, "MVC 0(1,%%r%d),0(%%r%d)", addr_d, addr_s);
+            asm_line(b, st->line, "AGHI %%r%d,1", addr_d);
+            asm_line(b, st->line, "AGHI %%r%d,1", addr_s);
+            asm_line(b, st->line, "AGHI %%r0,-1");
+            asm_line(b, st->line, "BRCL 7,%s", top);
+            asm_line(b, st->line, "BRCL 15,%s", end);
+            emit_label(b, st->line, back);
+            asm_line(b, st->line, "AGR %%r%d,%%r0", addr_d);
+            asm_line(b, st->line, "AGR %%r%d,%%r0", addr_s);
+            emit_label(b, st->line, btop);
+            asm_line(b, st->line, "AGHI %%r%d,-1", addr_d);
+            asm_line(b, st->line, "AGHI %%r%d,-1", addr_s);
+            asm_line(b, st->line, "MVC 0(1,%%r%d),0(%%r%d)", addr_d, addr_s);
+            asm_line(b, st->line, "AGHI %%r0,-1");
+            asm_line(b, st->line, "BRCL 7,%s", btop);
+            free(back); free(btop);
+        } else {
+            asm_line(b, st->line, "LTGR %%r0,%%r0");
+            asm_line(b, st->line, "BRCL 8,%s", end);
+            emit_label(b, st->line, top);
+            asm_line(b, st->line, "MVC 0(1,%%r%d),0(%%r%d)", addr_d, addr_s);
+            asm_line(b, st->line, "AGHI %%r%d,1", addr_d);
+            asm_line(b, st->line, "AGHI %%r%d,1", addr_s);
+            asm_line(b, st->line, "AGHI %%r0,-1");
+            asm_line(b, st->line, "BRCL 7,%s", top);
+        }
+        emit_label(b, st->line, end);
+        free(top); free(end);
+    }
+    return 1;
+}
+
 static int codegen_stmt(Cg *cg, CBStmt *st) {
     CBlock *b = cg->b;
     int s;
@@ -1702,6 +1987,8 @@ for_fail:
         }
         return 1;
     }
+    if (st->kind == S_MEMCPY || st->kind == S_MEMMOVE || st->kind == S_MEMSET)
+        return codegen_intrinsic(cg, st);
     if (st->kind == S_LABEL) {
         emit_label(b, st->line, st->label);
         return 1;
