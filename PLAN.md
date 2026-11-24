@@ -115,6 +115,24 @@ checked by `tests/test_oracle.c`.
 | 14 | Binder (`ld`) accepts our minimal module (SD/ED/LD/TXT/END) | untested | **yes**: `ld` and `xlc` accept our objects like those of `as`; `tools/oracle_ld.sh` links all four mixes of HLASM/zosasm `liba`+`chk` (entries, V/A/weak constants, CATTR class, LOCTR, second CSECT, DSECT) with a C main and runs them: identical results (503 of 511, check 4 fails the same way with IBM's objects) |
 | 15 | EBCDIC vs ASCII `DC C'..'` default matches HLASM (`CODEPAGE`) | EBCDIC 1047 | **yes** (also `^ [ ]`); HLASM option CODEPAGE(1148) on igor |
 
+**Reactivated against pok56 (2026-11-24).** `../../tryhlasm.sh` uploads a
+source, runs `/bin/as -a=NAME.lst -m goff -o NAME.o NAME.asm`, and fetches
+the listing (ASCII) and the raw GOFF object now. `tools/ibm_compare.sh
+SRC.asm [HOST]` runs it and compares the object (`oracle_obj.py`) and the
+per-statement listing bytes (`oracle_cmp.py`). New probes:
+`dfpccw` (DFP `ED/DD/LD`, `CCW/CCW0/CCW1`, `CU`, `BL.n`/`XL.n`),
+`float2` (HFP, IEEE binary, DFP, scale and rounding), `chars`
+(`C/CA/CE/CU`) and `reloc2` (`A(SECOND-FIRST)`, `A(FIRST-*)`,
+`A(*-FIRST)`). All have identical object structure **and identical
+per-statement listing bytes**. The earlier successful probes were rechecked:
+`am1 cat1 cn1 cn2 com1 dc2b er1 g1 g1x g2 g3 lc1 lc2 lt1-lt4 st1-st9`
+are structurally identical; `st3`/`st6`-`st9` cover `Q`, `J`, `QY`, `R`,
+`CXD` and the RLD SUB case. Listing differences on `st3`/`g1`/`er1` are
+HLASM listing facts (8-byte object field plus continuation lines, literal
+pool rows numbered by HLASM, long DATA truncated), not object differences.
+`DC A(2147483647+1)` and the division form are **rejected by HLASM**
+(`ASMA075E arithmetic overflow`) while 64-bit zosasm accepts them; any valid
+32-bit expression keeps the same low 32 bits.
 Also checked (not in the table): the operand rules of the instructions
 (`isa/oracle_rules.json`, ZA2080-2084), the DC/DS length windows, value
 ranges, blanks in nominals, P/Z digits, float lengths (GUIDE 5.1.2), SD flags
@@ -125,11 +143,13 @@ Object comparison (`tools/oracle_obj.sh`, 2026-11-16) is clean for all probes `g
 Literal pool order (by length 16/8/4/2/1) and `*` in literals found with the user's program `wr3.asm` (probes `lt1`-`lt4`, 0 differences); the program itself (GETMAIN, IHASAVER macros via `hlasm2za` + `-M`) assembles to an object identical to HLASM's and links and runs with `/bin/ld`.
 ER rule found 2026-11-16 (`er1` probe): HLASM makes an ER for every EXTRN/WXTRN, parent = section current at the statement; done.
 `tools/oracle_amb.sh NAME` (z/OS `amblist` on both objects): same content, only B_IDRL/IDRL/ESDID shift, END count, HDR level differ.
-Still open: HDR/END fields (accepted: zosasm writes real count, level 1), V-con AMODE bit, long names, text over 56
-bytes, `A(EXTA-A)` referent, extra `B_IDRL`/`B_PRV` classes of HLASM, 32-bit
-expression arithmetic of HLASM, USING forms, ORG, `L.n`, `CU`, `CCW`,
-decimal float, macro-less directives (ACONTROL, PUSH/POP, OPSYN, PUNCH, COPY,
-AREAD, AINSERT, `&SYS*`).
+Still open: HDR/END fields (accepted: zosasm writes real count, level 1),
+V-con AMODE bit, long names, text over 56 bytes, `A(EXTA-A)` referent, extra
+`B_IDRL`/`B_PRV` classes of HLASM, LEN records (no probe emits one yet),
+32-bit expression overflow (zosasm is 64-bit and accepts what HLASM rejects),
+and macro-less directives not exercised here (ACONTROL, PUSH/POP, OPSYN,
+PUNCH, COPY, AREAD, AINSERT, `&SYS*`). Verified on pok56 now: USING/ORG
+(`st2`), `L.n`, `CU`, `CCW/CCW0/CCW1`, decimal float.
 
 How to run the oracle:
 
