@@ -392,6 +392,17 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
     }
     if (!module_validate(m, err, errsz)) goto fail;
 
+    /* HLASM rejects ENTRY of a symbol in a dummy section (DSECT).
+     * dir_entry() catches already-defined symbols; forward references
+     * are caught here once all symbols are known. */
+    for (i = 0; i < m->sym_order.n; i++) {
+        Symbol *es = m->sym_order.v[i];
+        if (es->entry && es->sect && es->sect->kind == K_DSECT) {
+            snprintf(err, errsz, "ENTRY of \"%s\" is not allowed: the symbol is in a DSECT", es->name);
+            goto fail;
+        }
+    }
+
     /* external references: one ER per symbol, below the first section using it */
 #define NOTE(SYM, SECT) NOTE_IF(SYM, SECT, sym_->kind == SYM_EXT)
 #define NOTE_IF(SYM, SECT, COND)                                  \

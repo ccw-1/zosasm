@@ -622,6 +622,17 @@ void dir_entry(Asm *a, Stmt *st) {
             st->bad = 1;
             continue;
         }
+        /* HLASM rejects ENTRY of a symbol in a dummy section (DSECT). */
+        Symbol *es = asm_lookup(a, r.name);
+        if (es && es->sect && es->sect->kind == K_DSECT) {
+            diag_help(rep_errorf(a->rep, "ZA3010", asm_op_span(st, o),
+                                 "ENTRY of \"%s\" is not allowed: the symbol is in a DSECT",
+                                 r.name),
+                      "ENTRY applies to symbols in CSECT/RSECT/COM sections, not dummy sections");
+            st->bad = 1;
+            free(r.name);
+            continue;
+        }
         r.sp = asm_op_span(st, o);
         vec_push(&a->entries, r);
     }

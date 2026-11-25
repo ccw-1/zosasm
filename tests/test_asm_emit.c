@@ -432,6 +432,12 @@ static void test_golden_goff(void) {
      * separate GOFF LD entry.  Check the class length instead. */
     CHECK(ct->length == 11); /* 6 + 2 + 3 = 11 bytes */
     CHECK(g->texts.n >= 1);
+    /* the END record names T as the entry point */
+    CHECK(g->end.kind == GOFF_ENTRY_BYID);
+    CHECK(g->end.esdid == ct->id);
+    /* LARL %r1,MSG is PC-relative: no RLD, no LEN */
+    CHECK(g->relocs.n == 0);
+    CHECK(g->lens.n == 0);
     free(text);
     free(obj);
 }

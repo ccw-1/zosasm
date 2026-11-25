@@ -9,6 +9,7 @@ number is the source line number.
 Prints one line per difference and a summary.  A statement for which HLASM
 printed an error (ASMAnnnE/S) is listed as 'hlasm-error' with the messages.
 """
+import itertools
 import re
 import sys
 
@@ -111,17 +112,20 @@ def main():
     if len(hl) != len(zl):
         print('statement counts differ: hlasm %d zosasm %d' % (len(hl), len(zl)))
         diff += abs(len(hl) - len(zl))
-    for (obj, msgs, src), (zo, zsrc) in zip(hl, zl):
+    for (obj, msgs, src), (zo, zsrc) in itertools.zip_longest(hl, zl, fillvalue=None):
+        if obj is None or zo is None:
+            print('STATEMENT MISSING  hlasm=%r zosasm=%r' % (obj, zo))
+            diff += 1
+            continue
         if norm(src) != norm(zsrc):
             print('SOURCE MISMATCH %r / %r' % (src, zsrc))
             diff += 1
-            break
+            continue
         errs = [m for m in msgs if re.match(r'ASMA\d+[ESC]', m)]
         if errs:
             herr += 1
             print('hlasm-error  %s   [zosasm %s]  %s' % (src, zo, '; '.join(errs)))
-        elif zo != obj and not (obj.startswith(zo) and len(obj) - len(zo) <= 8 and
-                                not obj[len(zo):].strip('0')):
+        elif zo != obj and not (obj == zo or (len(obj) == len(zo) + 1 and obj[len(zo)] == '0')):
             diff += 1
             print('DIFF  %s   hlasm=%s zosasm=%s %s' % (src, obj, zo, '; '.join(msgs)))
         else:

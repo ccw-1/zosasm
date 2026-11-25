@@ -37,8 +37,11 @@ is run at build time: the instruction table (`src/isa_tab.c`) and the EBCDIC
 tables (`src/ebcdic_tab.c`) are generated files that are checked in.
 
 `make test` itself needs `python3`, `od`, `seq` and `strings` for the command
-line tests. `make isa-check` and `make ebcdic-check` additionally need
-`python3` and, for the latter, `iconv`; they are run by CI.
+line tests (`python3` for `__DATE__`/SOURCE_DATE_EPOCH and the deep-expression
+regression, `od` for ELF magic bytes, `strings` for DWARF content in `-g`
+tests). `make isa-check` needs nothing extra (the instruction table is
+checked in); `make ebcdic-check` additionally needs `python3` and `iconv`;
+they are run by CI but are not part of `make test`.
 
 ## Converting from HLASM (`hlasm2za`)
 
@@ -51,6 +54,9 @@ build/hlasm2za old.asm                 # one source file -> old.za
 build/hlasm2za -m sys1.maclib/IHASAVER.mac           # one library member
 build/hlasm2za -macro-dir sys1.maclib -o out_macros  # whole SYS1.MACLIB
 ```
+
+A single file is converted as one unit; `-macro-dir` converts an entire library
+of members to individual `.zmac`/`.mac` files.
 
 ### HLASM source conversion
 
@@ -224,6 +230,22 @@ make test
 `make isa` alone (after editing `isa/isa.json`) needs only the C compiler.
 `isa/isa.json` is not a dependency of `make`. The data comes from IBM's
 *z/Architecture Principles of Operation* only.
+
+## Debug information (`-g`, `-gside`, `-gdwarf`)
+
+`-g` puts DWARF debug information into the object file: the link module gets
+class `C_ADATAE9C3` (NOLOAD), so no `.dbg` file is needed for LLDB, which reads
+the embedded copy first.
+
+`-gside` additionally writes a separate `FILE.dbg` (ELF with DWARF 4) for dbx.
+`-gdwarf FILE` implies `-gside` and writes the `.dbg` file at `FILE` instead of
+deriving the name from the object output name.
+
+With `-elf` the DWARF sections (`.debug_*`) go into the ELF object itself;
+`-gside` and `-gdwarf` are rejected with `-elf`.
+
+Precedence: `-gdwarf` implies `-gside` implies `-g`. `-g` alone embeds DWARF in
+the object and writes no `.dbg` file.
 
 ## Documentation
 

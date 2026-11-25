@@ -79,8 +79,10 @@ GOFF/ELF/`.dbg` objects, `make test-free-asan` and `make ebcdic-check`.
   (`testdata/golden*`) pin the emitted bytes.
 * Correctness fixes from the reviews: `R()` of a LOCTR name, `ENTRY` of a
   DSECT label, statements after `END`, a comment line inside a continuation,
-  `#if` overflow, `DXD` length overflow, and the CLI output paths (`-o -`,
-  `/dev/null`, `-g` aliases, hidden `-l`/`-o` collisions).
+  `#if` overflow (depth cap 200, ZA4030), `#define` recursion depth cap 200
+  (ZA4042), macro string/list limits (MAX_STR 4 MiB, ZA4112), `DXD` length
+  overflow, and the CLI output paths (`-o -`, `/dev/null`, `-g` aliases,
+  hidden `-l`/`-o` collisions).
 
 ## 0.2.0 - 2026-11-18
 
