@@ -1461,7 +1461,7 @@ bit-length `DS`.
 | `DC ...P(7)...` program type | not accepted; the converter warns |
 | `XATTR ATTRIBUTES(label)` | not supported (`ZA3030`) |
 | `XATTR PSECT(name)` | supported for an internal label, section, DXD or class name (the class name is a zosasm extension); sets the LD/PR ADA field, `ZA3038` for a bad name. On an external symbol it is accepted and ignored |
-| `R(symbol)` of an absolute EQU | `ZA2060`; HLASM accepts any symbol |
+| `R(symbol)` of an absolute EQU | `ZA2060`; HLASM accepted a DXD and a local label in the probes, zosasm now does too |
 | forward-reference `EQU` | supported; the value resolves later (`ZA1035` if it never does) |
 
 `hlasm2za` (section 16) converts HLASM source to the zosasm form: it cuts the
