@@ -48,6 +48,8 @@ int main(void) {
                 "  ENTRY MAIN\n"
                 "  LTORG\n"
                 " END\n", 1);
+    /* numeric constants: their Big temporaries live in the Module arena */
+    free_source("T CSECT\n  DC F'1',D'2',L'3',DD'4.5',ED'-2'\n END\n", 1);
     /* errors with a partially built module */
     free_source("T CSECT\n  L 1,NOSUCH\n  DS 0H\n END\n", 0);
     TEST_MAIN_END();

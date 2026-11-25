@@ -20,11 +20,23 @@ static void big_trim(Big *b) {
     while (b->n > 0 && b->d[b->n - 1] == 0) b->n--;
 }
 
+/* Big buffers for an assembly are allocated from the Module arena, so
+ * asm_free() releases them; outside an assembly (the float unit tests) they
+ * use malloc.  The arena cannot grow a block in place, so copy on growth. */
+static Arena *big_arena;
+
+void big_set_arena(Arena *a) { big_arena = a; }
+
 static void big_reserve(Big *b, size_t n) {
     if (n > b->cap) {
         size_t c = b->cap ? b->cap * 2 : 4;
+        uint32_t *d;
         if (c < n) c = n;
-        b->d = xrealloc(b->d, c * sizeof(uint32_t));
+        d = big_arena ? arena_alloc(big_arena, c * sizeof(uint32_t))
+                      : xmalloc(c * sizeof(uint32_t));
+        if (b->n) memcpy(d, b->d, b->n * sizeof(uint32_t));
+        if (!big_arena) free(b->d);
+        b->d = d;
         b->cap = c;
     }
 }
@@ -230,6 +242,7 @@ static int parse_decimal(const char *t, int *neg, Big *num, Big *den) {
     int seen_dot = 0, exp_neg = 0;
     *neg = 0;
     *num = big_new();
+    *den = big_new();
     big_reserve(num, 1);
     if (*t == '+' || *t == '-') *neg = *t++ == '-';
     for (; *t; t++) {
@@ -777,7 +790,10 @@ static int dfp_bytes(const char *text, int neg, int n, long exp10, int mode, uin
             break;
         }
     }
-    if (!nd) return 0;
+    if (!nd) {
+        free(d);
+        return 0;
+    }
     if (*text == 'e' || *text == 'E') {
         int exd = 0;
         text++;
@@ -786,10 +802,16 @@ static int dfp_bytes(const char *text, int neg, int n, long exp10, int mode, uin
             if (ex < 100000000) ex = ex * 10 + (*text - '0');
             exd++;
         }
-        if (!exd) return 0;
+        if (!exd) {
+            free(d);
+            return 0;
+        }
         if (exp_neg) ex = -ex;
     }
-    if (*text) return 0;
+    if (*text) {
+        free(d);
+        return 0;
+    }
     d[nd] = 0;
     for (i = 0; i + 1 < nd && d[i] == '0'; i++) {
     }
@@ -831,6 +853,7 @@ static int dfp_bytes(const char *text, int neg, int n, long exp10, int mode, uin
                     n, inf ? "infinity" : "the largest number");
             *warn = msg;
             dfp_special(f, inf ? "INF" : "MAX", neg, out);
+            free(d);
             return 2;
         }
     }
@@ -840,6 +863,7 @@ static int dfp_bytes(const char *text, int neg, int n, long exp10, int mode, uin
         memset(d, '0', (size_t)f->p - len);
     }
     dfp_finite(f, neg, d, q, out);
+    free(d);
     return *warn ? 2 : 1;
 }
 
@@ -872,9 +896,11 @@ static void mul_pow10(Big *N, Big *D, long e) {
     if (e >= 0) {
         Big p = big_pow10((unsigned)e);
         big_mul_big(N, &p);
+        if (!big_arena) free(p.d);
     } else {
         Big p = big_pow10((unsigned)-e);
         big_mul_big(D, &p);
+        if (!big_arena) free(p.d);
     }
 }
 
@@ -893,9 +919,10 @@ static int is_word(const char *t, const char *w) {
  * (err says why). */
 int float_const(const char *text, char ext, int n, long exp10, long scale, uint8_t *out,
                 const char **err, const char **warn) {
-    char *t = xstrdup(text);
+    char *t0 = xstrdup(text), *t = t0, *num = NULL;
+    Big N = {0}, D = {0};
     size_t l;
-    int mode = 0, neg = 0, r;
+    int mode = 0, neg = 0, r, parsed = 0, ret = 0, num_alloc = 0;
     int ieee = ext == 'B', dec = ext == 'D';
     *err = NULL;
     *warn = NULL;
@@ -919,7 +946,8 @@ int float_const(const char *text, char ext, int n, long exp10, long scale, uint8
                              "or R4 to R7"
                            : "a rounding mode needs the type extension B, D or H, for example "
                              "EB'1.5R5'";
-                return -1;
+                ret = -1;
+                goto done;
             }
         }
     }
@@ -927,7 +955,10 @@ int float_const(const char *text, char ext, int n, long exp10, long scale, uint8
     while (*t && za_isspace((unsigned char)*t)) t++;
     if (*t == '+' || *t == '-') {
         neg = *t++ == '-';
-        if (*t == '+' || *t == '-') return 0;
+        if (*t == '+' || *t == '-') {
+            ret = 0;
+            goto done;
+        }
     }
     if (*t == '(') { /* special values */
         char *k = t + 1;
@@ -935,17 +966,26 @@ int float_const(const char *text, char ext, int n, long exp10, long scale, uint8
         const char *const all[] = {"SNAN", "QNAN", "NAN", "INF", "MAX", "MIN", "DMIN"};
         const char *kind = NULL;
         size_t i;
-        if (!kl || k[kl - 1] != ')') return 0;
+        if (!kl || k[kl - 1] != ')') {
+            ret = 0;
+            goto done;
+        }
         k[kl - 1] = 0;
         for (i = 0; i < 7; i++)
             if (is_word(k, all[i])) kind = all[i];
-        if (!kind) return 0;
-        if (!ieee && !dec && strcmp(kind, "MAX") && strcmp(kind, "MIN") && strcmp(kind, "DMIN"))
-            return 0;
+        if (!kind) {
+            ret = 0;
+            goto done;
+        }
+        if (!ieee && !dec && strcmp(kind, "MAX") && strcmp(kind, "MIN") && strcmp(kind, "DMIN")) {
+            ret = 0;
+            goto done;
+        }
         if (dec) {
             if (n != 4 && n != 8 && n != 16) {
                 *err = "decimal floating-point constants need a length of 4, 8 or 16 bytes";
-                return -1;
+                ret = -1;
+                goto done;
             }
             dfp_special(&dfp_fmts[n == 4 ? 0 : n == 8 ? 1 : 2], kind, neg, out);
         } else if (ieee) {
@@ -954,7 +994,8 @@ int float_const(const char *text, char ext, int n, long exp10, long scale, uint8
             if (n < 1 || (n > 8 && n != 16)) {
                 *err = "hexadecimal floating-point constants need a length of 1 to 8 or 16 "
                        "bytes";
-                return -1;
+                ret = -1;
+                goto done;
             }
             memset(out, 0, (size_t)n);
             if (n == 16) {
@@ -983,45 +1024,64 @@ int float_const(const char *text, char ext, int n, long exp10, long scale, uint8
                 if (n == 16) out[8] |= 0x80;
             }
         }
-        return 1;
+        ret = 1;
+        goto done;
     }
     if (dec) {
         if (exp10 > 100000 || exp10 < -100000) {
             *err = "the exponent is too large or too small";
-            return -1;
+            ret = -1;
+            goto done;
         }
-        return dfp_bytes(t, neg, n, exp10, mode, out, err, warn);
+        ret = dfp_bytes(t, neg, n, exp10, mode, out, err, warn);
+        goto done;
     }
     {
-        Big N, D;
-        char *num = neg ? xasprintf("-%s", t) : t;
+        num = neg ? xasprintf("-%s", t) : t;
+        num_alloc = neg;
         r = parse_decimal(num, &neg, &N, &D);
+        parsed = 1;
         if (r == -1) {
             *err = "the number is too large or too small";
-            return -1;
+            ret = -1;
+            goto done;
         }
-        if (r == 0) return 0;
+        if (r == 0) {
+            ret = 0;
+            goto done;
+        }
         if (n < 1) n = 1;
         if (!big_is_zero(&N) && exp10) {
             if (exp10 > 6000 || exp10 < -6000) {
                 *err = "the number is too large or too small";
-                return -1;
+                ret = -1;
+                goto done;
             }
             mul_pow10(&N, &D, exp10);
         }
         if (big_is_zero(&N)) {
             if (!ieee && n > 16) {
                 *err = "hexadecimal floating-point constants need a length of 1 to 16 bytes";
-                return -1;
+                ret = -1;
+                goto done;
             }
             memset(out, 0, (size_t)n);
             if (neg) out[0] = 0x80; /* a negative zero keeps its sign */
             if (neg && n == 16 && !ieee) out[8] = 0x80;
-            return 1;
+            ret = 1;
+            goto done;
         }
-        return ieee ? ieee_bytes(&N, &D, neg, n, mode, out, err, warn)
-                    : hfp_bytes(&N, &D, neg, n, scale, mode, out, err);
+        ret = ieee ? ieee_bytes(&N, &D, neg, n, mode, out, err, warn)
+                   : hfp_bytes(&N, &D, neg, n, scale, mode, out, err);
     }
+done:
+    if (num_alloc) free(num);
+    if (parsed && !big_arena) {
+        free(N.d);
+        free(D.d);
+    }
+    free(t0);
+    return ret;
 }
 
 int float_bytes(const char *text, int ieee, int n, uint8_t *out, const char **err) {
@@ -1113,10 +1173,14 @@ int dc_float(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
                              "\"%s\" is not a decimal floating-point number", items.v[k].text),
                       "write for example `%c'1.5'`, `%c'-2E3'` or `%c'0'`", sp->typ, sp->typ,
                       sp->typ);
+            free(t);
+            free(b);
             return 0;
         }
         if (r < 0) {
             dc_err(a, st, "ZA2053", items.v[k].off, (int)strlen(items.v[k].text) + 1, "%s", err);
+            free(t);
+            free(b);
             return 0;
         }
         if (r == 2 && a->pass == 1)
@@ -1126,6 +1190,7 @@ int dc_float(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
         v.b = b;
         v.n = (size_t)n;
         vec_push(out, v);
+        free(t);
     }
     return 1;
 }

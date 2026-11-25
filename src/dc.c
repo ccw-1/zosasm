@@ -12,7 +12,7 @@
 int64_t dc_alignment(const DcSpec *sp) {
     switch (sp->typ) {
     case 'Q':
-        if (sp->ext == 'Y') return 2;
+        if (sp->ext == 'Y') return 1; /* HLASM: QY is not aligned */
         return sp->ext == 'D' ? 8 : 4;
     case 'F':
     case 'A':
@@ -21,8 +21,9 @@ int64_t dc_alignment(const DcSpec *sp) {
         return sp->ext == 'D' ? 8 : 4;
     case 'H':
     case 'Y':
-    case 'S':
         return 2;
+    case 'S':
+        return sp->ext == 'Y' ? 1 : 2; /* HLASM: SY is not aligned */
     case 'V':
     case 'E':
         return 4;
@@ -701,6 +702,8 @@ static int dc_int(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
                              "\"%s\" is not a decimal number", items.v[k].text),
                       "write for example `%c'25'`, `%c'-1.5'`, `%c'2E3'` or `%c'U200'`", sp->typ,
                       sp->typ, sp->typ, sp->typ);
+            free(t);
+            free(b);
             return 0;
         }
         if (r < 0) {
@@ -709,8 +712,11 @@ static int dc_int(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
                       "with length %d the value, after scaling, must fit in %d byte(s); use a "
                       "longer length such as %cL%d",
                       n, n, sp->typ, n + 1);
+            free(t);
+            free(b);
             return 0;
         }
+        free(t);
         push_val(out, b, (size_t)(n < 1 ? 0 : n));
     }
     return 1;
@@ -805,7 +811,7 @@ static int addr_con(Asm *a, Stmt *st, const Expr *e, Value v, int n, DcVal *res,
     }
 }
 
-static int dc_addr(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
+static int dc_addr(Asm *a, Stmt *st, const DcSpec *sp, int64_t base_off, DcVec *out) {
     int n = (int)dc_deflen(sp), good = 1;
     OperandVec items = {0};
     size_t k;
@@ -819,17 +825,21 @@ static int dc_addr(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
         DcVal val;
         memset(&val, 0, sizeof val);
         it.off += sp->nom_off;
+        a->loc_bias = base_off + (int64_t)k * n;
         e = asm_expr(a, st, it);
         if (!e) {
+            a->loc_bias = 0;
             good = 0;
             push_val(out, zeros((size_t)n), (size_t)n);
             continue;
         }
         if (!asm_eval(a, st, e, 0, &v)) {
+            a->loc_bias = 0;
             good = 0;
             push_val(out, zeros((size_t)n), (size_t)n);
             continue;
         }
+        a->loc_bias = 0;
         if (!a->laid || !v.defined) {
             push_val(out, zeros((size_t)n), (size_t)n);
             continue;
@@ -846,7 +856,7 @@ static int dc_addr(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
 }
 
 /* S and SY: base register and displacement */
-static int dc_s(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
+static int dc_s(Asm *a, Stmt *st, const DcSpec *sp, int64_t base_off, DcVec *out) {
     int n = (int)dc_deflen(sp), good = 1, ly = sp->ext == 'Y';
     OperandVec items = {0};
     size_t k;
@@ -868,11 +878,14 @@ static int dc_s(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
             push_val(out, b, (size_t)n);
             continue;
         }
+        a->loc_bias = base_off + (int64_t)k * n;
         if (!asm_base_disp(a, st, it, ly, &base, &disp)) {
+            a->loc_bias = 0;
             good = 0;
             push_val(out, b, (size_t)n);
             continue;
         }
+        a->loc_bias = 0;
         if (!ly) {
             b[0] = (uint8_t)(base << 4 | ((disp >> 8) & 15));
             b[1] = (uint8_t)disp;
@@ -1142,9 +1155,12 @@ static int dc_decimal(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
 }
 
 /* the values of one parsed operand; for DS the data is only sized */
-int dc_values(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, DcVec *vals) {
+static int dc_values_inner(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, int64_t base_off,
+                           DcVec *vals) {
     int ok = 0;
     size_t i;
+    a->loc_bias = 0;
+    a->saw_loc = 0;
     if (!sp->has_nom) {
         int64_t n;
         if (!is_ds) {
@@ -1174,10 +1190,10 @@ int dc_values(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, DcVec *vals) {
         break;
     case 'A':
     case 'Y':
-        ok = dc_addr(a, st, sp, vals);
+        ok = dc_addr(a, st, sp, base_off, vals);
         break;
     case 'S':
-        ok = dc_s(a, st, sp, vals);
+        ok = dc_s(a, st, sp, base_off, vals);
         break;
     case 'V':
         ok = dc_v(a, st, sp, vals);
@@ -1201,12 +1217,22 @@ int dc_values(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, DcVec *vals) {
         for (i = 0; i < vals->n; i++) {
             DcVal *v = &vals->v[i];
             size_t n = v->n;
+            uint8_t *old = v->b;
             memset(v, 0, sizeof *v);
             v->b = zeros(n);
             v->n = n;
+            free(old);
         }
     }
     return ok;
+}
+
+int dc_values(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, int64_t base_off, DcVec *vals) {
+    int r;
+    big_set_arena(a->arena);
+    r = dc_values_inner(a, st, sp, is_ds, base_off, vals);
+    big_set_arena(NULL);
+    return r;
 }
 
 /* Bit-length constants (L.n): the fields of one DC statement follow each
@@ -1258,6 +1284,17 @@ void dc_vec_free(DcVec *v) {
     memset(v, 0, sizeof *v);
 }
 
+static uint64_t dc_max_bytes(void) {
+    uint64_t max_dc = (uint64_t)64 << 20;
+    const char *env = getenv("ZOSASM_MAX_DC_BYTES");
+    if (env && *env) {
+        char *endp = NULL;
+        unsigned long long v = strtoull(env, &endp, 10);
+        if (endp != env && *endp == 0 && v > 0) max_dc = (uint64_t)v;
+    }
+    return max_dc;
+}
+
 /* DC and DS */
 void dir_dc(Asm *a, Stmt *st) {
     int is_ds = za_streqi(st->op, "DS");
@@ -1277,7 +1314,7 @@ void dir_dc(Asm *a, Stmt *st) {
         int64_t total = 0, r;
         size_t j;
         if (ok && k == 0) a->star_len = sp.has_len ? sp.length : strchr("CXBPZG", sp.typ) ? 0 : dc_deflen(&sp);
-        if (ok) ok = dc_values(a, st, &sp, is_ds, &vals);
+        if (ok) ok = dc_values(a, st, &sp, is_ds, 0, &vals);
         if (!ok) {
             if (!label_done) {
                 asm_define_label(a, st, 1, 0);
@@ -1286,6 +1323,45 @@ void dir_dc(Asm *a, Stmt *st) {
             dc_vec_free(&vals);
             dc_spec_free(&sp);
             continue;
+        }
+        /* A/Y/S with a location counter reference: HLASM advances * by the
+         * length of each duplicated constant.  The first copy was evaluated
+         * at the statement location; evaluate the other copies at the offsets
+         * they will occupy.  Pass 1 has no bytes yet, so it keeps the plain
+         * duplication for sizing. */
+        if (a->laid && !is_ds && !sp.bits && sp.dup > 1 && a->saw_loc &&
+            (sp.typ == 'A' || sp.typ == 'Y' || sp.typ == 'S') && vals.n > 0) {
+            int64_t one_total = 0;
+            uint64_t bytes;
+            for (j = 0; j < vals.n; j++) one_total += (int64_t)vals.v[j].n;
+            bytes = (uint64_t)one_total * (uint64_t)sp.dup;
+            if (one_total > 0 && bytes / (uint64_t)sp.dup != (uint64_t)one_total) {
+                rep_errorf(a->rep, "ZA2087", st->op_span, "DC duplication factor is too large");
+                ok = 0;
+            } else if (bytes > (uint64_t)ZA_MAX_LOC || bytes > dc_max_bytes()) {
+                diag_help(dc_err(a, st, "ZA2087", sp.off, sp.n,
+                                 "DC expansion is too large (%llu bytes); the limit is %llu bytes",
+                                 (unsigned long long)bytes, (unsigned long long)dc_max_bytes()),
+                          "reduce the duplication factor, split the constant, or set ZOSASM_MAX_DC_BYTES");
+                ok = 0;
+            } else {
+                for (r = 1; r < sp.dup; r++) {
+                    DcVec more = {0};
+                    if (!dc_values(a, st, &sp, 0, r * one_total, &more)) {
+                        dc_vec_free(&more);
+                        ok = 0;
+                        break;
+                    }
+                    for (j = 0; j < more.n; j++) vec_push(&vals, more.v[j]);
+                    free(more.v);
+                }
+                if (ok) sp.dup = 1;
+            }
+            if (!ok) {
+                dc_vec_free(&vals);
+                dc_spec_free(&sp);
+                continue;
+            }
         }
         if (!sp.bits) bits_flush(a, &acc, is_ds);
         if (!sp.has_len) asm_align(a, dc_alignment(&sp));
@@ -1468,7 +1544,7 @@ void dir_dxd(Asm *a, Stmt *st) {
         int64_t al;
         size_t j;
         if (!dc_parse(a, st, ops.v[k], &sp)) continue;
-        if (!dc_values(a, st, &sp, 1, &vals)) { dc_spec_free(&sp); continue; }
+        if (!dc_values(a, st, &sp, 1, 0, &vals)) { dc_spec_free(&sp); continue; }
         al = sp.has_len ? 1 : dc_alignment(&sp);
         if (al > 1) loc += (al - loc % al) % al;
         if (al > align) align = al;
@@ -1511,6 +1587,7 @@ void dir_dxd(Asm *a, Stmt *st) {
     if (!created) return;
     s->kind = SYM_DXD;
     s->len = 1;
+    s->has_len = 1;
     s->xd = 1;
     s->xd_len = loc;
     s->xd_align = (int)align;

@@ -34,9 +34,17 @@ jobs:
               test
             # MCP server is long-lived; run its tests with leak detection.
             make CC=${{ matrix.cc }} test-mcp-asan
+            # library destructors: asm_free()/rep_free() with leak detection.
+            make CC=${{ matrix.cc }} test-free-asan
           else
             make CC=${{ matrix.cc }} test
           fi
+      - name: CBLOCK runtime (s390x under qemu)
+        if: matrix.cc == 'gcc' && !matrix.sanitizers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils-s390x-linux-gnu qemu-user
+          sh tests/test_cblock_runtime.sh
       - name: check generated tables
         # isagen is a developer tool with process-lifetime allocations; when
         # the sanitizer job built it, do not fail on its leaks

@@ -169,9 +169,11 @@ struct Symbol {
     int64_t off;  /* offset in piece (SYM_LABEL) */
     Value val;    /* SYM_ABS, SYM_REL */
     int64_t len;  /* length attribute */
+    unsigned has_len;  /* the length attribute is explicit or derived (not "unset") */
     int64_t count; /* SYM_LABEL: number of items of the first DC/DS operand (countof) */
     int align;     /* SYM_LABEL: alignment of the item in bytes (alignof) */
-    char type;    /* type attribute (C, X, F, ...), 0 = U */
+    char type;    /* type attribute (C, X, F, ...); 0 is a valid type when has_type is set */
+    unsigned has_type; /* the type attribute is set (an EQU third operand or a label type) */
     int scale;    /* scale attribute */
     size_t def_idx; /* index of the defining statement */
     int weak;     /* WXTRN */
@@ -516,6 +518,8 @@ struct Asm {
     FuncUseVec fuses; /* sizeof/alignof of DSECTs seen in pass 1 */
     size_t cur_idx;   /* index of the statement being assembled */
     int64_t star_len; /* L'* of the current statement, 0 = unknown */
+    int64_t loc_bias; /* temporary offset for * while a duplicated constant is evaluated */
+    int saw_loc;      /* the last dc_values evaluation used the location counter */
     Piece *pool_piece; /* the literal pool of END was written here, from pool_loc (ZSYM) */
     int64_t pool_loc;
     /* alignment bytes before the first byte of the statement (ZRec.pad) */
@@ -525,7 +529,6 @@ struct Asm {
     int using_logged; /* highest Using.id copied to Module.usings */
     int strict;       /* registers only as %r<n> or a name made with EQU %r<n> */
     StrMap *hints;    /* piece key -> int64_t start of the previous run (LOCTR alignment) */
-    int round8;       /* fallback when the starts do not settle: pieces start on a doubleword */
     StrMap opsyn;     /* OPSYN: upper case operation code -> its meaning ("" = deleted) */
     int afpr;         /* ACONTROL AFPR: FP registers 1, 3, 5, 7 to 15 are allowed */
     int print_depth;  /* PUSH PRINT entries (the listing keeps the saved states) */
@@ -655,7 +658,7 @@ void asm_put_val(Asm *a, const DcVal *v);
 int64_t dc_alignment(const DcSpec *sp);
 int64_t dc_deflen(const DcSpec *sp);
 int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp);
-int dc_values(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, DcVec *vals);
+int dc_values(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, int64_t base_off, DcVec *vals);
 Diag *dc_err(Asm *a, Stmt *st, const char *code, int off, int n, const char *fmt, ...);
 void split_nominal(const DcSpec *sp, OperandVec *out);
 void be_bytes(uint64_t v, int n, uint8_t *out);
@@ -668,6 +671,8 @@ int float_bytes(const char *text, int ieee, int n, uint8_t *out, const char **er
  * an exponent modifier (power of 10) and a scale modifier (hexadecimal
  * digits). 1 ok, 2 ok with a warning in *warn, 0 not a number, -1 error. */
 void float_set_type(char typ); /* E, D or L for binary floating point of unusual length, else 0 */
+/* Big temporaries are allocated from this arena (the Module arena), freed by asm_free */
+void big_set_arena(Arena *a);
 int float_const(const char *text, char ext, int n, long exp10, long scale, uint8_t *out,
                 const char **err, const char **warn);
 /* F and H: whole number result of text * 10^exp10 * 2^scale, rounded */

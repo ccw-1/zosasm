@@ -132,8 +132,10 @@ assembling is written by the generic converter, and `-generic` ignores ZSYM.
 
 `-disasm` turns a GOFF object back into source (no comments, labels are
 generated: `L0001C`). It assembles the result again and warns if the object
-differs from the input; for objects made by zosasm the round trip is exact
-(see DESIGN.md section 10).
+differs from the input. For objects made by zosasm the round trip is exact with
+`-gz0`; with the default ZSYM the code and relocations are exact but the
+symbolic class records the source file, line and text, so the object file
+differs (see DESIGN.md section 10).
 
 Registers can be written as numbers, as names you defined (`R1 EQU 1`; a bare
 `R1` is not predefined) or GNU style: `lgr %r1,%R2`, `ler %f2,%f4`, `vl %v1,0(%r2)`. With

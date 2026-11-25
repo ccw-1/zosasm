@@ -70,16 +70,14 @@ test-mcp-asan: build/zosasm-mcp
 		-fsanitize=address,undefined
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/test_mcp_asan
 
-# library destructor check: asm_free()/rep_free() under ASan/UBSan. Leak
-# detection is off in this gate; the current tree leaves a few bytes in the
-# literal-pool alignment path (dc_values), and the gate is for double frees
-# and use-after-free in the destructors. Run the binary with
-# ASAN_OPTIONS=detect_leaks=1 to see the remainder.
+# library destructor check: asm_free()/rep_free() under ASan/UBSan, with
+# leak detection on. The Module arena owns the Big temporaries of numeric
+# constants, so a caller that frees the module must not leak them.
 test-free-asan: build/zosasm build/libzosasm.a
 	$(CC) $(STD) $(WARN) -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
 		-Isrc -I. -o build/test_asm_free_asan tests/test_asm_free.c build/libzosasm.a -lm \
 		-fsanitize=address,undefined
-	ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 ./build/test_asm_free_asan
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/test_asm_free_asan
 
 # CBLOCK runtime test (optional cross tools: s390x-linux-gnu-ld, qemu-s390x)
 test-cblock-runtime: build/zosasm

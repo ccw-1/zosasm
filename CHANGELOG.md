@@ -4,6 +4,38 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 `vX.Y.Z`. Things not compared with IBM's tools are marked in the User's Guide
 (section 14).
 
+## Unreleased
+
+### Fixed (HLASM comparison, 2026-11-25)
+
+* `EQU` inherits the length attribute of its leftmost term. `ALIAS EQU SRC`
+  now has the length of `SRC`, so `MVC ALIAS,DST` moves the whole field.
+* A location counter reference in a duplicated or multi-value address
+  constant advances with each constant (`DC 2A(*)`, `DC A(*,*)`, `DC 2S(*)`).
+* `SY` and `QY` constants are 3 bytes and are not aligned, as in HLASM.
+* The type and length attributes can be 0 (`EQU ...,0`), and the EQU type
+  attribute follows the character set (`C'A'` is 0x41 with `-ascii`).
+* The EQU length attribute is checked against 0 to 65535 (`ZA1034`).
+* Numeric constants no longer leak: the Big temporaries live in the Module
+  arena, the `dc_int`/`dc_float` strings and error buffers are freed, and
+  `rep_free()` walks the whole expansion map. `make test-free-asan` now runs
+  with leak detection on.
+* `-o` and `-l` cannot overwrite the input source; `-disasm -o` cannot
+  overwrite the input object; `-E` honours `-o` and rejects `-l`.
+* `hlasm2za` reports legal HLASM forms that zosasm does not accept: `EQU`
+  with 4 or 5 operands, `DC 0D` without a value, `CNOP` above 16, a
+  three-operand `ORG`, an unnamed `DSECT`, a `START` address and
+  `XATTR ATTRIBUTES`.
+* Removed the dead `Asm.round8` fallback; `DESIGN.md` now says that a LOCTR
+  layout that does not settle after five passes is `ZA9002`.
+
+### Tests
+
+* HLASM-derived cases for the EQU length, `*` duplication, `SY`/`QY`
+  alignment, zero attributes and the ASCII type.
+* `test_asm_free` includes numeric constants and runs with `detect_leaks=1`;
+  CI runs it and the CBLOCK runtime test (qemu-s390x).
+
 ## 0.4.0 - 2026-11-24
 
 CBLOCK (`#pragma cblock`): inline integer C blocks with bound registers,

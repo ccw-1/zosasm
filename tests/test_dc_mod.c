@@ -369,7 +369,7 @@ static void test_s(void) {
     hex(" DC S(1024)\n", "0400");
     hex(" DC S(512(12))\n", "C200");
     hex(" DC SY(-2(3))\n", "3FFEFF");
-    hex(" DC SY(4095(1)),SY(4096(2))\n", "1FFF00" "00" "200001");
+    hex(" DC SY(4095(1)),SY(4096(2))\n", "1FFF00200001");
     hex(" DC AL1(1)\n DC S(0(1))\n", "01" "00" "1000");
     hex(" DC SL2(5)\n", "0005");
     /* the displacement comes from a USING */
@@ -397,6 +397,21 @@ static void test_graphic(void) {
     err(" DC G''\n", "ZA2019");
 }
 
+/* a location counter reference in a duplicated or multi-value A/Y/S constant
+ * advances with each constant (HLASM, oracle pstar/pstar2) */
+static void test_loc_dup(void) {
+    hex(" DC 2A(*)\n", "0000000000000004");
+    hex(" DC A(*,*)\n", "0000000000000004");
+    hex(" USING M,15\n DC 2S(*)\n", "F000F002");
+    hex(" DC 2A(*+4)\n", "0000000400000008");
+}
+
+/* SY and QY are 3 bytes and are not aligned (HLASM, oracle ptalign) */
+static void test_y_align(void) {
+    hex(" DC C'A'\n DC SY(0(1))\n DC C'B'\n DC QY(W)\nW DXD F\n",
+        "C1100000C2000000");
+}
+
 int main(void) {
     test_graphic();
     test_s();
@@ -411,5 +426,7 @@ int main(void) {
     test_float();
     test_errors();
     test_attrs();
+    test_loc_dup();
+    test_y_align();
     TEST_MAIN_END();
 }

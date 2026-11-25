@@ -240,6 +240,30 @@ static void test_charset(void) {
         CHECK(d[0] == 'A' && d[1] == 'B' && d[2] == 'x' && d[3] == ' ' && d[5] == ' ');
         CHECK(d[6] == 0x41 && d[7] == 0x10 && d[8] == 0x00 && d[9] == 0x41); /* LA 1,65 */
     }
+    /* the EQU type attribute follows the character set (HLASM, oracle ptyp) */
+    {
+        const char *eq = "T CSECT\nX EQU 5,4,C'A'\n DC AL1(T'X,L'X)\n END\n";
+        za_ascii = 1;
+        rep = rep_new(0);
+        m = asm_assemble_text("t.za", eq, strlen(eq), rep);
+        CHECK(m != NULL);
+        if (m) {
+            d = m->sections.v[0]->classes.v[0]->data;
+            CHECK(d[0] == 0x41 && d[1] == 4);
+            asm_free(m);
+        }
+        rep_free(rep);
+        za_ascii = 0;
+        rep = rep_new(0);
+        m = asm_assemble_text("t.za", eq, strlen(eq), rep);
+        CHECK(m != NULL);
+        if (m) {
+            d = m->sections.v[0]->classes.v[0]->data;
+            CHECK(d[0] == 0xC1 && d[1] == 4);
+            asm_free(m);
+        }
+        rep_free(rep);
+    }
     za_ascii = 0;
     rep = rep_new(0);
     m = asm_assemble_text("t.za", src, strlen(src), rep);

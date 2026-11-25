@@ -178,7 +178,7 @@ void asm_close_pool(Asm *a) {
                 /* IBM HLASM (probe lt1): the pool is ordered by the length of the
                  * literal (multiple of 16, 8, 4, 2, else 1), not by its type alignment */
                 DcVec vals = {0};
-                if (!sp.bits && dc_values(a, p->lits.v[i]->st, &sp, 1, &vals)) {
+                if (!sp.bits && dc_values(a, p->lits.v[i]->st, &sp, 1, 0, &vals)) {
                     int64_t total = 0;
                     size_t j;
                     for (j = 0; j < vals.n; j++) total += (int64_t)vals.v[j].n;

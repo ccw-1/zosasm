@@ -297,6 +297,10 @@ static int do_unpack(const char *path, const char *dir) {
 
 static int do_disasm(const char *path, const char *out, int generic) {
     size_t n, tlen, k, at;
+    if (out && same_path(out, path)) {
+        fprintf(stderr, "zosasm: -o names the input object file: %s\n", path);
+        return 2;
+    }
     const char *perr = NULL;
     GoffModule *m;
     char *b = read_file(path, &n), *text, err[256];
@@ -515,6 +519,10 @@ int main(int argc, char **argv) {
     return 2;
         }
     }
+    if (only_pp && listfile) {
+        fprintf(stderr, "zosasm: -E does not write a listing; do not combine it with -l\n");
+        return 2;
+    }
     if (charset && strcmp(charset, "ascii") != 0 && strcmp(charset, "ebcdic") != 0) {
         fprintf(stderr, "zosasm: -charset takes ascii or ebcdic, not %s\n", charset);
         return 2;
@@ -583,6 +591,14 @@ int main(int argc, char **argv) {
                 return 2;
             }
         }
+        if (strcmp(in, "(stdin)") && same_path(outname, in)) {
+            fprintf(stderr, "zosasm: -o names the input source file: %s\n", in);
+            return 2;
+        }
+        if (listfile && strcmp(in, "(stdin)") && same_path(listfile, in)) {
+            fprintf(stderr, "zosasm: -l names the input source file: %s\n", in);
+            return 2;
+        }
         if (listfile && same_path(outname, listfile)) {
             fprintf(stderr, "zosasm: -o and -l name the same file: %s\n", outname);
             return 2;
@@ -599,11 +615,18 @@ int main(int argc, char **argv) {
     if (gflag) ppo.cblock_debug = &cbdbg;
     pp_run(in, text, n, &ppo, rep, &lines);
     if (only_pp) {
+        Buf b = {0};
         size_t k;
-        for (k = 0; k < lines.n; k++) puts(lines.v[k].text);
+        int ok;
+        for (k = 0; k < lines.n; k++) {
+            buf_puts(&b, lines.v[k].text);
+            buf_putc(&b, '\n');
+        }
+        ok = out_write(out ? out : "-", b.p ? b.p : "", b.len);
+        free(b.p);
         if (json) rep_print_json(rep, stderr);
         else rep_print(rep, stderr, color);
-            return rep_error_count(rep) > 0;
+        return ok ? (rep_error_count(rep) > 0) : 1;
     }
     if (listfile) {
         /* the listing is written whatever happened */
@@ -664,6 +687,8 @@ int main(int argc, char **argv) {
             return 1;
         }
         obj = module_emit_elf_dbg(mod, dsecs, nd, &olen, err, sizeof err);
+        for (i = 0; i < (int)nd; i++) free(dsecs[i].rels);
+        free(dsecs);
     } else {
         obj = elf ? module_emit_elf(mod, &olen, err, sizeof err) : module_emit(mod, &olen, err, sizeof err);
     }
@@ -685,14 +710,23 @@ int main(int argc, char **argv) {
         }
         buf_write(&ob, obj, olen);
         buf_write(&ob, dr.mod2, dr.mod2_len);
+        free(dr.mod2);
         if (!out_write(outname, ob.p, ob.len)) {
             free(ob.p);
+            free(dr.elf);
             return 1;
         }
         free(ob.p);
-        if (gside && !out_write(dbgname, dr.elf, dr.elf_len)) return 1;
+        if (gside && !out_write(dbgname, dr.elf, dr.elf_len)) {
+            free(dr.elf);
+            return 1;
+        }
+        free(dr.elf);
     } else {
         if (!out_write(outname, obj, olen)) return 1;
     }
+    asm_free(mod);
+    rep_free(rep);
+    free(obj);
     return 0;
 }

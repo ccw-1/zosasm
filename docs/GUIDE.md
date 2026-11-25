@@ -588,8 +588,10 @@ Points worth knowing:
 * `ORG BUF+4` moves the location counter *back*; `ORG` without operand moves
   it to the highest address used so far. Overwriting earlier bytes degrades
   the symbolic information of that section (section 12) but is allowed.
-* `EQU` takes up to three operands: value, length attribute and type
-  attribute (a number 0 to 255 or a character).
+* `EQU` takes up to three operands: value, length attribute (0 to 65535,
+  otherwise `ZA1034`) and type attribute (a number 0 to 255 or a character).
+  Without a second operand the length comes from the leftmost term, as in
+  HLASM: `ALIAS EQU SRC` has the length of `SRC`.
 * `CNOP byte,boundary` aligns to `byte` modulo `boundary` (2,8 = a halfword
   position inside a doubleword) with no-op instructions.
 
@@ -610,13 +612,14 @@ values (error `ZA2069`, `ZA2070`).
 displacement is stored low 12 bits first, then the high 8 bits, as in
 instructions). `S(address)` takes both from the active `USING`s exactly like
 a storage operand (`S(1024)` with no USING is base 0, displacement 1024);
-`S(disp(base))` gives both explicitly (`S(512(12))` is `C200`). Alignment is a
-halfword. In a literal, `*` is the address of the literal pool entry (HLASM
-uses the place where the literal is used).
+`S(disp(base))` gives both explicitly (`S(512(12))` is `C200`). `S` is aligned
+to a halfword. `SY` and `QY` are 3 bytes and are not aligned (verified with
+HLASM R6.0). In a literal, `*` is the address of the instruction that uses the
+literal; HLASM stores the same value.
 
-*`QY`.* Like `Q`, but 3 bytes, halfword aligned, and the binder stores the
-offset as a 20 bit signed long displacement (RLD reference type 9 with a
-2 byte + 4 bit field at bit offset 4; not verified against IBM).
+*`QY`.* Like `Q`, but 3 bytes and not aligned, and the binder stores the offset
+as a 20 bit signed long displacement (RLD reference type 9 with a 2 byte + 4
+bit field at bit offset 4; identical to HLASM R6.0 in the oracle run).
 
 *`G`.* Graphic constants hold double-byte characters. zosasm has no DBCS code
 page tables, so each character is written as **four hexadecimal digits**
@@ -921,11 +924,10 @@ OFFSAVE  DC    Q(SAVE)
          END
 ```
 
-**Not verified against IBM.** The records that the binder reads for these
-constants (offset, length and R-type relocations) are written as the GOFF
-documentation describes them, but the exact combination for the Q constant
-differs from one reading of the table and could not be compared with an
-object from IBM's assembler. Test it with the binder before relying on it.
+**Verified against IBM (2026-11-25).** An HLASM R6.0 object of `Q`, `QD`,
+`QY`, `J`, `JD`, `CXD`, `R` and `RD` constants has the same ESD and the same
+RLD reference, referent, action and length. The R-ID differs only because
+HLASM emits the extra `B_IDRL` class. The binder itself was not run.
 
 ---
 
@@ -1074,10 +1076,10 @@ one that subtracts. A single subtraction `A(-X)` works too, and up to five
 terms with coefficient +1 or -1 are allowed. A difference of two labels of the
 same section is a plain number with no relocation at all.
 
-**Not verified against IBM.** All of this is implemented from the HLASM
-Language Reference and checked against its examples and against published IEEE
-bit patterns, not against IBM's assembler. In particular the encoding of the
-subtract relocations should be verified with the binder.
+**Verified against IBM (2026-11-25) for the encoding.** The RLD actions of
+`A(X-Y)`, `A(X-*)` and `A(*-Y)` match HLASM R6.0. The in-place addend differs
+by the class-origin convention (section 14); the binder result was not
+checked.
 
 ---
 
@@ -1390,7 +1392,7 @@ zafmt [options] [file ...]          (chapter 20)
 | `-Mdir` | add a directory of library macros (`name.zmac`, `name.mac`, also `NAME.zmac`; chapter 19) |
 | `-macro-steps N` | stop a macro expansion after N statements (default 1000000) |
 | `-sysparm STR` | the text of `sys.parm` in macros (HLASM `&SYSPARM`) |
-| `-E` | print the preprocessed source and stop |
+| `-E` | print the preprocessed source and stop; `-o FILE` writes it to FILE, `-l` is rejected |
 | `-elf` | write a relocatable ELF64 object for Linux on Z instead of GOFF; implies `-ascii`, ignores `-gz` (section 17) |
 | `-ascii`, `-charset ascii\|ebcdic` | character set of `C'..'` constants and of the type attribute (default `ebcdic`; `ascii` with `-elf`) |
 | `-gz0`, `-gz1`, `-gz2` | symbolic information level (default `-gz1`) |
@@ -1441,6 +1443,18 @@ bit-length `DS`.
 | `*-LABEL` length tricks | `sizeof`, `offsetof`, `alignof`, `countof` |
 | listing | `-l` (section 11.2), a different layout; `TITLE`, `EJECT`, `SPACE`, `PRINT` work in it; `PUNCH`, `ICTL`, `ISEQ` are accepted and ignored |
 | object deck / OBJ output | GOFF only |
+| `DC 0D`, `DC 0F` (zero duplication factor, no value) | `DC 0D'0'`; the no-value form is `ZA2018` |
+| `CNOP 0,32` ... `0,4096` | boundary 4, 8 or 16 only (`ZA3052`) |
+| `ORG expression,boundary,offset` | one operand (`ZA0010`) |
+| unnamed `DSECT` | a name is required (`ZA3004`) |
+| `EQU` program type and assembler type (4th and 5th operand) | 1 to 3 operands (`ZA0010`); the converter warns |
+| `START address` | ignored with `ZA3005`; the binder assigns the load address |
+| `LTORG` in a DSECT with pending literals | `ZA3043` |
+| `DC ...P(7)...` program type | not accepted; the converter warns |
+| `XATTR ATTRIBUTES(label)` | not supported (`ZA3030`) |
+| `XATTR PSECT(name)` | accepted, not emitted, not validated |
+| `R(symbol)` of a DXD or a local non-ENTRY | `ZA2060`; HLASM accepts it and creates an ER |
+| forward-reference `EQU` | rejected (`ZA1010`) |
 
 `hlasm2za` (section 16) converts HLASM source to the zosasm form: it cuts the
 card columns, folds names to upper case, writes registers as `%r1`, and
@@ -1512,16 +1526,13 @@ objects as a second, independent reader; apart from the extra `B_IDRL` class,
 the IDRL record (which shifts the ESD ids), the END count and the HDR level,
 the decoded listings agree.
 
-**Not verified against IBM.** The
-following encodings were made from the documentation and from tests that
-check the bytes by hand, but were not compared with IBM's assembler or run
-through the binder: the GOFF records for `Q`, `J`, `R` and `CXD`; the
-subtract relocation of `A(X-Y)`; floating point values in decimal float, the
-rounding modes and the special values; the `CCW` family; the exact attributes
-of the ZSYM classes. The test suite round trips everything through zosasm's
-own reader. Expect small differences when the first object is checked on
-z/OS; they are all in one place each (`reloc_xd` in `emit.c`, `float.c`,
-`dc.c`).
+**Verified against IBM (2026-11-25).** The GOFF records for `Q`, `J`, `R` and
+`CXD`; the subtract relocation of `A(X-Y)`; `DD`/`ED`/`LD`, `EB`/`DB`/`LB`
+including negatives and zero; and `CCW`, `CCW0` and `CCW1` were compared with
+HLASM R6.0 on z/OS and match (the class-origin addend excepted). **Not
+verified:** the exact attributes of the ZSYM classes, which are zosasm
+specific, and the binder result. The test suite round trips everything
+through zosasm's own reader.
 
 **Where to read more.** `DESIGN.md` (decisions, GOFF mapping, ZSYM format,
 disassembler), `ZSYM.md` (the symbolic information in detail),

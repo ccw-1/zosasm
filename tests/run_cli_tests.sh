@@ -277,7 +277,7 @@ grep -q '^\* A macro library member' $T/COUNT.zmac; check "hlasm2za -m: leading 
 $H -m -flat -o $T/COUNTF.zmac testdata/hlasm/lib/COUNT.mac 2>/dev/null
 grep -q '#goto loop' $T/COUNTF.zmac; check "hlasm2za -flat: #goto" $? 0
 printf 'T CSECT\n#include "COUNT.zmac"\n COUNT 3\n END\n' > $T/cnt.za
-$X -E -I$T -o /dev/null $T/cnt.za 2>&1 | grep -c "DC *F'" | grep -q '^3$'; check "the converted macro expands" $? 0
+$X -E -I$T $T/cnt.za 2>&1 | grep -c "DC *F'" | grep -q '^3$'; check "the converted macro expands" $? 0
 mkdir -p $T/zm; $H -macro-dir testdata/hlasm/lib -o $T/zm > $T/sum 2>&1; check "hlasm2za -macro-dir exit" $? 0
 [ -s $T/zm/COUNT.zmac ] && [ -s $T/zm/FIND.zmac ]; check "hlasm2za -macro-dir writes every member" $? 0
 grep -q '2 members' $T/sum; check "hlasm2za -macro-dir summary" $? 0
@@ -285,9 +285,9 @@ grep -q '2 members' $T/sum; check "hlasm2za -macro-dir summary" $? 0
 mkdir -p $T/zm2/COUNT.zmac; $H -macro-dir testdata/hlasm/lib -o $T/zm2 >/dev/null 2>&1
 check "hlasm2za -macro-dir write failure is an error" $? 1
 printf 'T CSECT\n#include "FIND.zmac"\n FIND 2\n END\n' > $T/fnd.za
-$X -E -I$T/zm -o /dev/null $T/fnd.za 2>&1 | grep -q "DC *F'2'"; check "the converted search loop expands" $? 0
+$X -E -I$T/zm $T/fnd.za 2>&1 | grep -q "DC *F'2'"; check "the converted search loop expands" $? 0
 printf 'T CSECT\n FIND 2\n END\n' > $T/fnd2.za
-$X -E -M$T/zm -o /dev/null $T/fnd2.za 2>&1 | grep -q "DC *F'2'"; check "-M finds FIND.zmac by the macro name (upper case file)" $? 0
+$X -E -M$T/zm $T/fnd2.za 2>&1 | grep -q "DC *F'2'"; check "-M finds FIND.zmac by the macro name (upper case file)" $? 0
 # control flow of converted macros: #switch, dispatch loop, -keep-goto
 $H -m -o $T/SW.zmac testdata/hlasm/lib2/SW.mac 2>/dev/null; check "hlasm2za SW exit" $? 0
 grep -q '#switch (t) {' $T/SW.zmac; check "hlasm2za: arms that join become #switch" $? 0
@@ -301,7 +301,7 @@ $H -m -flat -o $T/DSPF.zmac testdata/hlasm/lib2/DSP.mac 2>/dev/null
 for n in 1 3 9; do
     for v in DSP DSPK DSPF; do
         printf 'T CSECT\n#include "%s.zmac"\n DSP %s\n END\n' $v $n > $T/d.za
-        $X -E -I$T -o /dev/null $T/d.za 2>&1 | grep 'DC *A(' | tr -d ' ' > $T/d_$v.txt
+        $X -E -I$T $T/d.za 2>&1 | grep 'DC *A(' | tr -d ' ' > $T/d_$v.txt
     done
     cmp -s $T/d_DSP.txt $T/d_DSPF.txt && cmp -s $T/d_DSPK.txt $T/d_DSPF.txt; check "dispatch, keep-goto and flat expand alike (DSP $n)" $? 0
 done

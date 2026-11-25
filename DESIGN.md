@@ -305,7 +305,8 @@ EXT      XATTR REFERENCE(DATA,INDIRECT)
   or a part name; `Q` also a part name (`ZA2060` for anything else).
 * `R(name)` names an external symbol, a section or an ENTRY label
   (`ZA2060`); `CXD` and `R` use the labels the same way as `A`.
-* Lengths: `ZA2029`. `QY` is not supported yet.
+* Lengths: `ZA2029`. `QY` is 3 bytes, is not aligned (HLASM R6.0), and uses
+  reference type 9 with the long-displacement field.
 * `REFERENCE(CODE|DATA, DIRECT|INDIRECT)`: one value from each group, in
   either order (`ZA3037` for a repeat or an unknown word). `INDIRECT` sets the
   *indirect* bit of the behavioral attributes of the ESD.
@@ -469,7 +470,11 @@ error[ZA2001]: unknown instruction "LGRR"
   parsed objects and annotations. `Asm` owns the expression trees, operand
   vectors and the scratch reporter; `asm_assemble_all()` frees those
   after each pass and transfers the arena to the returned Module.
-  `make test-free-asan` runs `tests/test_asm_free.c` under ASan/UBSan.
+  `make test-free-asan` runs `tests/test_asm_free.c` under ASan/UBSan with leak
+  detection on. The assembler state is process global (`value_arena`,
+  `za_ascii`, `ieee_ebits`, the DP/MP length), so two threads must not call
+  `asm_assemble()` at the same time; a library caller serializes assemblies
+  or runs one process per assembly.
 * final proof: object files must go through the z/OS binder (`ld`) and run.
 
 ## 8. Preprocessor (implemented, `src/pp.c`)
@@ -553,14 +558,16 @@ conflict).
   `8L-S-1`, P `2L-S-1`, Z `L-S`, E/D/L `2(L-1)-S`, otherwise 0). `K'` and
   `N'` belong to the macro language and give `ZA1032`; `ZA1031` is a
   `X'*` that cannot be evaluated; `ZA1033` is an EQU type operand outside
-  0-255. The third EQU operand sets the type attribute (it was ignored).
+  0-255; `ZA1034` is an EQU length attribute outside 0-65535. The third EQU operand sets the type attribute (it was ignored).
 
 ## 10. Disassembler (`-disasm`, `src/disasm.c`)
 
 `disasm_module()` turns a parsed GOFF module (`goff_parse`) into zosasm
 source. The aim is a *reliable* round trip for objects the assembler wrote:
-source -> object -> source -> object gives the same object bytes and the
-second source equals the first one. `main.c` assembles the result again
+with `-gz0` (no ZSYM), source -> object -> source -> object gives the same
+object bytes and the second source equals the first one. With the default
+ZSYM the code and relocations round trip exactly, but the symbolic class
+records the source file, line and text, so the whole object file differs. `main.c` assembles the result again
 and warns if it does not assemble or the object differs (first differing
 byte and record).
 
@@ -1364,7 +1371,9 @@ sources are.
 
 **Binder check** (`tools/oracle_ld.sh`, `testdata/oracle/ld/`): objects made by zosasm and by HLASM are interchangeable for `ld`/`xlc`; the four mixes give the same result at run time. The same holds for plain `ld -o x obj` of `g1`, `g2`, `g3`, `dc2b`: the same IEW messages (only the expected unresolved externals). Observation: an `A(SDNAME)` stored in a second class (`CATTR`) of the same CSECT is 504 bytes off after binding with HLASM's own object as well (no class: correct); not investigated.
 
-**Object comparison** (`tools/oracle_obj.sh`, `tools/oracle_obj.py`, 2026-11-16): the HLASM object is fetched with z-scp and read by `zosasm -dump`, as is ours; the script compares the ESD tree (names path, attributes), text and RLD items structurally. It ignores the extra `B_IDRL` and an empty `B_PRV`, `C_ADATA*`, the class offsets of the HLASM location space (HLASM puts one space over all classes of a section; zosasm's offsets are class relative) and the ED offset stored in A-con and relative-immediate text. Found and fixed: CATTR defaults (`ClassAttr.cattr`), CNOP pad bytes, COM, Q/QY referent CLASS, B_PRV/DXD attributes, owner of a pseudo register (`Section.prv_owner`, `dir_dxd`), `R(local)` ER (`Symbol.r_er`), one-sided AMODE/RMODE, CSECT resume (`Section.text_cur`), LOCTR pieces without padding. The last needs an alignment that depends on the final start of the piece: `asm_assemble_all` repeats the assembly with the starts of the previous run (`Piece.hint`, a map keyed `section\x01class\x01piece`) until all starts agree modulo 4096; after 5 rounds it falls back to doubleword aligned piece starts (`Asm.round8`). A module without a second location counter is assembled once. Diagnostics of the discarded runs are removed with `rep_mark`/`rep_rewind`. ER rule: every `SYM_EXT` becomes an ER in `module_emit`, parent = `Symbol.ext_sect` (section current at the EXTRN/WXTRN), `-dump` shows it, `oracle_obj.py` compares it; the disassembler writes every ER back as EXTRN/WXTRN unless `R(label)` recreates it. `tools/oracle_amb.sh` is the amblist cross-check.
+**Object comparison** (`tools/oracle_obj.sh`, `tools/oracle_obj.py`, 2026-11-16): the HLASM object is fetched with z-scp and read by `zosasm -dump`, as is ours; the script compares the ESD tree (names path, attributes), text and RLD items structurally. It ignores the extra `B_IDRL` and an empty `B_PRV`, `C_ADATA*`, the class offsets of the HLASM location space (HLASM puts one space over all classes of a section; zosasm's offsets are class relative) and the ED offset stored in A-con and relative-immediate text. Found and fixed: CATTR defaults (`ClassAttr.cattr`), CNOP pad bytes, COM, Q/QY referent CLASS, B_PRV/DXD attributes, owner of a pseudo register (`Section.prv_owner`, `dir_dxd`), `R(local)` ER (`Symbol.r_er`), one-sided AMODE/RMODE, CSECT resume (`Section.text_cur`), LOCTR pieces without padding. The last needs an alignment that depends on the final start of the piece: `asm_assemble_all` repeats the assembly with the starts of the previous run (`Piece.hint`, a map keyed `section\x01class\x01piece`) until all starts agree modulo 4096. If they do not settle after five rounds the
+assembly reports `ZA9002`; there is no fallback to a different layout. A module
+without a second location counter is assembled once. Diagnostics of the discarded runs are removed with `rep_mark`/`rep_rewind`. ER rule: every `SYM_EXT` becomes an ER in `module_emit`, parent = `Symbol.ext_sect` (section current at the EXTRN/WXTRN), `-dump` shows it, `oracle_obj.py` compares it; the disassembler writes every ER back as EXTRN/WXTRN unless `R(label)` recreates it. `tools/oracle_amb.sh` is the amblist cross-check.
 
 ## 21. The source formatter (`zafmt`, `src/fmt.c`, `src/zafmt.c`)
 

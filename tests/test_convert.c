@@ -224,6 +224,19 @@ static void test_unconverted(void) {
     CHECK(warns("T CSECT\n LR 1,2\n DC F'1'\n END\n") == 0);
 }
 
+static void test_forms(void) {
+    /* legal HLASM forms that zosasm rejects or reads differently: the converter
+     * must report them instead of leaving a source that fails later */
+    CHECK(warns("X EQU 5,4,C'A',7,GR\n") == 1);
+    CHECK(warns("Y DC 0D\n") == 1);
+    CHECK(warns(" CNOP 0,32\n") == 1);
+    CHECK(warns(" ORG *,8,2\n") == 1);
+    CHECK(warns(" DSECT\n") == 1);
+    CHECK(warns(" START 4096\n") == 1);
+    CHECK(warns("E XATTR ATTRIBUTES(L)\n") == 1);
+    CHECK(warns("Y DC 0D'0'\n") == 0);
+}
+
 int main(void) {
     test_layout();
     test_columns();
@@ -232,5 +245,6 @@ int main(void) {
     test_relaxed();
     test_width();
     test_unconverted();
+    test_forms();
     TEST_MAIN_END();
 }

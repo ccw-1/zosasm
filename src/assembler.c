@@ -237,7 +237,9 @@ Symbol *asm_define_label(Asm *a, Stmt *st, int64_t length, char typ) {
         s->piece = piece;
         s->off = off;
         s->len = length;
+        s->has_len = 1;
         s->type = typ;
+        s->has_type = typ != 0;
         s->sect = a->sect;
         s->count = 1;
         s->align = 1;
@@ -452,7 +454,8 @@ static char type_attr(const Symbol *s) {
     case SYM_SECT:
         return 'J';
     default:
-        return s->type == 'G' ? '@' : s->type ? s->type : 'U';
+        if (!s->has_type) return 'U';
+        return s->type == 'G' ? '@' : s->type;
     }
 }
 
@@ -512,7 +515,7 @@ static int attr_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
     asm_note_ref(a, s, x->sp);
     switch (x->attr) {
     case 'L':
-        n = s->len ? s->len : 1;
+        n = s->has_len ? s->len : 1;
         break;
     case 'S':
         n = s->scale;
@@ -653,7 +656,8 @@ int asm_eval(Asm *a, Stmt *st, const Expr *e, int need, Value *out) {
         return 1;
     case EX_LOC:
         if (!asm_need_section(a, st)) return 0;
-        *out = asm_addr_value(a, a->cur, a->cur->loc);
+        *out = asm_addr_value(a, a->cur, a->cur->loc + a->loc_bias);
+        a->saw_loc = 1;
         return 1;
     case EX_SYM:
         return sym_value(a, st, e, need, out);
@@ -868,7 +872,6 @@ static void layout(Asm *a) {
             int64_t off = 0;
             for (pi = 0; pi < c->pieces.n; pi++) {
                 Piece *p = c->pieces.v[pi];
-                if (a->round8 && s->kind != K_DSECT && off % 8 != 0) off += 8 - off % 8;
                 p->start = off;
                 if (s->kind == K_DSECT) p->start = 0;
                 off = p->start + piece_len(p);
@@ -1022,6 +1025,8 @@ static void each(Asm *a) {
         if (st->bad) continue;
         a->cur_idx = i;
         a->star_len = 0;
+        a->loc_bias = 0;
+        a->saw_loc = 0;
         a->lead_open = 1;
         a->lead_pad = 0;
         a->lit_owner = (size_t)-1;
@@ -1165,7 +1170,7 @@ static void run(Asm *a) {
 int za_strict_registers;
 
 static Asm *assemble_once(const SrcLine *lines, size_t n, const char *name, Reporter *rep,
-                          StrMap *hints, int round8) {
+                          StrMap *hints) {
     Asm *a = xcalloc(sizeof *a);
     a->rep = rep;
     a->scratch = rep_new(0);
@@ -1173,7 +1178,6 @@ static Asm *assemble_once(const SrcLine *lines, size_t n, const char *name, Repo
     value_set_arena(a->arena);
     a->strict = za_strict_registers;
     a->hints = hints;
-    a->round8 = round8;
     a->mod = xcalloc(sizeof *a->mod);
     a->mod->name = xstrdup(name);
     read_statements(&a->stmts, lines, n, rep);
@@ -1297,7 +1301,7 @@ Module *asm_assemble_all(const SrcLine *lines, size_t n, const char *name, Repor
     int it, settled = 0;
     Asm *last_a = NULL;
     for (it = 0; it < 5; it++) {
-        Asm *a = assemble_once(lines, n, name, rep, hints, 0);
+        Asm *a = assemble_once(lines, n, name, rep, hints);
         StrMap *h = piece_starts(a->mod, &settled);
         if (hints) {
             strmap_free_contents(hints);

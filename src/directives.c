@@ -673,11 +673,30 @@ void dir_extrn(Asm *a, Stmt *st) {
 
 /* ---- EQU / ORG / CNOP / END -------------------------------------------- */
 
+/* The length attribute HLASM assigns to an EQU without a second operand: the
+ * length of the leftmost term (Language Reference, EQU, length attribute
+ * value, cases 1 to 5). */
+static int64_t equ_derived_len(Asm *a, const Expr *e) {
+    const Symbol *s;
+    if (!e) return 1;
+    switch (e->kind) {
+    case EX_SYM:
+        s = asm_lookup(a, e->name);
+        return s && s->has_len ? s->len : 1;
+    case EX_BIN:
+    case EX_UN:
+        return equ_derived_len(a, e->l);
+    default:
+        return 1; /* a self-defining term, *, or an attribute reference */
+    }
+}
+
 void dir_equ(Asm *a, Stmt *st) {
     OperandVec ops = {0};
-    Expr *e;
+    Expr *e = NULL;
     Value v;
     int64_t length = 1, type = 0;
+    int have_len = 0, have_type = 0;
     Symbol *s;
     int created;
     char regkind = 0;
@@ -697,18 +716,34 @@ void dir_equ(Asm *a, Stmt *st) {
                                      "\"%s\" is not a register name", t0),
                           "GNU style registers are %%r0-%%r15, %%f0-%%f15, %%a0-%%a15, "
                           "%%c0-%%c15 and %%v0-%%v31");
+                free(t0);
                 st->bad = 1;
                 return;
             }
             v = value_abs(num);
         } else {
             e = asm_expr(a, st, ops.v[0]);
-            if (!e) return;
-            if (!asm_eval(a, st, e, 1, &v)) return;
+            if (!e) {
+                free(t0);
+                return;
+            }
+            if (!asm_eval(a, st, e, 1, &v)) {
+                free(t0);
+                return;
+            }
         }
+        free(t0);
     }
     if (ops.n > 1 && ops.v[1].text[0]) {
         if (!asm_abs_expr(a, st, ops.v[1], "the EQU length attribute", &length)) return;
+        if (length < 0 || length > 65535) {
+            rep_errorf(a->rep, "ZA1034", asm_op_span(st, ops.v[1]),
+                       "the EQU length attribute must be 0 to 65535, not %lld",
+                       (long long)length);
+            st->bad = 1;
+            return;
+        }
+        have_len = 1;
     }
     if (!asm_valid_stmt_name(st)) {
         rep_errorf(a->rep, "ZA1021", st->name_span, "\"%s\" is not a valid symbol name", st->name);
@@ -723,12 +758,16 @@ void dir_equ(Asm *a, Stmt *st) {
             st->bad = 1;
             return;
         }
+        have_type = 1;
     }
+    if (!have_len) length = regkind ? 1 : equ_derived_len(a, e);
     s = asm_define(a, st, st->name, st->name_span, &created);
     if (created) {
         s->val = v;
         s->len = length;
-        s->type = type ? ZA_A(type) : 0;
+        s->has_len = 1;
+        s->has_type = (unsigned)have_type;
+        s->type = have_type ? (za_ascii ? (char)type : (char)ZA_A(type)) : 0;
         s->kind = value_is_abs(&v) ? SYM_ABS : SYM_REL;
         s->regkind = regkind;
     }

@@ -389,14 +389,15 @@ void rep_free(Reporter *r) {
         free(s);
     }
     free(r->sources.v);
-    for (i = 0; i < r->expansions.n; i++) {
+    for (i = 0; i < r->expansions.cap; i++) {
+        Expansion *e;
+        if (!r->expansions.keys[i]) continue;
         free(r->expansions.keys[i]);
-        {
-            Expansion *e = r->expansions.vals[i];
-            free(e->text);
-            free(e->macro);
-            free(e);
-        }
+        e = r->expansions.vals[i];
+        if (!e) continue;
+        free(e->text);
+        free(e->macro);
+        free(e);
     }
     free(r->expansions.keys);
     free(r->expansions.vals);

@@ -181,8 +181,8 @@ static void test_qy(void) {
     r = reloc_at(g, 0);
     CHECK(r && r->rid == work_id && r->reference == GOFF_REF_LONGDISP && !r->store &&
           r->length == 2 && r->bit_length == 4 && r->bit_offset == 4);
-    /* QY is 3 bytes at a halfword boundary */
-    r = reloc_at(g, 8);
+    /* QY is 3 bytes and, like SY, is not aligned by HLASM */
+    r = reloc_at(g, 7);
     CHECK(r && r->reference == GOFF_REF_LONGDISP);
     expect_codes("QY length", "T CSECT\n DC QYL4(W)\nW DXD F\n", "ZA2016");
 }
