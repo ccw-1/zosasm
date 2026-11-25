@@ -35,8 +35,9 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 * More HLASM source forms: `DC 0D`/`0F` without a value (duplication 0),
   `CNOP` boundaries 4 to 4096, `ORG expression,boundary,offset`, an unnamed
   `DSECT`, `EQU` program and assembler type operands, and the `DC` program
-  type subfield `P(n)`.  `hlasm2za` now warns only about `START` addresses
-  and `XATTR ATTRIBUTES`, which remain unsupported.
+  type subfield `P(n)`, and `XATTR ATTRIBUTES(label)` (the LD/PR extended
+  attribute is the class ED id and the label's class offset).  `hlasm2za`
+  now warns only about `START` addresses.
 * `XATTR PSECT(name)` now writes the ADA field of the LD or PR with the ESD id
   of the PSECT class, as HLASM does.  A bad name on an internal symbol is
   `ZA3038`; on an external symbol the attribute is accepted and ignored.

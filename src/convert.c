@@ -339,8 +339,6 @@ static void check_forms(Conv *c, const LS *l) {
     split_operands(&ops, l->operands);
     if (!strcmp(l->op, "START") && ops.n > 0)
         warnf(c, l->line, "START address is ignored by zosasm (the binder assigns the load address)");
-    if (!strcmp(l->op, "XATTR") && strstr(l->operands, "ATTRIBUTES"))
-        warnf(c, l->line, "XATTR ATTRIBUTES is not supported by zosasm");
     operands_free(&ops); /* split_operands owns the operand text */
 }
 

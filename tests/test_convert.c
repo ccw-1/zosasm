@@ -233,7 +233,7 @@ static void test_forms(void) {
     CHECK(warns(" ORG *,8,2\n") == 0);
     CHECK(warns(" DSECT\n") == 0);
     CHECK(warns(" START 4096\n") == 1);
-    CHECK(warns("E XATTR ATTRIBUTES(L)\n") == 1);
+    CHECK(warns("E XATTR ATTRIBUTES(L)\n") == 0);
     CHECK(warns("Y DC 0D'0'\n") == 0);
 }
 

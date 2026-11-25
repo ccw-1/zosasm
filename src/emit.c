@@ -104,6 +104,13 @@ static uint32_t psect_esd(const XAttr *x) {
     return 0;
 }
 
+static void apply_attributes(GoffESD *e, const XAttr *x) {
+    if (x && x->attr_cls) {
+        e->ext_attr_id = x->attr_cls->esd;
+        e->ext_attr_off = (uint32_t)x->attr_off;
+    }
+}
+
 static const char *put_esd(GoffWriter *w, GoffESD *e) {
     const char *r = goff_write_esd(w, e);
     free(e->name);
@@ -205,7 +212,10 @@ static const char *emit_prv(GoffWriter *w, const Module *m, Section *s) {
         pr.attr.bind_strength = GOFF_STRENGTH_WEAK;
         pr.attr.alignment = lg;
         apply_xattr(&pr.attr, sym->xattr);
-        if (sym->xattr) pr.ada_id = psect_esd(sym->xattr);
+        if (sym->xattr) {
+            pr.ada_id = psect_esd(sym->xattr);
+            apply_attributes(&pr, sym->xattr);
+        }
         if ((e = put_esd(w, &pr)) != NULL) return e;
         sym->esd = pr.id;
     }
@@ -482,7 +492,10 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
             init_ld(&ld, s, s->name, s->classes.v[0], 1);
             sym = module_symbol(m, s->name);
             apply_xattr(&ld.attr, xattr_of(m, s->name));
-            if (sym && sym->xattr) ld.ada_id = psect_esd(sym->xattr);
+            if (sym && sym->xattr) {
+                ld.ada_id = psect_esd(sym->xattr);
+                apply_attributes(&ld, sym->xattr);
+            }
             if (s->name[0] && ld.attr.scope == GOFF_SCOPE_UNSPEC && is_blank_name(s->name))
                 ld.attr.scope = GOFF_SCOPE_SECTION;
             TRY(put_esd(w, &ld));
@@ -515,7 +528,10 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
                 }
                 ld.offset = (uint32_t)ek[i].off;
                 apply_xattr(&ld.attr, sym->xattr);
-                if (sym->xattr) ld.ada_id = psect_esd(sym->xattr);
+                if (sym->xattr) {
+                    ld.ada_id = psect_esd(sym->xattr);
+                    apply_attributes(&ld, sym->xattr);
+                }
                 TRY(put_esd(w, &ld));
                 sym->ld_esd = ld.id;
             }
@@ -532,6 +548,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
             er.name_space = GOFF_NS_NORMAL;
             if (sym->weak) er.attr.bind_strength = GOFF_STRENGTH_WEAK;
             apply_xattr(&er.attr, sym->xattr);
+            if (sym->xattr) apply_attributes(&er, sym->xattr);
             TRY(put_esd(w, &er));
             if (sym->kind == SYM_EXT)
                 sym->esd = er.id;

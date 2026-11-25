@@ -1230,6 +1230,29 @@ static void finish(Asm *a) {
         xa->psect = x->attr.psect ? xstrdup(x->attr.psect) : NULL;
         xa->psect_cls = NULL;
         xa->psect_sym = NULL;
+        xa->attributes = x->attr.attributes ? xstrdup(x->attr.attributes) : NULL;
+        xa->attr_cls = NULL;
+        xa->attr_off = 0;
+        if (xa->attributes) {
+            Symbol *as = asm_lookup(a, xa->attributes);
+            if (as && as->kind == SYM_LABEL && as->piece) {
+                xa->attr_cls = as->piece->cls;
+                xa->attr_off = as->piece->start + as->off;
+            } else if (as && as->kind == SYM_SECT && as->sect) {
+                xa->attr_cls = as->sect->classes.v[0];
+                xa->attr_off = 0;
+            } else {
+                diag_help(rep_errorf(a->rep, "ZA3039", x->st->name_span,
+                                     "ATTRIBUTES names \"%s\", which is not a label or section",
+                                     xa->attributes),
+                          "name an internal label whose ESD id and offset describe the data");
+                free(xa->attributes);
+                free(xa->reference);
+                free(xa->psect);
+                free(xa);
+                continue;
+            }
+        }
         if (xa->psect) {
             Symbol *ps = asm_lookup(a, xa->psect);
             int ok = 1;
@@ -1405,6 +1428,7 @@ static void asm_state_free(Asm *a, int keep_module) {
         free(x->name);
         free(x->attr.reference);
         free(x->attr.psect);
+        free(x->attr.attributes);
         free(x);
     }
     free(a->xattrs.v);
@@ -1552,6 +1576,7 @@ static void asm_free_symbol(Symbol *s) {
     if (s->xattr) {
         free(s->xattr->reference);
         free(s->xattr->psect);
+        free(s->xattr->attributes);
         free(s->xattr);
     }
     /* refs.v[i].file is borrowed from the caller (the Module does not own

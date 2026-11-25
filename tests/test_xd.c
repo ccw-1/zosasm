@@ -213,6 +213,26 @@ static void test_psect(void) {
     }
 }
 
+/* XATTR ATTRIBUTES(label): the LD's extended attribute is the class ED id
+ * and the class offset of the label (HLASM probe pattr2) */
+static void test_attributes(void) {
+    GoffModule *g = emit_src("Q CSECT\n"
+                             "ENT LR 1,2\n"
+                             " ENTRY ENT\n"
+                             "TAG DC F'0'\n"
+                             "ENT XATTR LINKAGE(XPLINK),ATTRIBUTES(TAG)\n");
+    uint32_t data_id = 0;
+    const GoffESD *data, *ld;
+    if (!g) return;
+    data = find_esd(g, GOFF_ED, "B_TEXT", &data_id);
+    ld = find_esd(g, GOFF_LD, "ENT", NULL);
+    CHECK(data && ld);
+    if (data && ld) {
+        CHECK(ld->ext_attr_id == data_id);
+        CHECK(ld->ext_attr_off == 4);
+    }
+}
+
 /* R of a DXD or a local label makes an ER, like HLASM (probe pu: RD(W)) */
 static void test_r_dxd(void) {
     GoffModule *g = emit_src("T CSECT\nW DXD F\n DC RD(W)\n");
@@ -228,6 +248,7 @@ static void test_r_dxd(void) {
 }
 
 int main(void) {
+    test_attributes();
     test_r_dxd();
     test_psect();
     test_qy();

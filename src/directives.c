@@ -441,7 +441,7 @@ void dir_cattr(Asm *a, Stmt *st) {
     a->sect->cur = a->cur;
 }
 
-static const char *const xattr_keys[] = {"LINKAGE", "SCOPE", "REFERENCE", "PSECT"};
+static const char *const xattr_keys[] = {"LINKAGE", "SCOPE", "REFERENCE", "PSECT", "ATTRIBUTES"};
 
 void dir_xattr(Asm *a, Stmt *st) {
     OperandVec ops = {0};
@@ -535,6 +535,9 @@ void dir_xattr(Asm *a, Stmt *st) {
             }
         } else if (!strcmp(at->key, "PSECT")) {
             if (want_args(a, st, at, 1, "PSECT(name)")) x->attr.psect = xstrdup(at->args.v[0]);
+        } else if (!strcmp(at->key, "ATTRIBUTES")) {
+            if (want_args(a, st, at, 1, "ATTRIBUTES(label)"))
+                x->attr.attributes = xstrdup(at->args.v[0]);
         } else {
             bad_attr(a, st, at, xattr_keys, sizeof xattr_keys / sizeof xattr_keys[0]);
         }
