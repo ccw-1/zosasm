@@ -4,8 +4,14 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 `vX.Y.Z`. Things not compared with IBM's tools are marked in the User's Guide
 (section 14).
 
-## Unreleased
+## 0.5.0 - 2026-11-25
 
+* CBLOCK string literal tables: `char *p = "..."` and
+  `const char *p = "..."` emit a private byte table in the current CSECT and
+  load its address with `LARL`. Adjacent literals concatenate and C escapes
+  work. `__align(N) "..."` aligns the table to a power of two from 1 to 4096;
+  the default is no alignment. `__strlen` of a literal or of a pointer
+  initialized with one and never reassigned is compiled to a constant.
 * CBLOCK rejects `%r1` as the `ctemp` base register. Like `%r0`, `%r1` is an
   internal scratch register; using it as the temp base made the generated code
   clobber the base part way through a block.

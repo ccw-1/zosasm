@@ -172,8 +172,8 @@ area.
 
 The subset includes expressions, casts, `if`/`else`, loops, `switch`, `goto`,
 byte and typed scalar pointers, `*p`, `p[i]`, `&local`, opaque DSECT pointers,
-`__sizeof`, `__offsetof`, `__memcpy`, `__memmove`, `__memset`, `__strlen` and
-`__memchr`. With `-g`, CBLOCK locals appear in DWARF.
+string literal tables with optional `__align(N)`, `__sizeof`, `__offsetof`,
+`__memcpy`, `__memmove`, `__memset`, `__strlen` and `__memchr`. With `-g`, CBLOCK locals appear in DWARF.
 
 A memory copy is a statement intrinsic:
 

@@ -30,11 +30,13 @@ typedef struct CBVar {
     int reg;       /* bound register, -1 otherwise */
     int slot;      /* temp-area slot index */
     int initialized;
+    char *lit;     /* string literal the variable was initialized with, or NULL */
+    size_t lit_len;
 } CBVar;
 
 typedef Vec(CBVar *) CBVarVec;
 
-typedef enum { E_NUM, E_VAR, E_UN, E_BIN, E_CAST, E_COND, E_INC, E_CALL, E_DEREF, E_ADDR } CBEKind;
+typedef enum { E_NUM, E_STR, E_VAR, E_UN, E_BIN, E_CAST, E_COND, E_INC, E_CALL, E_DEREF, E_ADDR } CBEKind;
 
 typedef struct CBExpr CBExpr;
 static void cblock_expr_free(CBExpr *e);
@@ -46,6 +48,9 @@ struct CBExpr {
     CBVar *var;
     CBExpr *a, *b, *c;
     char *name; /* E_CALL intrinsic */
+    char *str;  /* E_STR bytes, not necessarily NUL terminated */
+    size_t slen; /* E_STR length */
+    int align;  /* E_STR table alignment, 0/1 = none */
     char *sym, *field; /* __sizeof/__offsetof symbol arguments */
     int read_before;
     int line, col;
@@ -72,6 +77,13 @@ struct CBStmt {
     int line;
 };
 
+typedef struct CBString {
+    char *data;
+    size_t len;
+    int align;
+    char *label;
+} CBString;
+
 typedef struct {
     const char *file;
     int line;
@@ -81,6 +93,9 @@ typedef struct {
     int scratch[16];
     int nscratch;
     Vec(char *) ptypenames; /* opaque pointer target names, index + 1 in CType.target */
+    struct CBString *lits; /* string literal tables, emitted after the block */
+    size_t nlits, lits_cap;
+    char *lit_end; /* branch target after the literal tables */
     int temp_reg;
     long temp_size;
     int temp_down;
@@ -158,6 +173,8 @@ static int type_parse(const char *s, CType *t) {
     int r = 0;
     size_t n = strlen(q);
     while (n > 0 && (q[n - 1] == ' ' || q[n - 1] == '\t')) q[--n] = 0;
+    if (n > 5 && !za_strncmpi(q, "const ", 6)) { q += 6; n -= 6; }
+    while (n > 0 && (q[n - 1] == ' ' || q[n - 1] == '\t')) q[--n] = 0;
     if (n > 0 && q[n - 1] == '*') {
         q[--n] = 0;
         while (n > 0 && (q[n - 1] == ' ' || q[n - 1] == '\t')) q[--n] = 0;
@@ -180,6 +197,8 @@ static int type_text_parse(CBlock *b, const char *text, CType *t) {
     char *p = xstrdup(text), *q = str_trim(p);
     size_t n = strlen(q);
     int r = 0;
+    while (n > 0 && (q[n - 1] == ' ' || q[n - 1] == '\t')) q[--n] = 0;
+    if (n > 5 && !za_strncmpi(q, "const ", 6)) { q += 6; n -= 6; }
     while (n > 0 && (q[n - 1] == ' ' || q[n - 1] == '\t')) q[--n] = 0;
     if (n > 0 && q[n - 1] == '*') {
         q[--n] = 0;
@@ -257,10 +276,11 @@ static void cb_error(CBlock *b, int line, int col, const char *code, const char 
 
 /* ---- captured lines and the C lexer ------------------------------------ */
 
-typedef enum { TK_EOF, TK_ID, TK_NUM, TK_OP } TokKind;
+typedef enum { TK_EOF, TK_ID, TK_NUM, TK_STR, TK_OP } TokKind;
 typedef struct {
     TokKind kind;
-    char *s; /* TK_ID */
+    char *s; /* TK_ID, TK_STR */
+    size_t slen; /* TK_STR */
     int64_t num;
     int op;
     int line, col;
@@ -318,7 +338,78 @@ static void lex_next(Lex *l) {
         l->tok.col = col;
         return;
     }
-    if (is_id_start((unsigned char)l->src[l->pos])) {
+    if (l->src[l->pos] == '"') {
+        Buf b = {0};
+        char *str;
+        size_t n = 0;
+        for (;;) {
+            size_t j = l->pos + 1;
+            while (j < l->n && l->src[j] != '"') {
+                int c = (unsigned char)l->src[j++];
+                if (c == '\\' && j < l->n) {
+                    c = (unsigned char)l->src[j++];
+                    switch (c) {
+                    case 'n': c = '\n'; break;
+                    case 'r': c = '\r'; break;
+                    case 't': c = '\t'; break;
+                    case 'b': c = '\b'; break;
+                    case 'f': c = '\f'; break;
+                    case 'v': c = '\v'; break;
+                    case 'a': c = '\a'; break;
+                    case '\\': break;
+                    case '\'': break;
+                    case '"': break;
+                    case '?': break;
+                    case 'x': {
+                        int v = 0, k = 0;
+                        while (j < l->n && k < 2) {
+                            int h = (unsigned char)l->src[j], d;
+                            if (h >= '0' && h <= '9') d = h - '0';
+                            else if (h >= 'a' && h <= 'f') d = h - 'a' + 10;
+                            else if (h >= 'A' && h <= 'F') d = h - 'A' + 10;
+                            else break;
+                            v = v * 16 + d;
+                            j++;
+                            k++;
+                        }
+                        c = v;
+                        break;
+                    }
+                    default:
+                        if (c >= '0' && c <= '7') {
+                            int v = c - '0', k = 1;
+                            while (j < l->n && k < 3 && l->src[j] >= '0' && l->src[j] <= '7') {
+                                v = v * 8 + (l->src[j] - '0');
+                                j++;
+                                k++;
+                            }
+                            c = v & 0xFF;
+                        }
+                        break;
+                    }
+                }
+                buf_putc(&b, (char)c);
+                n++;
+            }
+            if (j >= l->n) {
+                cb_error(l->b, line, col, "ZA5001", "unterminated string literal");
+                break;
+            }
+            l->pos = j + 1;
+            lex_skip(l);
+            if (!(l->pos < l->n && l->src[l->pos] == '"')) break;
+            /* adjacent string literals are concatenated, as in C */
+        }
+        str = xmalloc(n + 1);
+        memcpy(str, b.p ? b.p : "", n);
+        str[n] = 0;
+        free(b.p);
+        l->tok.kind = TK_STR;
+        l->tok.s = str;
+        l->tok.slen = n;
+        vec_push(&l->ids, str);
+        return;
+    } else if (is_id_start((unsigned char)l->src[l->pos])) {
         size_t j = l->pos + 1;
         while (j < l->n && is_id_char((unsigned char)l->src[j])) j++;
         l->tok.kind = TK_ID;
@@ -506,6 +597,15 @@ static CBExpr *parse_primary(Parser *p) {
     Lex *l = &p->l;
     CBExpr *e;
     int line = l->tok.line, col = l->tok.col;
+    if (l->tok.kind == TK_STR) {
+        e = mk_expr(E_STR, type_ptr(), line, col);
+        e->str = xmalloc(l->tok.slen + 1);
+        memcpy(e->str, l->tok.s, l->tok.slen);
+        e->str[l->tok.slen] = 0;
+        e->slen = l->tok.slen;
+        lex_next(l);
+        return e;
+    }
     if (l->tok.kind == TK_NUM) {
         uint64_t v = (uint64_t)l->tok.num;
         CType t;
@@ -758,6 +858,43 @@ static CBExpr *parse_postfix(Parser *p) {
 static CBExpr *parse_unary(Parser *p) {
     Lex *l = &p->l;
     int line = l->tok.line, col = l->tok.col;
+    if (tok_id(l, "__align")) {
+        CBExpr *e;
+        int64_t n;
+        int align = 1;
+        lex_next(l);
+        if (!tok_is(l, '(')) {
+            cb_error(p->b, line, col, "ZA5001", "__align needs a power-of-two alignment");
+            p->err = 1;
+            return NULL;
+        }
+        lex_next(l);
+        if (l->tok.kind != TK_NUM || l->tok.num < 1 || l->tok.num > 4096 ||
+            (l->tok.num & (l->tok.num - 1)) != 0) {
+            cb_error(p->b, l->tok.line, l->tok.col, "ZA5001",
+                     "__align needs a power-of-two number from 1 to 4096");
+            p->err = 1;
+            return NULL;
+        }
+        n = l->tok.num;
+        align = (int)n;
+        lex_next(l);
+        if (!tok_is(l, ')')) {
+            cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "__align needs one number");
+            p->err = 1;
+            return NULL;
+        }
+        lex_next(l);
+        e = parse_unary(p);
+        if (!e) return NULL;
+        if (e->kind != E_STR) {
+            cb_error(p->b, e->line, e->col, "ZA5001", "__align applies only to a string literal");
+            p->err = 1;
+            return e;
+        }
+        e->align = align;
+        return e;
+    }
     if (tok_is(l, '*')) {
         CBExpr *a, *e;
         lex_next(l);
@@ -909,6 +1046,10 @@ static CBVar *var_new(CBlock *b, const char *name, CType t, VKind k, int reg) {
 }
 
 static int parse_type(Parser *p, CType *t) {
+    if (p->l.tok.kind == TK_ID && tok_id(&p->l, "const")) {
+        lex_next(&p->l);
+        if (p->l.tok.kind != TK_ID) return 0;
+    }
     if (p->l.tok.kind != TK_ID) return 0;
     if (za_streqi(p->l.tok.s, "uint8_t") || za_streqi(p->l.tok.s, "void") ||
         za_streqi(p->l.tok.s, "char")) {
@@ -964,6 +1105,12 @@ static void parse_decl(Parser *p, CBStmtVec *st, CType t) {
     if (tok_is(&p->l, '=')) {
         lex_next(&p->l);
         init = parse_assignment(p);
+        if (init && init->kind == E_STR) {
+            v->lit = xmalloc(init->slen + 1);
+            memcpy(v->lit, init->str, init->slen);
+            v->lit[init->slen] = 0;
+            v->lit_len = init->slen;
+        }
     }
     if (!tok_is(&p->l, ';')) {
         cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5001", "expected ';' after declaration");
@@ -1439,6 +1586,17 @@ static void parse_stmt(Parser *p, CBStmtVec *st) {
         lex_next(&p->l);
         rhs = parse_assignment(p);
         if (!rhs) { p->err = 1; return; }
+        if (v) {
+            free(v->lit);
+            v->lit = NULL;
+            v->lit_len = 0;
+            if (op == '=' && rhs->kind == E_STR) {
+                v->lit = xmalloc(rhs->slen + 1);
+                memcpy(v->lit, rhs->str, rhs->slen);
+                v->lit[rhs->slen] = 0;
+                v->lit_len = rhs->slen;
+            }
+        }
         memset(&s, 0, sizeof s);
         s.kind = S_ASSIGN;
         s.var = v;
@@ -1643,6 +1801,7 @@ static void cblock_expr_free(CBExpr *e) {
     cblock_expr_free(e->b);
     cblock_expr_free(e->c);
     free(e->name);
+    free(e->str);
     free(e->sym);
     free(e->field);
     free(e);
@@ -1799,6 +1958,48 @@ static int find_div_pair(CBlock *b, int *even, int *divisor) {
 
 static char *new_label(CBlock *b) { return xasprintf("$CB%d", ++b->label_no); }
 
+static char *literal_add(CBlock *b, const char *data, size_t len, int align) {
+    CBString *l;
+    if (b->nlits == b->lits_cap) {
+        b->lits_cap = b->lits_cap ? b->lits_cap * 2 : 4;
+        b->lits = xrealloc(b->lits, b->lits_cap * sizeof *b->lits);
+    }
+    l = &b->lits[b->nlits++];
+    l->data = xmalloc(len + 1);
+    memcpy(l->data, data, len);
+    l->data[len] = 0;
+    l->len = len;
+    l->align = align;
+    l->label = new_label(b);
+    return l->label;
+}
+
+static void emit_literal_data(CBlock *b, int line) {
+    size_t i;
+    for (i = 0; i < b->nlits; i++) {
+        CBString *l = &b->lits[i];
+        size_t at = 0, total = l->len + 1;
+        if (l->align == 2) asm_line(b, line, "DS 0H");
+        else if (l->align == 4) asm_line(b, line, "DS 0F");
+        else if (l->align == 8) asm_line(b, line, "DS 0D");
+        else if (l->align > 8) asm_line(b, line, "CNOP 0,%d", l->align);
+        emit_label(b, line, l->label);
+        while (at < total) {
+            Buf h = {0};
+            size_t k = total - at > 16 ? 16 : total - at;
+            size_t j;
+            for (j = 0; j < k; j++) {
+                unsigned char c = at + j == l->len ? 0 : (unsigned char)l->data[at + j];
+                buf_printf(&h, "%02X", c);
+            }
+            asm_line(b, line, "DC X'%s'", buf_cstr(&h));
+            free(h.p);
+            at += k;
+        }
+    }
+    emit_label(b, line, b->lit_end);
+}
+
 static void emit_test(CBlock *b, int line, CType t) {
     asm_line(b, line, t.bits == 64 ? "LTGR %%r0,%%r0" : "LTR %%r0,%%r0");
 }
@@ -1912,6 +2113,14 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
         store_slot(b, e->line, s, e->type, 0);
         *slotp = s;
         return 1;
+    case E_STR: {
+        char *label = literal_add(b, e->str, e->slen, e->align);
+        asm_line(b, e->line, "LARL %%r1,%s", label);
+        res = alloc_slot(cg);
+        store_slot(b, e->line, res, type_ptr(), 1);
+        *slotp = res;
+        return 1;
+    }
     case E_VAR:
         if (e->read_before) {
             cb_error(b, e->line, e->col, "ZA5003", "\"%s\" is read before it is assigned",
@@ -2048,6 +2257,14 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             return 1;
         }
         if (!strcmp(e->name, "__strlen")) {
+            if (e->a->kind == E_STR || (e->a->kind == E_VAR && e->a->var->lit)) {
+                size_t len = e->a->kind == E_STR ? e->a->slen : e->a->var->lit_len;
+                asm_line(b, e->line, "LGFI %%r0,%lu", (unsigned long)len);
+                res = alloc_slot(cg);
+                store_slot(b, e->line, res, type_of(64, 1), 0);
+                *slotp = res;
+                return 1;
+            }
             int addr, chr;
             if (!eval(cg, e->a, &sa)) return 0;
             addr = pick_addr(b, 0, 0);
@@ -2549,6 +2766,7 @@ static void free_block(CBlock *b) {
     size_t i;
     for (i = 0; i < b->vars.n; i++) {
         free(b->vars.v[i]->name);
+        free(b->vars.v[i]->lit);
         free(b->vars.v[i]);
     }
     free(b->vars.v);
@@ -2563,6 +2781,12 @@ static void free_block(CBlock *b) {
     free(b->labels.vals);
     for (i = 0; i < b->ptypenames.n; i++) free(b->ptypenames.v[i]);
     free(b->ptypenames.v);
+    for (i = 0; i < b->nlits; i++) {
+        free(b->lits[i].data);
+        free(b->lits[i].label);
+    }
+    free(b->lits);
+    free(b->lit_end);
     free(b->name);
 }
 
@@ -2780,6 +3004,10 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
                     if (b.save_r0 >= 0) load_slot(&b, line, b.save_r0, type_of(64, 1), 0);
                 }
             }
+            if (ok && b.nlits) {
+                b.lit_end = new_label(&b);
+                asm_line(&b, line, "BRCL 15,%s", b.lit_end);
+            }
             if (b.debug) {
                 emit_label(&b, line, b.end_label);
                 if (ok) {
@@ -2810,6 +3038,7 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
                     vec_push(b.debug, cd);
                 }
             }
+            if (ok && b.nlits) emit_literal_data(&b, line);
         }
         for (i = 0; i < p.l.ids.n; i++) free(p.l.ids.v[i]);
         free(p.l.ids.v);

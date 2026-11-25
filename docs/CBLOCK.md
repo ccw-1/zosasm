@@ -2,7 +2,7 @@
 
 Status: experimental. Capture, integer expressions, control flow including
 `switch`, labels and `goto`, byte and typed scalar pointers, opaque named
-pointers, the memory intrinsics, the `__strlen`/`__memchr` scan intrinsics,
+pointers, string literal tables, the memory intrinsics, the `__strlen`/`__memchr` scan intrinsics,
 and DWARF locals with `-g` are implemented. The original design is in
 `CBLOCK-DESIGN.md`.
 
@@ -74,6 +74,8 @@ Types:
 * `int32_t`, `uint32_t`, `int64_t`, `uint64_t`
 * `int` and `unsigned` as 32-bit aliases
 * `uint8_t *`, `void *` and `char *` byte pointers
+* string literals, only as pointer initializers or `__strlen` arguments
+  (`char *p = "text";`); adjacent literals concatenate, C escapes work
 * typed scalar pointers: `int32_t *`, `uint32_t *`, `int64_t *` and
   `uint64_t *`
 * opaque named pointers such as `PARM *p`, where `PARM` is a DSECT or
@@ -136,7 +138,9 @@ Statements:
 
 Expressions:
 
-* integer literals, variables, casts;
+* integer literals, string literals, variables, casts;
+* `__align(N) "text"` aligns a generated literal table to a power-of-two
+  boundary from 1 to 4096 (default: no alignment);
 * `__sizeof(section)` and `__offsetof(section, field)`;
 * unary `*` (element load) and `&` (address of a local);
 * postfix `p[i]` (element load from `p + i`);
@@ -144,8 +148,10 @@ Expressions:
 * comparisons, `&&`, `||`, `!`, `?:`;
 * prefix and postfix `++` and `--` on variables, not on `*p`.
 
-There are no arrays, structures, strings, floating point, user-defined
-function calls, global variables or recursion. The `__strlen`,
+There are no arrays, structures, floating point, user-defined function calls,
+global variables or recursion. String literals are data tables, not values:
+they can initialize a `char *` and are not otherwise assignable or indexable as
+objects. The `__strlen`,
 `__memchr`, `__sizeof` and `__offsetof` forms are the only call-like
 expressions. There is no pointer-to-pointer type and no array type. `return`
 is not allowed; the block ends at `#pragma cend`.
@@ -207,12 +213,29 @@ uint64_t n = __strlen(str);          // length up to the first zero byte
 uint8_t *p = __memchr(str, byte, len); // pointer to byte, or 0
 ```
 
-`__strlen` takes a pointer and returns an unsigned 64-bit length.
+`__strlen` takes a pointer and returns an unsigned 64-bit length. When the
+argument is a string literal, or a pointer initialized with one and never
+reassigned, the length is a compile-time constant and no scan loop is emitted.
 `__memchr` takes a pointer, an integer byte, and a length, and returns a byte
 pointer to the first matching byte, or 0. The byte value is truncated to eight
 bits. Both use a byte loop with `LLGC`, so the loaded byte does not inherit the
 upper bits of the scratch register. `LLGC` zero-extends the byte; an `IC`
 would leave the previous high bits in place and break the zero test.
+
+### String literal tables
+
+A string literal used as a pointer initializer emits a byte table after the
+block, preceded by a branch over the table:
+
+```c
+const char *table = __align(8) "\x00ABC\n";
+```
+
+`__align(8)` is optional. The default is no alignment. The generated table is
+part of the current CSECT, and the block loads its address with `LARL`. The
+pointer is ordinary writable storage as far as CBLOCK is concerned; put the
+table in a read-only class if writes must fault. Adjacent string literals are
+concatenated, and the table always ends with a zero byte.
 
 * A constant `__memcpy` size up to 4096 emits `MVC` chunks.
 * Runtime `__memcpy` copies 256-byte `MVC` chunks first. The remainder uses

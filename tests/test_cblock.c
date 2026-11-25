@@ -182,6 +182,37 @@ int main(void) {
            "#pragma cend\n"
            " END\n",
            "ZA5006", NULL);
+    expect("string literal table",
+           "#pragma cblock lit\n"
+           "#pragma cout uint32_t n=%r2\n"
+           "#pragma cscratch %r0, %r1\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "const char *p = __align(8) \"A\\x00B\";\n"
+           "n = __strlen(p);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "DC X'41004200'");
+    expect("string literal strlen and byte",
+           "#pragma cblock lit\n"
+           "#pragma cin char *p=%r2\n"
+           "#pragma cout uint32_t n=%r3\n"
+           "#pragma cscratch %r0, %r1\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "n = __strlen(\"hello\");\n"
+           "n = p[1];\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "LGFI %r0,5");
+    expect("bad string alignment",
+           "#pragma cblock lit\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "char *p = __align(3) \"x\";\n"
+           "#pragma cend\n"
+           " END\n",
+           "ZA5001 ZA5001", NULL);
     expect("ctemp r1 is internal scratch",
            "#pragma cblock demo\n"
            "#pragma ctemp %r1, 64, down\n"

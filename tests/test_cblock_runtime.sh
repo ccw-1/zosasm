@@ -56,6 +56,9 @@ EOS
     fi
 }
 
+run_case strings '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'const char *p = __align(8) "ABC"; c = p[0] + __strlen(p);' 68
 run_case add '         LHI   %r2,20
          LHI   %r3,22' \
     '#pragma cin int32_t a=%r2, int32_t b=%r3' '#pragma cout int32_t c=%r4' \
