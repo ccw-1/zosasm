@@ -53,6 +53,12 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
   table use `ZA_TLS` (`__thread` on gcc/clang).  Two threads can assemble at
   the same time; `make test-threads` checks it and CI runs it.
 
+* Library macro lookup now searches `#pragma macro_path` directories, `-M`
+  directories, the directory of the source file, `ZOSASM_MACLIB` (colon
+  separated) and `-I` directories, in that order.  `hlasm2za -macro-path DIR`
+  writes `#pragma macro_path "DIR"` at the start of the converted source.
+* `#line N ["file"]` renumbers the following source lines; diagnostics, the
+  listing, ZSYM and DWARF use the new file and line.
 * The one-shot CLI frees the preprocessor, its source and output lines, the
   events, and the emitter's ZSYM temporaries.  A plain source assembles
   LeakSanitizer clean; macro-heavy sources still leave a few hundred bytes

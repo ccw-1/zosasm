@@ -317,7 +317,13 @@ is followed by one of the keywords below; otherwise it is an ordinary label
 | `#define NAME text`, `#define NAME(a,b) text`, `#undef NAME` | object-like and function-like macros; `##` pastes |
 | `#if`, `#ifdef`, `#ifndef`, `#elif`, `#else`, `#endif` | conditional text; `#if` takes integers, `defined(X)`, `! && \|\| == != < > <= >= + - * / % ~` and parentheses |
 | `#error text`, `#warning text` | stop or warn |
-| `#pragma ...` | listing control: `title`, `eject`, `space`, `print` (section 11.2) |
+| `#line N ["file"]` | set the line number (and optionally the file name) of the following lines; affects diagnostics, the listing, ZSYM and DWARF |
+| `#pragma ...` | listing control: `title`, `eject`, `space`, `print` (section 11.2); `macro_path "dir"` adds a library macro directory (section 19.3) |
+
+`#line N` applies to the line after the directive; `#line N "file"` also
+changes the file name shown in diagnostics, the listing, ZSYM and DWARF. The
+directive is not emitted. `#pragma macro_path` is relative to the file that
+contains it and is repeatable.
 
 Rules that differ from C:
 
@@ -1405,7 +1411,7 @@ zafmt [options] [file ...]          (chapter 20)
 |---|---|
 | `-o FILE` | output file (default: input with `.o`; for `-disasm` stdout; for `-unpack` the directory, default `.`) |
 | `-DNAME[=VAL]` | define a preprocessor macro (value 1 if omitted) |
-| `-Idir` | add an include directory |
+| `-Idir` | add an include directory; also searched for library macros after the `-M` and default directories |
 | `-Mdir` | add a directory of library macros (`name.zmac`, `name.mac`, also `NAME.zmac`; chapter 19) |
 | `-macro-steps N` | stop a macro expansion after N statements (default 1000000) |
 | `-sysparm STR` | the text of `sys.parm` in macros (HLASM `&SYSPARM`) |
@@ -2016,6 +2022,7 @@ toolchain; it understands the *form* of HLASM statements, and since C1 it conver
 | `-flat` | macros: `#goto`/`#label` for every sequence symbol, no structure recovery |
 | `-keep-goto` | macros: where the flow cannot be structured write `#goto`/`#label` instead of a dispatch loop |
 | `-copy-dir DIR` | `COPY` inside a macro reads `DIR/MEMBER.mac` (with `-macro-dir` the library directory is the default) |
+| `-macro-path DIR` | write `#pragma macro_path "DIR"` at the start of the converted file (repeatable); use it when the converted `.zmac` files are not next to the `.za` |
 | `-comment-macros` | leave macro definitions as comments (the behaviour before C1) |
 | `-q` | no warnings |
 | `-version`, `-h` | version, usage |
@@ -2171,8 +2178,10 @@ was left behind.
 `-m`, a whole library with `-macro-dir DIR -o OUT` (every `DIR/*.mac` becomes
 `OUT/NAME.zmac`; the summary gives the counts and names the members that are
 not assembler macros (PL/X sources), have no macro definition (copybooks) or
-failed; the exit status is 1 only for failures). `zosasm -M OUT` then finds the
-macros by name. The converter reads source the way HLASM does where it matters
+failed; the exit status is 1 only for failures). Put `OUT` next to the main
+`.za` file, use `zosasm -M OUT`, or add `-macro-path OUT` to `hlasm2za` so the
+generated `.za` carries `#pragma macro_path "OUT"`. The preprocessor then finds
+the macros by name. The converter reads source the way HLASM does where it matters
 for definitions: a comment line (`*` or `.*`) whose column 72 is not blank
 continues on the next record, a `MNOTE` without a quoted message is passed on
 as a model statement (HLASM gives ASMA163W and no message), a prototype operand
@@ -2748,8 +2757,17 @@ BUF      DS    CL600
 
 * An unknown operation is looked up as `name.zmac`, then `name.mac` (then
   the same with the name in upper case, as `hlasm2za -macro-dir` writes
-  it) in the `-M` directories and then the `-I` directories. A file may define several
-  macros. This is how a directory of converted HLASM macros is used
+  it). The search order is:
+  1. directories from `#pragma macro_path "dir"` in the source,
+  2. `-M` directories,
+  3. the directory of the source file that contains the call,
+  4. `ZOSASM_MACLIB` (a colon separated list of directories),
+  5. `-I` directories.
+
+  The source directory comes before the environment so that converted macros
+  written next to a `.za` file work with no command-line option. A file may
+  define several macros. `#pragma macro_path` is relative to the file that
+  contains it. This is how a directory of converted HLASM macros is used
   (`hlasm2za -macro-dir`, section 16.4).
 * A macro calls others and itself; the depth is limited to 64 (ZA4120) and an
   expansion to `-macro-steps N` statements, default 1,000,000 (ZA4121; the

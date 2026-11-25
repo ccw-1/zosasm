@@ -2,7 +2,7 @@
  *
  * Diagnostic codes: ZA4010-4012 #include, ZA4020-4023 #define/#undef,
  * ZA4030-4034 conditionals, ZA4040-4042 macro calls, ZA4050/4051 #error and
- * #warning, ZA4060/4061 #pragma, ZA4070 trailing comma, ZA4080/4081 the time
+ * #warning, ZA4060/4061 #pragma, ZA4062 #line, ZA4070 trailing comma, ZA4080/4081 the time
  * of __DATE__ and __TIME__, ZA4036 a comment that is not closed. */
 #include <stdlib.h>
 #include <string.h>
@@ -74,6 +74,9 @@ typedef struct {
     SrcVec *rd_lines;
     size_t *rd_next;
     StrVec ains;
+    StrVec macro_paths; /* #pragma macro_path directories, owned */
+    StrVec env_macro_dirs; /* ZOSASM_MACLIB entries, owned */
+    StrVec line_files; /* #line file names, owned */
     StrMap msyn; /* OPSYN of macro names: upper case name -> macro name ("" = deleted) */
     /* the file line being read, blanked and as written (block comments) */
     const char *cur_text, *cur_orig;
@@ -843,7 +846,7 @@ static int64_t eval_if(Pp *pp, const char *text, Span sp, int *ok) {
 
 /* ---- directives -------------------------------------------------------- */
 
-static const char *const directive_names[] = {"define", "elif",    "else",  "endif", "error",  "if",
+static const char *const directive_names[] = {"define", "elif",    "else",  "endif", "error",  "if", "line",
                                               "ifdef",  "ifndef",  "include", "pragma", "undef", "warning"};
 
 /* a line that is nothing but the macro block closer "#}" */
@@ -892,6 +895,34 @@ static char *join_path(const char *dir, const char *name) {
     if (name[0] == '/' || n == 0) return xstrdup(name);
     if (dir[n - 1] == '/') return xasprintf("%s%s", dir, name);
     return xasprintf("%s/%s", dir, name);
+}
+
+/* the directory part of a source path, with its trailing slash ("" for a bare
+ * file name) */
+static char *source_dir(const char *file) {
+    const char *s = file ? strrchr(file, '/') : NULL;
+    if (!file || !*file) return xstrdup(".");
+    return s ? xstrndup(file, (size_t)(s - file + 1)) : xstrdup(".");
+}
+
+static void clear_lib_tried(Pp *pp) {
+    size_t i;
+    for (i = 0; i < pp->lib_tried.cap; i++) free(pp->lib_tried.keys[i]);
+    free(pp->lib_tried.keys);
+    free(pp->lib_tried.vals);
+    memset(&pp->lib_tried, 0, sizeof pp->lib_tried);
+}
+
+static void read_macro_env(Pp *pp) {
+    const char *e = getenv("ZOSASM_MACLIB"), *p = e;
+    if (!e) return;
+    while (*p) {
+        const char *q = strchr(p, ':');
+        size_t n = q ? (size_t)(q - p) : strlen(p);
+        if (n > 0) vec_push(&pp->env_macro_dirs, xstrndup(p, n));
+        if (!q) break;
+        p = q + 1;
+    }
 }
 
 static void pp_file(Pp *pp, const char *file, const char *text, size_t len);
@@ -987,6 +1018,36 @@ static void do_pragma(Pp *pp, const char *rest, Span sp) {
                !strcmp(word, "cscratch") || !strcmp(word, "ctemp")) {
         rep_errorf(pp->rep, "ZA5001", sp,
                    "#pragma %s is only valid inside a #pragma cblock block", word);
+    } else if (!strcmp(word, "macro_path")) {
+        const char *p = skip_blanks(arg), *e, *q;
+        char *name, *base, *path;
+        int bad = 0;
+        if (*p == '"' || *p == '\'') {
+            char quote = *p++;
+            e = strchr(p, quote);
+            if (!e) bad = 1;
+            else for (q = e + 1; is_blank((unsigned char)*q); q++) {
+            }
+            if (!bad && *q) bad = 1;
+        } else {
+            e = p + strcspn(p, " \t");
+            for (q = e; is_blank((unsigned char)*q); q++) {
+            }
+            if (*q) bad = 1;
+        }
+        if (bad || e == p) {
+            diag_help(rep_errorf(pp->rep, "ZA4061", sp,
+                                 "#pragma macro_path needs one directory"),
+                      "for example: #pragma macro_path \"macros\"");
+        } else {
+            name = xstrndup(p, (size_t)(e - p));
+            base = source_dir(pp->file);
+            path = join_path(base, name);
+            vec_push(&pp->macro_paths, path);
+            free(base);
+            free(name);
+            clear_lib_tried(pp);
+        }
     } else if (!strcmp(word, "print")) {
         char *a = za_strlower_own(xstrdup(arg));
         if (strcmp(a, "on") && strcmp(a, "off") && strcmp(a, "data") && strcmp(a, "nodata") &&
@@ -996,10 +1057,65 @@ static void do_pragma(Pp *pp, const char *rest, Span sp) {
                       "for example: #pragma print off");
     } else {
         Diag *d = rep_warnf(pp->rep, "ZA4060", sp, "unknown #pragma \"%s\" is ignored", word);
-        const char *const known[] = {"title", "eject", "ceject", "space", "print"};
-        const char *c = diag_closest(word, known, 5);
+        const char *const known[] = {"title", "eject", "ceject", "space", "print", "macro_path"};
+        const char *c = diag_closest(word, known, 6);
         if (c) diag_help(d, "did you mean \"%s\"?", c);
     }
+    free(r);
+}
+
+
+/* #line N ["file"]: renumber the remaining lines of the current file. The
+ * line of the directive itself is not changed. */
+static void do_line(Pp *pp, const char *rest, Span sp) {
+    const char *p = skip_blanks(rest), *q;
+    char *end = NULL, *file = NULL;
+    long n;
+    size_t start, j;
+    if (!za_isdigit((unsigned char)*p)) {
+        diag_help(rep_errorf(pp->rep, "ZA4062", sp, "#line needs a line number"),
+                  "for example: #line 100 \"other.za\"");
+        return;
+    }
+    n = strtol(p, &end, 10);
+    if (n < 1 || n > 0x7fffffffL || (end && *end && !is_blank((unsigned char)*end))) {
+        rep_errorf(pp->rep, "ZA4062", sp, "#line has an invalid line number");
+        return;
+    }
+    q = end;
+    while (is_blank((unsigned char)*q)) q++;
+    if (*q) {
+        char quote;
+        if (*q != '"' && *q != '\'') {
+            rep_errorf(pp->rep, "ZA4062", sp, "#line file name must be quoted");
+            return;
+        }
+        quote = *q++;
+        end = strchr(q, quote);
+        if (!end) {
+            rep_errorf(pp->rep, "ZA4062", sp, "#line file name has no closing quote");
+            return;
+        }
+        file = xstrndup(q, (size_t)(end - q));
+        for (q = end + 1; is_blank((unsigned char)*q); q++) {
+        }
+        if (*q) {
+            rep_errorf(pp->rep, "ZA4062", sp, "#line has text after the file name");
+            free(file);
+            return;
+        }
+    }
+    if (!pp->rd_lines || !pp->rd_next) {
+        rep_errorf(pp->rep, "ZA4062", sp, "#line is only valid in a source file");
+        free(file);
+        return;
+    }
+    start = *pp->rd_next;
+    for (j = start; j < pp->rd_lines->n; j++) {
+        pp->rd_lines->v[j].line = (int)n + (int)(j - start);
+        if (file) pp->rd_lines->v[j].file = file;
+    }
+    if (file) vec_push(&pp->line_files, file);
 }
 
 static void do_directive(Pp *pp, const char *dir, const char *rest, const char *text) {
@@ -1078,6 +1194,8 @@ static void do_directive(Pp *pp, const char *dir, const char *rest, const char *
         char *m = str_trim(rest);
         rep_warnf(pp->rep, "ZA4051", sp, "#warning %s", m);
         free(m);
+    } else if (!strcmp(dir, "line")) {
+        do_line(pp, rest, sp);
     } else if (!strcmp(dir, "pragma")) {
         do_pragma(pp, rest, sp);
     }
@@ -1225,16 +1343,28 @@ static int is_macro_op(Pp *pp, const char *op) {
     op = mac_alias(pp, op);
     if (!*op) return 0;
     if (mac_defined(pp->mac, op)) return 1;
-    if (pp->opt->macro_dirs.n == 0 && pp->opt->include_dirs.n == 0) return 0;
     if (!op_chars_ok(op) || mac_known_op(op)) return 0;
     l = za_strlower_own(xstrdup(op));
-    if (strmap_get(&pp->lib_tried, l)) return 0;
+    if (strmap_get(&pp->lib_tried, l)) { free(l); return 0; }
     strmap_put(&pp->lib_tried, l, (void *)1);
-    for (i = 0; i < pp->opt->macro_dirs.n; i++)
-        if (try_library_dir(pp, pp->opt->macro_dirs.v[i], l)) return mac_defined(pp->mac, op);
-    for (i = 0; i < pp->opt->include_dirs.n; i++)
-        if (try_library_dir(pp, pp->opt->include_dirs.v[i], l)) return mac_defined(pp->mac, op);
-    return 0;
+    {
+        char *sdir = source_dir(pp->file);
+        int found = 0;
+        /* source directive, then -M, then the source directory, then the
+         * environment, then -I */
+        for (i = 0; !found && i < pp->macro_paths.n; i++)
+            found = try_library_dir(pp, pp->macro_paths.v[i], l);
+        for (i = 0; !found && i < pp->opt->macro_dirs.n; i++)
+            found = try_library_dir(pp, pp->opt->macro_dirs.v[i], l);
+        if (!found && *sdir) found = try_library_dir(pp, sdir, l);
+        for (i = 0; !found && i < pp->env_macro_dirs.n; i++)
+            found = try_library_dir(pp, pp->env_macro_dirs.v[i], l);
+        for (i = 0; !found && i < pp->opt->include_dirs.n; i++)
+            found = try_library_dir(pp, pp->opt->include_dirs.v[i], l);
+        free(sdir);
+        free(l);
+        return found && mac_defined(pp->mac, op);
+    }
 }
 
 static void flush_inserts(Pp *pp);
@@ -1249,6 +1379,7 @@ static void do_macro_call(Pp *pp, const char *name, const char *op, const char *
     args = xcalloc((ov.n + 1) * sizeof *args);
     for (i = 0; i < ov.n; i++) args[i] = ov.v[i].text;
     if (pp->mdepth == 0) {
+        free((char *)pp->exp_macro);
         pp->exp_done = 0;
         pp->exp_macro = za_strupper(op);
         pp->exp_def = mac_def_span(pp->mac, op);
@@ -1258,6 +1389,7 @@ static void do_macro_call(Pp *pp, const char *name, const char *op, const char *
     pp->mdepth--;
     if (pp->mdepth == 0) flush_inserts(pp);
     free(args);
+    for (i = 0; i < ov.n; i++) free(ov.v[i].text);
     free(ov.v);
 }
 
@@ -1522,6 +1654,7 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
             t = joined_bs;
         }
         pp->line = ln;
+        pp->file = lines.v[i].file;
         pp->cur_text = lines.v[i].text;
         pp->cur_orig = lines.v[i].orig;
         {
@@ -1576,14 +1709,14 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
                 if (pragma_word(lines.v[j].text, "cblock")) nested = 1;
             }
             if (end == lines.n) {
-                rep_errorf(pp->rep, "ZA5001", span_make(file, ln, 1, 1),
+                rep_errorf(pp->rep, "ZA5001", span_make(pp->file, ln, 1, 1),
                            "unterminated #pragma cblock (no #pragma cend)");
                 free(joined_bs); free(joined_pl); free(joined_po);
                 i = nxt = lines.n;
                 continue;
             }
             if (nested)
-                rep_errorf(pp->rep, "ZA5001", span_make(file, lines.v[end].line, 1, 1),
+                rep_errorf(pp->rep, "ZA5001", span_make(pp->file, lines.v[end].line, 1, 1),
                            "a #pragma cblock cannot be nested");
             if (active(pp)) {
                 CBlockLineVec body = {0};
@@ -1856,6 +1989,12 @@ static void pp_free(Pp *pp) {
     free(pp->msyn.vals);
     for (i = 0; i < pp->ains.n; i++) free(pp->ains.v[i]);
     free(pp->ains.v);
+    for (i = 0; i < pp->macro_paths.n; i++) free(pp->macro_paths.v[i]);
+    free(pp->macro_paths.v);
+    for (i = 0; i < pp->env_macro_dirs.n; i++) free(pp->env_macro_dirs.v[i]);
+    free(pp->env_macro_dirs.v);
+    /* the file names from #line stay with the output SrcLines */
+    free(pp->line_files.v);
     free(pp->conds.v);
     free(pp->sect);
     free(pp->sectype);
@@ -1874,6 +2013,7 @@ void pp_run(const char *file, const char *text, size_t len, const PpOptions *opt
     pp->out = out;
     pp->file = file;
     pp->base = file;
+    read_macro_env(pp);
     {
         MacHost h;
         h.user = pp;

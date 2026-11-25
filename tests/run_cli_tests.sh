@@ -255,6 +255,8 @@ $X -gz0 -strict-registers -o $T/prog0.o $T/prog.za 2>/dev/null
 cmp -s $T/prog0.o $T/progr.o; check "strict and relaxed conversions give the same object" $? 0
 cp testdata/hlasm/prog.asm $T/cp.asm; $H $T/cp.asm 2>/dev/null; [ -s $T/cp.za ]; check "hlasm2za default output name" $? 0
 $H -o - testdata/hlasm/prog.asm 2>/dev/null | cmp -s - testdata/hlasm/prog.za; check "hlasm2za -o -" $? 0
+$H -macro-path "$T/macros" -o "$T/mp.za" testdata/hlasm/prog.asm 2>/dev/null
+grep -q "^#pragma macro_path \"$T/macros\"$" "$T/mp.za"; check "hlasm2za -macro-path writes the pragma" $? 0
 $H - < testdata/hlasm/prog.asm 2>/dev/null | cmp -s - testdata/hlasm/prog.za; check "hlasm2za from standard input" $? 0
 $H -o - docs/examples/hlasm-demo.asm 2>/dev/null | cmp -s - docs/examples/hlasm-demo.za; check "docs/examples/hlasm-demo.za is the conversion of hlasm-demo.asm" $? 0
 $X -strict-registers -Werror -o $T/demo.o docs/examples/hlasm-demo.za 2>/dev/null; check "hlasm-demo.za assembles with -strict-registers" $? 0

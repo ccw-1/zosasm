@@ -26,6 +26,7 @@ static void usage(FILE *f) {
             "                  (default: next to the members); prints a summary\n"
             "  -copy-dir DIR   macros: COPY inside a macro definition reads DIR/MEMBER.mac (default: the\n"
             "                  -macro-dir directory)\n"
+            "  -macro-path DIR write #pragma macro_path \"DIR\" at the start of the output (repeatable)\n"
             "  -flat           macros: #goto/#label for every sequence symbol, no structure recovery\n"
             "  -keep-goto      macros: where the flow cannot be structured, write #goto/#label instead of\n"
             "                  a dispatch loop (a switch on the next block)\n"
@@ -36,6 +37,27 @@ static void usage(FILE *f) {
 }
 
 static const char *OUT_EXT = ".za";
+
+/* prefix the converted source with #pragma macro_path lines, quoting the path */
+static char *with_macro_paths(const char *src, char **paths, size_t npaths) {
+    Buf b = {0};
+    size_t i;
+    for (i = 0; i < npaths; i++) {
+        const char *p = paths[i];
+        buf_puts(&b, "#pragma macro_path \"");
+        for (; *p; p++) {
+            if (*p == '"' || *p == '\\') buf_putc(&b, '\\');
+            buf_putc(&b, *p);
+        }
+        buf_puts(&b, "\"\n");
+    }
+    buf_puts(&b, src);
+    {
+        char *r = xstrdup(buf_cstr(&b));
+        free(b.p);
+        return r;
+    }
+}
 
 static char *default_output(const char *in) {
     const char *slash = strrchr(in, '/'), *dot = strrchr(in, '.');
@@ -191,6 +213,7 @@ static int macro_dir(const char *dir, const char *outdir, const ConvOptions *o, 
 int main(int argc, char **argv) {
     ConvOptions o;
     const char *in = NULL, *out = NULL, *mdir = NULL;
+    Vec(char *) macro_paths = {0};
     int i, quiet = 0, nwarn = 0;
     char *text, *res;
     size_t len;
@@ -236,6 +259,8 @@ int main(int argc, char **argv) {
             OUT_EXT = ".zmac";
         } else if (!strcmp(a, "-copy-dir") && i + 1 < argc) {
             o.copy_dir = argv[++i];
+        } else if (!strcmp(a, "-macro-path") && i + 1 < argc) {
+            vec_push(&macro_paths, argv[++i]);
         } else if (!strcmp(a, "-keep-goto")) {
             o.keep_goto = 1;
         } else if (!strcmp(a, "-flat")) {
@@ -259,6 +284,8 @@ int main(int argc, char **argv) {
         if (in && !quiet)
             fprintf(stderr, "hlasm2za: -macro-dir converts the whole directory; ignoring the positional input %s\n", in);
         if (!o.copy_dir) o.copy_dir = mdir;
+        if (macro_paths.n && !quiet)
+            fprintf(stderr, "hlasm2za: -macro-path has no effect with -macro-dir (the .zmac files are written without a main .za file)\n");
         return macro_dir(mdir, out, &o, quiet);
     }
     if (!in) {
@@ -278,6 +305,11 @@ int main(int argc, char **argv) {
     }
     res = hlasm_convert(text, len, in, &o, quiet ? NULL : stderr, &nwarn);
     if (!out) out = default_output(in);
+    {
+        char *with = with_macro_paths(res, macro_paths.v, macro_paths.n);
+        free(res);
+        res = with;
+    }
     if (!strcmp(out, "-")) {
         f = stdout;
     } else {
@@ -314,5 +346,6 @@ int main(int argc, char **argv) {
         fprintf(stderr, "hlasm2za: %s: %s\n", out, strerror(errno));
         return 1;
     }
+    free(macro_paths.v);
     return 0;
 }

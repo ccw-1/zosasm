@@ -9,9 +9,10 @@ Three workflows are supported:
 * **Convert existing HLASM source** (`.asm`) to zosasm source with
   `hlasm2za`, then assemble it. This includes HLASM `MACRO`..`MEND`
   definitions, which are recovered as structured zosasm macros (`#macro`).
-* **Convert whole HLASM macro libraries**: `hlasm2za -macro-dir` can convert
-  an entire `SYS1.MACLIB`-style library to `.zmac` files for use with
-  `zosasm -Mdir`.
+* **Convert whole HLASM macro libraries**: `hlasm2za -macro-dir` converts
+  an entire `SYS1.MACLIB`-style library to `.zmac` files. zosasm finds them
+  next to the source, with `-Mdir`, with `#pragma macro_path`, or through
+  `ZOSASM_MACLIB`; `hlasm2za -macro-path` writes the pragma for you.
 
 ## Quick start: convert HLASM to a GOFF object
 
@@ -54,10 +55,15 @@ workflows.
 build/hlasm2za old.asm                 # one source file -> old.za
 build/hlasm2za -m sys1.maclib/IHASAVER.mac           # one library member
 build/hlasm2za -macro-dir sys1.maclib -o out_macros  # whole SYS1.MACLIB
+build/hlasm2za -macro-path out_macros old.asm       # .za records the macro directory
 ```
 
 A single file is converted as one unit; `-macro-dir` converts an entire library
-of members to individual `.zmac`/`.mac` files.
+of members to individual `.zmac`/`.mac` files. zosasm searches for a library
+macro in the source directory, `-M` directories, `#pragma macro_path`
+directories and `ZOSASM_MACLIB` (colon separated), so a converted library next
+to the `.za` file needs no option. Use `-macro-path DIR` when the library lives
+elsewhere.
 
 ### HLASM source conversion
 
@@ -111,7 +117,7 @@ build/zosasm -g -gdir /u/me -o prog.o prog.za  # debug info for LLDB inside prog
 
 Options: `-o FILE`, `-DNAME[=VAL]`, `-Idir`, `-Mdir`, `-sysparm STR`, `-macro-steps N`, `-E`, `-dump FILE`,
 `-disasm FILE`, `-unpack FILE`, `-generic`, `-elf`, `-ascii`, `-charset NAME`, `-gz0`, `-gz1`, `-gz2`, `-g`, `-gside`, `-gdwarf`, `-gdir`, `-gmap`, `-gdbgpath`, `-reproducible`, `-strict-registers`, `-diag text|json`,
-`-l FILE`, `-ldata`, `-lpage N`, `-lbrief`, `-version`, `-color`, `-max-errors N`, `-Werror`. Source files use the extension `.za`.
+`-l FILE`, `-ldata`, `-lpage N`, `-lbrief`, `-version`, `-color`, `-max-errors N`, `-Werror`. Source files use the extension `.za`. `ZOSASM_MACLIB` is a colon separated list of extra macro directories (`-M` and `#pragma macro_path` take precedence).
 
 Assembly time helpers (DESIGN.md sections 8 and 12): `sizeof(x)`,
 `offsetof(S,f)`, `alignof(x)`, `countof(x)`, comparisons (`==  <  &&  !` ...),

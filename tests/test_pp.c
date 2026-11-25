@@ -386,6 +386,43 @@ static void test_expansion_note(void) {
     CHECK(strstr(buf, "1 | #define BAD") != NULL);
 }
 
+
+static void test_macro_path(void) {
+    Out o;
+    const char *src = "#pragma macro_path \"build/pp_macros\"\n FOO 3\n";
+    CHECK(system("rm -rf build/pp_macros && mkdir -p build/pp_macros") == 0);
+    put_file("build/pp_macros/FOO.zmac", "#macro FOO(x) {\n LHI 1,&x\n#}\n");
+    o = run_pp(src, NULL, NULL);
+    CHECK_MSG(strstr(o.text, "LHI") != NULL, "macro_path: \"%s\" (%s)", o.text, o.codes);
+    CHECK_STR(o.codes, "");
+    CHECK(setenv("ZOSASM_MACLIB", "build/pp_macros", 1) == 0);
+    o = run_pp(" FOO 4\n", NULL, NULL);
+    CHECK_MSG(strstr(o.text, "LHI") != NULL, "ZOSASM_MACLIB: \"%s\" (%s)", o.text, o.codes);
+    CHECK_STR(o.codes, "");
+    unsetenv("ZOSASM_MACLIB");
+}
+
+static void test_line(void) {
+    const char *src = "#line 100 \"virtual.za\"\n A\n#line 7\n B\n";
+    PpOptions po;
+    SrcVec lines = {0};
+    Reporter *rep = rep_new(0);
+    memset(&po, 0, sizeof po);
+    rep_add_source(rep, "t.za", src, strlen(src));
+    pp_run("t.za", src, strlen(src), &po, rep, &lines);
+    CHECK(lines.n == 2);
+    CHECK(lines.v[0].line == 100);
+    CHECK(lines.v[0].file && !strcmp(lines.v[0].file, "virtual.za"));
+    CHECK(lines.v[1].line == 7);
+    CHECK(lines.v[1].file && !strcmp(lines.v[1].file, "virtual.za"));
+    CHECK_STR(lines.v[0].text, " A");
+    CHECK_STR(lines.v[1].text, " B");
+    free((char *)lines.v[0].text);
+    free((char *)lines.v[1].text);
+    free(lines.v);
+    rep_free(rep);
+}
+
 static void test_assemble(void) {
     /* the whole pipeline: macros produce a working program */
     const char *src = "#define LEN 8\n"
@@ -413,6 +450,8 @@ int main(void) {
     test_date();
     test_command_line();
     test_include();
+    test_macro_path();
+    test_line();
     test_expansion_note();
     test_assemble();
     TEST_MAIN_END();

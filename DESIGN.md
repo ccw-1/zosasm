@@ -500,7 +500,9 @@ conflict).
 
 * Directives: `#include "file"`, `#define` (object-like and function-like,
   `##` paste), `#undef`, `#if`/`#ifdef`/`#ifndef`/`#elif`/`#else`/`#endif`,
-  `#error`, `#warning`, `#pragma`. `#if` expressions: integers, `defined(X)`,
+  `#error`, `#warning`, `#line`, `#pragma`. `#line N ["file"]` renumbers the
+  following lines of the current file (for diagnostics, listing, ZSYM and
+  DWARF). `#if` expressions: integers, `defined(X)`,
   `! && || == != < > <= >= + - * / % ~`, parentheses. Command line
   `-DNAME=val`, `-Idir`, `-E` (print the preprocessed lines and stop).
 * Built-in names (they cannot be `#define`d, `defined(X)` is true for
@@ -548,7 +550,7 @@ conflict).
   expanded inside its own expansion.
 * Error codes: `ZA4010-4012` include, `ZA4020-4023` define/undef,
   `ZA4030-4034` conditionals, `ZA4040-4042` macro calls, `ZA4050/4051`
-  `#error`/`#warning`, `ZA4060/4061` pragma, `ZA4070` comma continuation,
+  `#error`/`#warning`, `ZA4060/4061` pragma, `ZA4062` #line, `ZA4070` comma continuation,
   `ZA4080/4081` the time of `__DATE__`/`__TIME__`, `ZA4036` an unclosed
   `/*` comment.
   When the preprocessor reports an error the assembler does not run.
@@ -1362,7 +1364,7 @@ to link with here).
 
 ## 19. Macro language (M1 implemented)
 
-See `MACRO.md`: a C-like macro language in the preprocessor stage (braced `#if/#while/#for/#switch` blocks written on `#` lines with free indentation, model statements substituted with `&name`, 0-based lists, block scoped variables, library lookup of macros by name). It keeps the semantics of HLASM conditional assembly, not its syntax; `hlasm2za` is to recover structured control flow from `AIF`/`AGO` (the survey of SYS1.MACLIB is in MACRO.md section 0). **M1 is implemented** (2026-11-16, not compared with HLASM): `src/macro.h` (API), `src/macro_int.h`, `src/macro_val.c` (values, list parsing, functions), `src/macro_expr.c` (lexer, Pratt parser, evaluator), `src/macro.c` (collector, compiler, runtime, library). A `#` line is classified by `mac_top_kind` (0 not macro, 1 `#macro`, 2 other macro statement; a classic `#if` without `{` stays a preprocessor directive). Bodies are compiled once to a flat `MStmt` array with jumps; every statement has a block depth and a variable lives at the depth of its block, being dropped when a statement of a lower depth runs (block scope without a scope stack; `#for` hidden variables `%lN`/`%iN` and the switch value `%sN` use the same rule, the first hidden `#let` carries the truncation depth). Frames are per call, `ms->top` is the open-code frame, globals are shared `MVal*` slots. `pp.c` provides the host callbacks (`emit`, `sect`, `is_defined`); generated lines are rescanned by `emit_line` (so they can call macros), multi-line statements travel as text with `\n`, calls are found in `emit_part_or_call` and `pp_file` (a call ending in a comma is joined first), library members by `is_macro_op`/`try_library_dir` (`-M` then `-I`, negative lookups cached in `pp->lib_tried`). Diagnostics ZA4050-4052, ZA4100-4130; `rep_notef` is a note severity that is not counted. Names that are instructions or directives (`mac_known_op`) are never looked up in the library. C1 (`hlasm2za` conversion of MACRO..MEND) is implemented, see section 16.1.
+See `MACRO.md`: a C-like macro language in the preprocessor stage (braced `#if/#while/#for/#switch` blocks written on `#` lines with free indentation, model statements substituted with `&name`, 0-based lists, block scoped variables, library lookup of macros by name). It keeps the semantics of HLASM conditional assembly, not its syntax; `hlasm2za` is to recover structured control flow from `AIF`/`AGO` (the survey of SYS1.MACLIB is in MACRO.md section 0). **M1 is implemented** (2026-11-16, not compared with HLASM): `src/macro.h` (API), `src/macro_int.h`, `src/macro_val.c` (values, list parsing, functions), `src/macro_expr.c` (lexer, Pratt parser, evaluator), `src/macro.c` (collector, compiler, runtime, library). A `#` line is classified by `mac_top_kind` (0 not macro, 1 `#macro`, 2 other macro statement; a classic `#if` without `{` stays a preprocessor directive). Bodies are compiled once to a flat `MStmt` array with jumps; every statement has a block depth and a variable lives at the depth of its block, being dropped when a statement of a lower depth runs (block scope without a scope stack; `#for` hidden variables `%lN`/`%iN` and the switch value `%sN` use the same rule, the first hidden `#let` carries the truncation depth). Frames are per call, `ms->top` is the open-code frame, globals are shared `MVal*` slots. `pp.c` provides the host callbacks (`emit`, `sect`, `is_defined`); generated lines are rescanned by `emit_line` (so they can call macros), multi-line statements travel as text with `\n`, calls are found in `emit_part_or_call` and `pp_file` (a call ending in a comma is joined first), library members by `is_macro_op`/`try_library_dir` (search order: `#pragma macro_path`, `-M`, the directory of the source file, `ZOSASM_MACLIB`, `-I`; negative lookups cached in `pp->lib_tried`). Diagnostics ZA4050-4052, ZA4100-4130; `rep_notef` is a note severity that is not counted. Names that are instructions or directives (`mac_known_op`) are never looked up in the library. C1 (`hlasm2za` conversion of MACRO..MEND) is implemented, see section 16.1.
 
 ## 20. Oracle comparison with IBM HLASM (2026-11)
 

@@ -57,12 +57,14 @@ const char *v_text(MVal v) {
         for (i = 0; i < v.n; i++) {
             const char *t = v_text(v.items[i]);
             size_t l = strlen(t);
+            int own = v.items[i].t != V_STR;
             if (b.len + l + 2 > MAX_STR) {
                 buf_puts(&b, "...");
                 break;
             }
             if (i) buf_putc(&b, ',');
             buf_puts(&b, t);
+            if (own) free((char *)t);
         }
         buf_putc(&b, ')');
         return xstrdup(buf_cstr(&b));

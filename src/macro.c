@@ -1624,10 +1624,14 @@ static char *eval_tmpl(Ctx *c, const Tmpl *t) {
     Buf b = {0};
     int i;
     for (i = 0; i < t->n; i++) {
-        if (t->p[i].e)
-            buf_puts(&b, v_text(ex_eval(c, t->p[i].e)));
-        else
+        if (t->p[i].e) {
+            MVal v = ex_eval(c, t->p[i].e);
+            const char *s = v_text(v);
+            buf_puts(&b, s);
+            if (v.t != V_STR) free((char *)s);
+        } else {
             buf_puts(&b, t->p[i].text);
+        }
     }
     {
         char *r = xstrdup(buf_cstr(&b));
