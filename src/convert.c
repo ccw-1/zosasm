@@ -337,32 +337,10 @@ static int has_amp(const char *s) {
 static void check_forms(Conv *c, const LS *l) {
     OperandVec ops = {0};
     split_operands(&ops, l->operands);
-    if (!strcmp(l->op, "EQU") && ops.n > 3)
-        warnf(c, l->line, "EQU with %d operands: zosasm accepts 1 to 3 (program and assembler type are not converted)",
-              (int)ops.n);
-    if (!strcmp(l->op, "ORG") && ops.n > 1)
-        warnf(c, l->line, "ORG with a boundary or offset: zosasm accepts one operand");
-    if (!strcmp(l->op, "DSECT") && !l->name[0])
-        warnf(c, l->line, "unnamed DSECT: zosasm needs a name");
     if (!strcmp(l->op, "START") && ops.n > 0)
         warnf(c, l->line, "START address is ignored by zosasm (the binder assigns the load address)");
     if (!strcmp(l->op, "XATTR") && strstr(l->operands, "ATTRIBUTES"))
         warnf(c, l->line, "XATTR ATTRIBUTES is not supported by zosasm");
-    if (!strcmp(l->op, "CNOP") && ops.n > 1) {
-        char *t = str_trim(ops.v[1].text);
-        char *end = NULL;
-        long n = strtol(t, &end, 10);
-        if (end && *end == 0 && n != 4 && n != 8 && n != 16)
-            warnf(c, l->line, "CNOP boundary %ld: zosasm accepts 4, 8 or 16", n);
-        free(t);
-    }
-    if (!strcmp(l->op, "DC") && ops.n > 0) {
-        char *t = str_trim(ops.v[0].text);
-        if (t[0] == '0' && t[1] && strchr("CXBFHAYSVQJRPZEDLG", za_toupper((unsigned char)t[1])) &&
-            !strchr(t, '\'') && !strchr(t, '('))
-            warnf(c, l->line, "DC 0<type> without a value: zosasm accepts 0T'..' but not 0T");
-        free(t);
-    }
     operands_free(&ops); /* split_operands owns the operand text */
 }
 

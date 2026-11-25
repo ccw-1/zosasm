@@ -309,6 +309,28 @@ int dc_parse(Asm *a, Stmt *st, Operand o, DcSpec *sp) {
     /* modifiers */
     while (i < len) {
         char c = (char)za_toupper((unsigned char)s[i]);
+        if (c == 'P' && i + 1 < len && s[i + 1] == '(') {
+            /* program type subfield P(n): parsed and ignored (HLASM uses it
+             * only as a user tag; e.g. EBP(7)L2'12') */
+            long j = match_paren(s, i + 1);
+            if (j < 0) {
+                dc_err(a, st, "ZA1003", o.off + (int)i, 1, "unbalanced parenthesis");
+                return 0;
+            }
+            {
+                Operand po;
+                int64_t pv;
+                po.text = xstrndup(s + i + 2, (size_t)j - i - 2);
+                po.off = o.off + (int)i + 2;
+                if (!asm_abs_expr(a, st, po, "the program type", &pv)) {
+                    free(po.text);
+                    return 0;
+                }
+                free(po.text);
+            }
+            i = (size_t)j + 1;
+            continue;
+        }
         if (c == 'L') {
             int64_t n;
             i++;
@@ -1162,9 +1184,12 @@ static int dc_values_inner(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, int64_
     a->saw_loc = 0;
     if (!sp->has_nom) {
         int64_t n;
-        if (!is_ds) {
+        /* HLASM: a duplication factor of zero may omit the nominal value;
+         * the type still supplies the alignment and the length attribute. */
+        if (!is_ds && sp->dup != 0) {
             diag_help(dc_err(a, st, "ZA2018", sp->off, sp->n, "DC needs a nominal value"),
-                      "use DS to reserve storage without a value");
+                      "use DS to reserve storage without a value, or `DC 0D` with a zero "
+                      "duplication factor");
             return 0;
         }
         n = dc_deflen(sp);

@@ -227,11 +227,11 @@ static void test_unconverted(void) {
 static void test_forms(void) {
     /* legal HLASM forms that zosasm rejects or reads differently: the converter
      * must report them instead of leaving a source that fails later */
-    CHECK(warns("X EQU 5,4,C'A',7,GR\n") == 1);
-    CHECK(warns("Y DC 0D\n") == 1);
-    CHECK(warns(" CNOP 0,32\n") == 1);
-    CHECK(warns(" ORG *,8,2\n") == 1);
-    CHECK(warns(" DSECT\n") == 1);
+    CHECK(warns("X EQU 5,4,C'A',7,GR\n") == 0);
+    CHECK(warns("Y DC 0D\n") == 0);
+    CHECK(warns(" CNOP 0,32\n") == 0);
+    CHECK(warns(" ORG *,8,2\n") == 0);
+    CHECK(warns(" DSECT\n") == 0);
     CHECK(warns(" START 4096\n") == 1);
     CHECK(warns("E XATTR ATTRIBUTES(L)\n") == 1);
     CHECK(warns("Y DC 0D'0'\n") == 0);

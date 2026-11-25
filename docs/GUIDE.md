@@ -513,12 +513,14 @@ section has started is an error (`ZA3001`, "no active section").
 ### 5.1 DC and DS
 
 ```
-[name]  DC  [dup] type [ext] [Ln] [Sn] [En] 'value' [,more values]
+[name]  DC  [dup] type [ext] [P(n)] [Ln] [Sn] [En] 'value' [,more values]
 [name]  DS  [dup] type [ext] [Ln]
 ```
 
-`dup` is a duplication factor (`4XL2'00'`: four times). `Ln` is the length in
-bytes. A name gets the length attribute of the *first* value (`L'name`) and
+`dup` is a duplication factor (`4XL2'00'`: four times). `P(n)` is the HLASM
+program type; zosasm parses and ignores it. A duplication factor of zero may
+omit the value (`DC 0D` forces doubleword alignment); the type still supplies
+the length attribute. `Ln` is the length in bytes. A name gets the length attribute of the *first* value (`L'name`) and
 the type (`T'name`). `DS 0F` generates nothing and aligns; it is the way to
 align or to name a place.
 
@@ -590,16 +592,22 @@ Points worth knowing:
 * `FS8'35.92'` means 35.92 * 2^8 = 9195.52 rounded to 9196; `EE3'3.414'` is
   3.414 * 10^3 as a hexadecimal float. Both are in section 10.
 * `ORG BUF+4` moves the location counter *back*; `ORG` without operand moves
-  it to the highest address used so far. Overwriting earlier bytes degrades
+  it to the highest address used so far. `ORG expression,boundary,offset`
+  rounds the expression up to a power-of-2 boundary (2 to 4096) and then adds
+  the offset (`ZA3055` for a bad boundary). Overwriting earlier bytes degrades
   the symbolic information of that section (section 12) but is allowed.
-* `EQU` takes up to three operands: value, length attribute (0 to 65535,
-  otherwise `ZA1034`) and type attribute (a number 0 to 255 or a character).
-  Without a second operand the length comes from the leftmost term, as in
-  HLASM: `ALIAS EQU SRC` has the length of `SRC`.  A value may name a symbol
-  that is defined later; it resolves at assembly time (`ZA1035` if it never
-  does, including a circular chain).
-* `CNOP byte,boundary` aligns to `byte` modulo `boundary` (2,8 = a halfword
-  position inside a doubleword) with no-op instructions.
+* `EQU` takes 1 to 5 operands: value, length attribute (0 to 65535,
+  otherwise `ZA1034`), type attribute (a number 0 to 255 or a character),
+  program type and assembler type. zosasm accepts the last two and ignores
+  them; the assembler type is validated against AR, CR, CR32, CR64, FPR, GR,
+  GR32, GR64 or VR. Without a second operand the length comes from the
+  leftmost term, as in HLASM: `ALIAS EQU SRC` has the length of `SRC`. A value
+  may name a symbol that is defined later; it resolves at assembly time
+  (`ZA1035` if it never does, including a circular chain).
+* `CNOP byte,boundary` aligns to `byte` modulo a power-of-2 `boundary` from 4
+  to 4096 (`2,8` = a halfword position inside a doubleword) with no-op
+  instructions. A boundary above 16 is legal with GOFF; zosasm fills the gap
+  with `0700`/`47000700` no-ops (HLASM may use a different long NOP pattern).
 
 #### 5.1.1 Bit lengths, `S`/`SY`, `QY` and `G`
 
@@ -1451,14 +1459,8 @@ bit-length `DS`.
 | `*-LABEL` length tricks | `sizeof`, `offsetof`, `alignof`, `countof` |
 | listing | `-l` (section 11.2), a different layout; `TITLE`, `EJECT`, `SPACE`, `PRINT` work in it; `PUNCH`, `ICTL`, `ISEQ` are accepted and ignored |
 | object deck / OBJ output | GOFF only |
-| `DC 0D`, `DC 0F` (zero duplication factor, no value) | `DC 0D'0'`; the no-value form is `ZA2018` |
-| `CNOP 0,32` ... `0,4096` | boundary 4, 8 or 16 only (`ZA3052`) |
-| `ORG expression,boundary,offset` | one operand (`ZA0010`) |
-| unnamed `DSECT` | a name is required (`ZA3004`) |
-| `EQU` program type and assembler type (4th and 5th operand) | 1 to 3 operands (`ZA0010`); the converter warns |
 | `START address` | ignored with `ZA3005`; the binder assigns the load address |
 | `LTORG` in a DSECT with pending literals | `ZA3043` |
-| `DC ...P(7)...` program type | not accepted; the converter warns |
 | `XATTR ATTRIBUTES(label)` | not supported (`ZA3030`) |
 | `XATTR PSECT(name)` | supported for an internal label, section, DXD or class name (the class name is a zosasm extension); sets the LD/PR ADA field, `ZA3038` for a bad name. On an external symbol it is accepted and ignored |
 | `R(symbol)` of an absolute EQU | `ZA2060`; HLASM accepted a DXD and a local label in the probes, zosasm now does too |

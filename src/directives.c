@@ -63,6 +63,9 @@ void dir_section(Asm *a, Stmt *st) {
     char *op = za_strupper(st->op);
     SectKind kind;
     Section *sec;
+    char *genname = NULL;
+    const char *secname = st->name;
+    int unnamed = 0;
     if (!strcmp(op, "CSECT") || !strcmp(op, "START"))
         kind = K_CSECT;
     else if (!strcmp(op, "RSECT"))
@@ -71,14 +74,16 @@ void dir_section(Asm *a, Stmt *st) {
         kind = K_DSECT;
     else
         kind = K_COM;
+    if (!st->name[0] && kind == K_DSECT) {
+        /* HLASM allows an unnamed dummy section; give the internal section
+         * model a name derived from the statement index, the same in pass 1
+         * and pass 2, and define no symbol */
+        unnamed = 1;
+        genname = xasprintf("$DSECT%06zu", a->cur_idx);
+        secname = genname;
+    }
     if (a->pass == 1) {
-        if (!st->name[0] && kind == K_DSECT) {
-            diag_help(rep_errorf(a->rep, "ZA3004", st->op_span, "a DSECT needs a name"),
-                      "write the name in column 1, for example `WORK     DSECT`");
-            st->bad = 1;
-            return;
-        }
-        if (st->name[0] && !asm_valid_stmt_name(st)) {
+        if (!unnamed && st->name[0] && !asm_valid_stmt_name(st)) {
             rep_errorf(a->rep, "ZA1021", st->name_span, "\"%s\" is not a valid section name",
                        st->name);
             st->bad = 1;
@@ -94,15 +99,18 @@ void dir_section(Asm *a, Stmt *st) {
                           "the binder assigns the load address");
         }
     }
-    sec = strmap_get(&a->secs, st->name);
+    sec = strmap_get(&a->secs, secname);
     if (!sec) {
         Class *c;
-        if (a->pass != 1) return;
+        if (a->pass != 1) {
+            free(genname);
+            return;
+        }
         sec = xcalloc(sizeof *sec);
-        sec->name = xstrdup(st->name);
+        sec->name = xstrdup(secname);
         sec->kind = kind;
         sec->def = stmt_span(st);
-        if (st->name[0]) {
+        if (st->name[0] && !unnamed) {
             int created;
             Symbol *sym = asm_define(a, st, st->name, st->name_span, &created);
             if (!created) return; /* duplicate symbol, already reported */
@@ -115,8 +123,8 @@ void dir_section(Asm *a, Stmt *st) {
         c->pieces.v[0]->name = xstrdup(sec->name);
         vec_push(&sec->classes, c);
         sec->cur = sec->text_cur = c->pieces.v[0];
-        if (st->name[0]) asm_lookup(a, st->name)->piece = c->pieces.v[0];
-        strmap_put(&a->secs, st->name, sec);
+        if (st->name[0] && !unnamed) asm_lookup(a, st->name)->piece = c->pieces.v[0];
+        strmap_put(&a->secs, secname, sec);
         if (kind == K_DSECT) {
             size_t q;
             for (q = a->mod->sections.n; q > 0; q--)
@@ -136,6 +144,7 @@ void dir_section(Asm *a, Stmt *st) {
     }
     a->sect = sec;
     a->cur = sec->text_cur;
+    free(genname);
     free(op);
 }
 
@@ -688,7 +697,7 @@ void dir_equ(Asm *a, Stmt *st) {
         st->bad = 1;
         return;
     }
-    if (!asm_ops(a, st, 1, 3, &ops)) return;
+    if (!asm_ops(a, st, 1, 5, &ops)) return;
     {
         char *t0 = str_trim(ops.v[0].text);
         if (t0[0] == '%') { /* NAME EQU %r12: a register name */
@@ -767,6 +776,31 @@ void dir_equ(Asm *a, Stmt *st) {
             return;
         }
         have_type = 1;
+    }
+    if (ops.n > 3 && ops.v[3].text[0]) {
+        int64_t prog;
+        if (!asm_abs_expr(a, st, ops.v[3], "the EQU program type", &prog)) return;
+        if (prog < 0 || prog > 0xFFFFFFFFLL) {
+            rep_errorf(a->rep, "ZA1033", asm_op_span(st, ops.v[3]),
+                       "the EQU program type must fit 32 bits");
+            st->bad = 1;
+            return;
+        }
+    }
+    if (ops.n > 4 && ops.v[4].text[0]) {
+        char *t = str_trim(ops.v[4].text), *u = za_strupper(t);
+        if (strcmp(u, "AR") && strcmp(u, "CR") && strcmp(u, "CR32") && strcmp(u, "CR64") &&
+            strcmp(u, "FPR") && strcmp(u, "GR") && strcmp(u, "GR32") && strcmp(u, "GR64") &&
+            strcmp(u, "VR")) {
+            rep_errorf(a->rep, "ZA1033", asm_op_span(st, ops.v[4]),
+                       "the EQU assembler type must be AR, CR, CR32, CR64, FPR, GR, GR32, GR64 or VR");
+            free(t);
+            free(u);
+            st->bad = 1;
+            return;
+        }
+        free(t);
+        free(u);
     }
     if (!have_len) length = regkind ? 1 : asm_equ_left_len(a, e);
     s = asm_define(a, st, st->name, st->name_span, &created);
@@ -852,28 +886,31 @@ void dir_assert(Asm *a, Stmt *st) {
 
 void dir_org(Asm *a, Stmt *st) {
     OperandVec ops = {0};
-    Expr *e;
+    Expr *e = NULL;
     Value v;
-    int64_t off;
+    int64_t off, boundary = 0, add = 0;
     Base b;
-    int is_rel, ok_kind = 0;
+    int is_rel = 0, ok_kind = 0;
     if (!asm_need_section(a, st)) return;
-    if (!asm_ops(a, st, 0, 1, &ops)) return;
+    if (!asm_ops(a, st, 0, 3, &ops)) return;
     asm_define_label(a, st, 1, 0);
-    if (ops.n == 0) {
-        a->cur->loc = a->cur->max;
-        return;
-    }
-    e = asm_expr(a, st, ops.v[0]);
-    if (!e) return;
-    if (!asm_eval(a, st, e, 1, &v)) return;
-    off = v.abs;
-    is_rel = value_simple(&v, &b);
-    if (!is_rel && value_is_abs(&v)) {
-        ok_kind = 1; /* absolute: offset from the start of the current piece */
-    } else if (is_rel && (base_eq(b, base_piece(a->cur)) || base_eq(b, base_class(a->cur->cls)))) {
-        if (b.kind == B_CLASS) off -= a->cur->start;
+    if (ops.n == 0 || !ops.v[0].text[0]) {
+        /* no expression: the next available location for this counter */
+        off = a->cur->max;
         ok_kind = 1;
+    } else {
+        e = asm_expr(a, st, ops.v[0]);
+        if (!e) return;
+        if (!asm_eval(a, st, e, 1, &v)) return;
+        off = v.abs;
+        is_rel = value_simple(&v, &b);
+        if (!is_rel && value_is_abs(&v)) {
+            ok_kind = 1; /* absolute: offset from the start of the current piece */
+        } else if (is_rel &&
+                   (base_eq(b, base_piece(a->cur)) || base_eq(b, base_class(a->cur->cls)))) {
+            if (b.kind == B_CLASS) off -= a->cur->start;
+            ok_kind = 1;
+        }
     }
     if (!ok_kind) {
         if (a->pass == 1 || a->laid) {
@@ -884,14 +921,38 @@ void dir_org(Asm *a, Stmt *st) {
         }
         return;
     }
+    if (ops.n > 1 && ops.v[1].text[0]) {
+        if (!asm_abs_expr(a, st, ops.v[1], "the ORG boundary", &boundary)) return;
+        if (boundary < 2 || boundary > 4096 || (boundary & (boundary - 1)) != 0) {
+            rep_errorf(a->rep, "ZA3055", asm_op_span(st, ops.v[1]),
+                       "the ORG boundary must be a power of 2 from 2 to 4096, not %lld",
+                       (long long)boundary);
+            st->bad = 1;
+            return;
+        }
+    }
+    if (ops.n > 2 && ops.v[2].text[0]) {
+        if (!asm_abs_expr(a, st, ops.v[2], "the ORG offset", &add)) return;
+    }
+    if (boundary) {
+        int64_t r = off % boundary;
+        if (r) off += boundary - r;
+    }
+    if ((add > 0 && off > ZA_MAX_LOC - add) || (add < 0 && off < -add)) {
+        rep_errorf(a->rep, "ZA3053", st->op_span,
+                   "ORG would move the location counter outside the section");
+        st->bad = 1;
+        return;
+    }
+    off += add;
     if (off < 0) {
-        rep_errorf(a->rep, "ZA3051", e->sp,
+        rep_errorf(a->rep, "ZA3051", st->op_span,
                    "ORG would move the location counter before the start of the section");
         st->bad = 1;
         return;
     }
     if (off > ZA_MAX_LOC) {
-        rep_errorf(a->rep, "ZA3053", e->sp,
+        rep_errorf(a->rep, "ZA3053", st->op_span,
                    "ORG would move the location counter to %lld; the limit for a section is "
                    "%lld bytes",
                    (long long)off, (long long)ZA_MAX_LOC);
@@ -914,10 +975,11 @@ void dir_cnop(Asm *a, Stmt *st) {
     ok1 = asm_abs_expr(a, st, ops.v[0], "the CNOP byte offset", &b);
     ok2 = asm_abs_expr(a, st, ops.v[1], "the CNOP boundary", &n);
     if (!ok1 || !ok2) return;
-    if ((n != 4 && n != 8 && n != 16) || b < 0 || b >= n || b % 2 != 0) {
+    if (n < 4 || n > 4096 || (n & (n - 1)) != 0 || b < 0 || b >= n || b % 2 != 0) {
         if (a->pass == 1) {
             diag_help(rep_errorf(a->rep, "ZA3052", asm_op_span(st, ops.v[1]),
-                                 "CNOP needs an even byte offset below a boundary of 4, 8 or 16"),
+                                 "CNOP needs an even byte offset below a power-of-2 boundary "
+                                 "from 4 to 4096"),
                       "for example `CNOP 0,8` or `CNOP 2,4`");
             st->bad = 1;
         }

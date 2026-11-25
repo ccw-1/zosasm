@@ -32,6 +32,11 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
   resolved lazily (including its length); a value that never resolves is
   `ZA1035`.  `EQU` still reports a CSECT size that would have to size storage
   (`ZA1042`) immediately.
+* More HLASM source forms: `DC 0D`/`0F` without a value (duplication 0),
+  `CNOP` boundaries 4 to 4096, `ORG expression,boundary,offset`, an unnamed
+  `DSECT`, `EQU` program and assembler type operands, and the `DC` program
+  type subfield `P(n)`.  `hlasm2za` now warns only about `START` addresses
+  and `XATTR ATTRIBUTES`, which remain unsupported.
 * `XATTR PSECT(name)` now writes the ADA field of the LD or PR with the ESD id
   of the PSECT class, as HLASM does.  A bad name on an internal symbol is
   `ZA3038`; on an external symbol the attribute is accepted and ignored.
