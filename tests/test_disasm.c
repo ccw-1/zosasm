@@ -132,6 +132,17 @@ static const char *const programs[] = {
     "         DC    A(MAIN,ALT)\n"
     "         END   ALT\n",
 
+    /* PSECT/ADA: the LD points at the DATA class */
+    "PQ       CSECT\n"
+    "CODE     CATTR ALIGN(2)\n"
+    "ENT      LR    1,2\n"
+    "         ENTRY ENT\n"
+    "DATA     CATTR ALIGN(3)\n"
+    "         DC    XL8'0'\n"
+    "ENT      XATTR LINKAGE(XPLINK),PSECT(DATA)\n"
+    "         DC    R(ENT)\n"
+    "         END\n",
+
     /* read-only and common sections, classes with attributes and parts */
     "ONE      RSECT\n"
     "ONE      AMODE 31\n"

@@ -1234,7 +1234,21 @@ static void finish(Asm *a) {
             Symbol *ps = asm_lookup(a, xa->psect);
             int ok = 1;
             if (!ps) {
-                ok = 0;
+                /* a class name (zosasm extension, used by generic -disasm) */
+                Class *pc = NULL;
+                Section *want = s->sect;
+                size_t si, ci;
+                for (si = 0; si < a->mod->sections.n && !pc; si++) {
+                    Section *sc = a->mod->sections.v[si];
+                    if (want && sc != want) continue;
+                    for (ci = 0; ci < sc->classes.n; ci++)
+                        if (sc->classes.v[ci]->name && !strcmp(sc->classes.v[ci]->name, xa->psect)) {
+                            pc = sc->classes.v[ci];
+                            break;
+                        }
+                }
+                if (pc) xa->psect_cls = pc;
+                else ok = 0;
             } else if (ps->kind == SYM_LABEL && ps->piece) {
                 if (s->kind != SYM_EXT && s->sect && ps->piece->cls->sect != s->sect) ok = 0;
                 else xa->psect_cls = ps->piece->cls;
@@ -1246,7 +1260,22 @@ static void finish(Asm *a) {
             } else if (ps->kind == SYM_EXT) {
                 xa->psect_sym = ps;
             } else {
-                ok = 0;
+                /* a class name (zosasm extension, used by generic -disasm);
+                 * prefer a class of the symbol's own section */
+                Class *pc = NULL;
+                Section *want = s->sect;
+                size_t si, ci;
+                for (si = 0; si < a->mod->sections.n && !pc; si++) {
+                    Section *sc = a->mod->sections.v[si];
+                    if (want && sc != want) continue;
+                    for (ci = 0; ci < sc->classes.n; ci++)
+                        if (sc->classes.v[ci]->name && !strcmp(sc->classes.v[ci]->name, xa->psect)) {
+                            pc = sc->classes.v[ci];
+                            break;
+                        }
+                }
+                if (pc) xa->psect_cls = pc;
+                else ok = 0;
             }
             /* HLASM only validates the PSECT operand for an internal name;
              * on an external symbol it is accepted and has no object effect. */

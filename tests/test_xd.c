@@ -151,8 +151,9 @@ static void test_errors(void) {
     expect_codes("R length", "T CSECT\n DC RL2(T)\n", "ZA2016");
     expect_codes("Q unknown", "T CSECT\n DC Q(NOPE)\n", "ZA2060");
     expect_codes("Q label", "T CSECT\nL1 DS 0H\n DC Q(L1)\n", "ZA2060");
-    expect_codes("R no entry", "T CSECT\nL1 DS 0H\n DC R(L1)\n", "ZA2060");
-    expect_codes("R dsect", "T CSECT\n DC R(D)\nD DSECT\n DS F\n", "ZA2060");
+    expect_codes("R label", "T CSECT\nL1 DS 0H\n DC R(L1)\n", "");
+    expect_codes("R dsect", "T CSECT\n DC R(D)\nD DSECT\n DS F\n", "");
+    expect_codes("R absolute", "T CSECT\nX EQU 5\n DC R(X)\n", "ZA2060");
     expect_codes("DXD no name", "T CSECT\n DXD F\n", "ZA2061");
     expect_codes("DXD in dsect", "D DSECT\nW DXD F\n", "ZA2063");
     expect_codes("DXD as address", "T CSECT\nW DXD F\n DC A(W)\n", "ZA2062");
@@ -212,7 +213,22 @@ static void test_psect(void) {
     }
 }
 
+/* R of a DXD or a local label makes an ER, like HLASM (probe pu: RD(W)) */
+static void test_r_dxd(void) {
+    GoffModule *g = emit_src("T CSECT\nW DXD F\n DC RD(W)\n");
+    uint32_t er_id = 0;
+    const GoffESD *er;
+    const GoffReloc *r;
+    if (!g) return;
+    er = find_esd(g, GOFF_ER, "W", &er_id);
+    CHECK(er != NULL);
+    CHECK(g->relocs.n == 1);
+    r = reloc_at(g, 0);
+    CHECK(r && r->reference == GOFF_REF_RTYPE && r->rid == er_id && r->store && r->length == 8);
+}
+
 int main(void) {
+    test_r_dxd();
     test_psect();
     test_qy();
     test_structure();

@@ -1038,12 +1038,11 @@ static int dc_xd(Asm *a, Stmt *st, const DcSpec *sp, int is_ds, DcVec *out) {
         v.has_rel = 1;
         if (sp->typ == 'R') {
             v.kind = REL_R;
-            if (!s || (s->kind != SYM_EXT && s->kind != SYM_SECT && s->kind != SYM_LABEL) ||
-                (s->kind == SYM_SECT && s->sect->kind == K_DSECT) ||
-                (s->kind == SYM_LABEL && !s->entry)) {
+            if (!s || (s->kind != SYM_EXT && s->kind != SYM_SECT &&
+                       s->kind != SYM_LABEL && s->kind != SYM_DXD)) {
                 diag_help(dc_err(a, st, "ZA2060", off, tl,
                                  "R-type constant names \"%s\", which is not an external symbol, "
-                                 "a section or an ENTRY label",
+                                 "a section, a label or a DXD",
                                  name),
                           "R(SYMBOL) holds the PSECT address of SYMBOL (see XATTR PSECT)");
                 good = 0;

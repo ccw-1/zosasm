@@ -35,6 +35,8 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 * `XATTR PSECT(name)` now writes the ADA field of the LD or PR with the ESD id
   of the PSECT class, as HLASM does.  A bad name on an internal symbol is
   `ZA3038`; on an external symbol the attribute is accepted and ignored.
+  Generic `-disasm` writes `XATTR PSECT(classname)` from ADA; a class name is
+  accepted as an extension.
 * Thread-local assembler state: `value_arena`, `za_ascii`, `ieee_ebits`, the
   Big arena, the DP/MP length, the instruction/debug caches and the ZSYM CRC
   table use `ZA_TLS` (`__thread` on gcc/clang).  Two threads can assemble at

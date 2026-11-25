@@ -450,8 +450,9 @@ of other tools (the disassembler writes them): `RMODE(NONE)` and
 `XATTR` attributes: `LINKAGE(OS|XPLINK)`, `SCOPE(SECTION|MODULE|LIBRARY|EXPORT|IMPORT)`,
 `REFERENCE(CODE|DATA[,DIRECT|INDIRECT])`, `PSECT(name)`.  `PSECT` names a
 label in another class of the same section, a section or a DXD; zosasm writes
-its ESD id in the LD/PR ADA field (`ZA3038` for a bad name).  On an external
-symbol the attribute is accepted and ignored, as HLASM does.
+its ESD id in the LD/PR ADA field (`ZA3038` for a bad name).  A class name is
+also accepted as a zosasm extension (generic `-disasm` uses it).  On an
+external symbol the attribute is accepted and ignored, as HLASM does.
 
 <!-- example: sections.za -->
 ```za
@@ -1346,8 +1347,8 @@ HELLO    CSECT
          END   HELLO
 ```
 
-Generic conversion does not rebuild `XATTR PSECT`: the ADA field of an LD or
-PR is lost. The ZSYM path keeps the original XATTR statement. After
+Generic conversion writes `XATTR PSECT(classname)` from the ADA field of an LD
+or PR. The ZSYM path keeps the original XATTR statement. After
 converting, zosasm assembles the text again and compares it with the object;
 if the source does not give the same object, it says so (and with ZSYM it
 first falls back to the generic text). A section whose bytes were
@@ -1459,8 +1460,8 @@ bit-length `DS`.
 | `LTORG` in a DSECT with pending literals | `ZA3043` |
 | `DC ...P(7)...` program type | not accepted; the converter warns |
 | `XATTR ATTRIBUTES(label)` | not supported (`ZA3030`) |
-| `XATTR PSECT(name)` | supported for an internal label, section or DXD; sets the LD/PR ADA field, `ZA3038` for a bad name. On an external symbol it is accepted and ignored |
-| `R(symbol)` of a DXD or a local non-ENTRY | `ZA2060`; HLASM accepts it and creates an ER |
+| `XATTR PSECT(name)` | supported for an internal label, section, DXD or class name (the class name is a zosasm extension); sets the LD/PR ADA field, `ZA3038` for a bad name. On an external symbol it is accepted and ignored |
+| `R(symbol)` of an absolute EQU | `ZA2060`; HLASM accepts any symbol |
 | forward-reference `EQU` | supported; the value resolves later (`ZA1035` if it never does) |
 
 `hlasm2za` (section 16) converts HLASM source to the zosasm form: it cuts the

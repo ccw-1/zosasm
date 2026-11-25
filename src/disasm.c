@@ -956,8 +956,26 @@ static const char *scope_name(uint8_t s) {
     return NULL;
 }
 
+/* the ESD an ADA field points at; a PR target is reported as its class ED */
+static const GoffESD *ada_esd(const Ctx *x, uint32_t id) {
+    size_t i, j;
+    if (!id) return NULL;
+    for (i = 0; i < x->m->esds.n; i++) {
+        const GoffESD *e = x->m->esds.v[i];
+        if (e->id != id) continue;
+        if (e->type != GOFF_PR) return e;
+        for (j = 0; j < x->m->esds.n; j++) {
+            const GoffESD *p = x->m->esds.v[j];
+            if (p->id == e->parent && p->type == GOFF_ED) return p;
+        }
+        return NULL;
+    }
+    return NULL;
+}
+
 /* the XATTR operands that differ from the defaults the assembler assumes */
-static void xattr_stmt(Ctx *x, const char *name, const GoffBehavior *b, int def_scope, int def_exec) {
+static void xattr_stmt(Ctx *x, const char *name, const GoffBehavior *b, int def_scope, int def_exec,
+                       uint32_t ada) {
     Buf ops = {0};
     if (b->scope != def_scope) {
         const char *sc = scope_name(b->scope);
@@ -978,6 +996,16 @@ static void xattr_stmt(Ctx *x, const char *name, const GoffBehavior *b, int def_
         if (ref || b->indirect)
             buf_printf(&ops, "%sREFERENCE(%s%s%s)", ops.len ? "," : "", ref ? ref : "",
                        ref && b->indirect ? "," : "", b->indirect ? "INDIRECT" : "");
+    }
+    if (ada) {
+        const GoffESD *t = ada_esd(x, ada);
+        char *n = t ? src_name(x, t, "PSECT") : NULL;
+        if (n) {
+            buf_printf(&ops, "%sPSECT(%s)", ops.len ? "," : "", n);
+            free(n);
+        } else {
+            warnf(x, "the PSECT/ADA target %u of %s cannot be written", ada, name);
+        }
     }
     if (ops.len) stmt(&x->out, name, "XATTR", buf_cstr(&ops));
 }
@@ -1308,17 +1336,21 @@ static void emit_section(Ctx *x, DSect *s, size_t sect_idx) {
         }
         if (folded) continue;
         stmt(&x->out, NULL, er->weak ? "WXTRN" : "EXTRN", er->name);
-        xattr_stmt(x, er->name, &er->esd->attr, GOFF_SCOPE_UNSPEC, 0);
+        xattr_stmt(x, er->name, &er->esd->attr, GOFF_SCOPE_UNSPEC, 0, er->esd->ada_id);
     }
-    if (s->ld && s->name) xattr_stmt(x, s->name, &s->ld->attr, GOFF_SCOPE_UNSPEC, first->ed->attr.executable);
+    if (s->ld && s->name)
+        xattr_stmt(x, s->name, &s->ld->attr, GOFF_SCOPE_UNSPEC,
+                   first->ed->attr.executable, s->ld->ada_id);
     for (i = 0; i < s->classes.n; i++) {
         DClass *c = s->classes.v[i];
         size_t k;
         for (k = 0; k < c->names.n; k++)
             if (!c->names.v[k].sect && !c->names.v[k].zs)
                 xattr_stmt(x, c->names.v[k].name, &c->names.v[k].esd->attr, GOFF_SCOPE_UNSPEC,
-                           c->ed->attr.executable);
-        if (c->pr) xattr_stmt(x, c->part, &c->pr->attr, GOFF_SCOPE_UNSPEC, c->ed->attr.executable);
+                           c->ed->attr.executable, c->names.v[k].esd->ada_id);
+        if (c->pr)
+            xattr_stmt(x, c->part, &c->pr->attr, GOFF_SCOPE_UNSPEC,
+                       c->ed->attr.executable, c->pr->ada_id);
     }
     for (i = 0; i < s->classes.n; i++) {
         DClass *c = s->classes.v[i];

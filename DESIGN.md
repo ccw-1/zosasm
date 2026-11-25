@@ -305,13 +305,15 @@ EXT      XATTR REFERENCE(DATA,INDIRECT)
   section where it is first used (`resolve_xd`, between the passes); its
   length and alignment are those of the DSECT. `J` also takes a class name
   or a part name; `Q` also a part name (`ZA2060` for anything else).
-* `R(name)` names an external symbol, a section or an ENTRY label
-  (`ZA2060`); `CXD` and `R` use the labels the same way as `A`.
+* `R(name)` names an external symbol, a section, any label or a DXD
+  (`ZA2060` for an absolute EQU); `CXD` and `R` use the labels the same way
+  as `A`.
 * `XATTR PSECT(name)` associates an LD or PR with a PSECT class: the ESD's
   ADA field becomes the ESD id of that class.  The name may be a label of
   another class in the same section, a section or a DXD; anything else is
-  `ZA3038`.  On an external symbol the attribute is accepted and ignored,
-  as HLASM does.
+  `ZA3038`.  zosasm also accepts a class name (an extension used by generic
+  `-disasm`, where the ADA names the class ED directly).  On an external
+  symbol the attribute is accepted and ignored, as HLASM does.
 * Lengths: `ZA2029`. `QY` is 3 bytes, is not aligned (HLASM R6.0), and uses
   reference type 9 with the long-displacement field.
 * `REFERENCE(CODE|DATA, DIRECT|INDIRECT)`: one value from each group, in
