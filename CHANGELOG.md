@@ -4,7 +4,10 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 `vX.Y.Z`. Things not compared with IBM's tools are marked in the User's Guide
 (section 14).
 
-## Unreleased
+## 0.4.1 - 2026-11-25
+
+Patch release: HLASM comparison fixes, section `START`/`LTORG` model updates,
+library macro paths, `#line`, and one-shot cleanup. No object format change.
 
 ### Fixed (HLASM comparison, 2026-11-25)
 
