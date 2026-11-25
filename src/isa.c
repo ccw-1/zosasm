@@ -74,18 +74,19 @@ const IsaInst *isa_lookup(const char *mnemonic, size_t *n) {
     return cnt ? &isa_inst_tab[first] : NULL;
 }
 
+static ZA_TLS const char **mnem_list;
+static ZA_TLS size_t mnem_count;
+
 const char *const *isa_mnemonics(size_t *n) {
-    static const char **list;
-    static size_t count;
-    if (!list) {
+    if (!mnem_list) {
         size_t i;
-        list = xmalloc(isa_inst_count * sizeof *list);
+        mnem_list = xmalloc(isa_inst_count * sizeof *mnem_list);
         for (i = 0; i < isa_inst_count; i++)
             if (i == 0 || strcmp(isa_inst_tab[i].mnemonic, isa_inst_tab[i - 1].mnemonic))
-                list[count++] = isa_inst_tab[i].mnemonic;
+                mnem_list[mnem_count++] = isa_inst_tab[i].mnemonic;
     }
-    *n = count;
-    return list;
+    *n = mnem_count;
+    return mnem_list;
 }
 
 int isa_check(const IsaOperand *op, int64_t v, char *err, size_t errsz) {
@@ -240,9 +241,25 @@ static void operand_mask(const IsaInst *in, uint8_t m[6]) {
 }
 
 /* entries by first byte: built once */
-static const IsaInst **by_first[256];
-static size_t by_first_n[256];
-static uint8_t (*masks)[6];
+static ZA_TLS const IsaInst **by_first[256];
+static ZA_TLS size_t by_first_n[256];
+static ZA_TLS uint8_t (*masks)[6];
+
+void isa_free_thread(void) {
+    int k;
+    free(mnem_list);
+    mnem_list = NULL;
+    mnem_count = 0;
+    if (masks) {
+        free(masks);
+        masks = NULL;
+    }
+    for (k = 0; k < 256; k++) {
+        free(by_first[k]);
+        by_first[k] = NULL;
+        by_first_n[k] = 0;
+    }
+}
 
 static void build_index(void) {
     size_t i, c[256];

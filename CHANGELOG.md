@@ -28,11 +28,23 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
   `XATTR ATTRIBUTES`.
 * Removed the dead `Asm.round8` fallback; `DESIGN.md` now says that a LOCTR
   layout that does not settle after five passes is `ZA9002`.
+* Forward-reference `EQU`: `X EQU Y+4` before `Y` is defined.  The value is
+  resolved lazily (including its length); a value that never resolves is
+  `ZA1035`.  `EQU` still reports a CSECT size that would have to size storage
+  (`ZA1042`) immediately.
+* `XATTR PSECT(name)` now writes the ADA field of the LD or PR with the ESD id
+  of the PSECT class, as HLASM does.  A bad name on an internal symbol is
+  `ZA3038`; on an external symbol the attribute is accepted and ignored.
+* Thread-local assembler state: `value_arena`, `za_ascii`, `ieee_ebits`, the
+  Big arena, the DP/MP length, the instruction/debug caches and the ZSYM CRC
+  table use `ZA_TLS` (`__thread` on gcc/clang).  Two threads can assemble at
+  the same time; `make test-threads` checks it and CI runs it.
 
 ### Tests
 
-* HLASM-derived cases for the EQU length, `*` duplication, `SY`/`QY`
-  alignment, zero attributes and the ASCII type.
+* HLASM-derived cases for the EQU length, forward EQU, `*` duplication,
+  `SY`/`QY` alignment, zero attributes, the ASCII type and PSECT/ADA.
+* `make test-threads` runs two concurrent assemblies; CI runs it under gcc.
 * `test_asm_free` includes numeric constants and runs with `detect_leaks=1`;
   CI runs it and the CBLOCK runtime test (qemu-s390x).
 

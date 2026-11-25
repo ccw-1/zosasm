@@ -51,6 +51,8 @@ extern const size_t isa_inst_count;
 const IsaInst *isa_lookup(const char *mnemonic, size_t *n);
 /* Every distinct mnemonic, lower case; array is owned by the library. */
 const char *const *isa_mnemonics(size_t *n);
+/* release the per-thread caches (the list and the decoder index) */
+void isa_free_thread(void);
 
 /* Operand descriptors in syntactic order. */
 size_t isa_nops(const IsaInst *in);

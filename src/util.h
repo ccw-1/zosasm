@@ -7,6 +7,18 @@
 #include <stdint.h>
 #include <stdio.h>
 
+/* Thread-local storage: the assembler keeps a few pieces of per-assembly
+ * state in globals so the C API stays small.  With __thread (gcc/clang) two
+ * threads can assemble different modules at the same time.  A compiler
+ * without thread-local support keeps the old, single-threaded behavior. */
+#if defined(__GNUC__) || defined(__clang__)
+# define ZA_TLS __thread
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+# define ZA_TLS _Thread_local
+#else
+# define ZA_TLS
+#endif
+
 /* Memory: all allocation aborts on failure. The assembler is a short lived
  * process, so most objects are never freed. */
 void *xmalloc(size_t n);

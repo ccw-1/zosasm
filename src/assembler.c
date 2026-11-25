@@ -395,6 +395,23 @@ static int sym_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
         st->bad = 1;
         return 0;
     }
+    if (s->kind == SYM_DEFERRED) {
+        if (!asm_resolve_equ(a, s, s->def_stmt, need)) {
+            if (!need) {
+                *out = undefined_value();
+                return 1;
+            }
+            /* leave it deferred: the end-of-pass check (or the next
+             * reference) reports it; a failed reference is remembered so the
+             * same missing symbol is not reported twice.  A speculative
+             * evaluation (dir_equ) records nothing. */
+            if (!a->trial) {
+                s->failed = 1;
+                st->bad = 1;
+            }
+            return 0;
+        }
+    }
     switch (s->kind) {
     case SYM_LABEL:
         *out = asm_addr_value(a, s->piece, s->off);
@@ -422,6 +439,8 @@ static int sym_value(Asm *a, Stmt *st, const Expr *x, int need, Value *out) {
                   x->name, x->name);
         st->bad = 1;
         return 0;
+    case SYM_DEFERRED:
+        break; /* resolved above, or reported */
     }
     return 0;
 }
@@ -742,6 +761,68 @@ int asm_eval(Asm *a, Stmt *st, const Expr *e, int need, Value *out) {
     }
     }
     return 0;
+}
+
+/* The length attribute HLASM assigns to an EQU without a second operand: the
+ * length of the leftmost term (Language Reference, EQU, length attribute
+ * value, cases 1 to 5).  A still-deferred symbol is resolved first when that
+ * is possible. */
+int64_t asm_equ_left_len(Asm *a, const Expr *e) {
+    const Symbol *s;
+    if (!e) return 1;
+    switch (e->kind) {
+    case EX_SYM:
+        s = asm_lookup(a, e->name);
+        if (s && s->kind == SYM_DEFERRED) {
+            if (!asm_resolve_equ(a, (Symbol *)s, s->def_stmt, 0)) return 1;
+        }
+        return s && s->has_len ? s->len : 1;
+    case EX_BIN:
+    case EX_UN:
+        return asm_equ_left_len(a, e->l);
+    default:
+        return 1; /* a self-defining term, *, or an attribute reference */
+    }
+}
+
+/* Resolve a forward-reference EQU.  The value expression was stored on the
+ * symbol; evaluate it now, when the symbols it names are known.  1: resolved
+ * (the symbol is now SYM_ABS or SYM_REL), 0: still undefined or an error. */
+int asm_resolve_equ(Asm *a, Symbol *s, Stmt *st, int need) {
+    Value v;
+    if (!s) return 0;
+    if (s->kind != SYM_DEFERRED) return s->kind == SYM_ABS || s->kind == SYM_REL;
+    if (!s->deferred) return 0;
+    if (s->resolving) {
+        if (need)
+            diag_help(rep_errorf(a->rep, "ZA1035", s->def,
+                                 "circular EQU definition for \"%s\"", s->name),
+                      "an EQU value can only refer to symbols that are eventually defined");
+        return 0;
+    }
+    s->resolving = 1;
+    {
+        Reporter *save = a->rep;
+        int ok;
+        if (!need) a->rep = a->scratch; /* a trial resolution: no diagnostics */
+        ok = asm_eval(a, st, s->deferred, need, &v);
+        a->rep = save;
+        if (!ok) {
+            s->resolving = 0;
+            if (need && !a->trial) st->bad = 1;
+            return 0;
+        }
+    }
+    s->resolving = 0;
+    if (!v.defined) return 0;
+    s->val = v;
+    s->kind = value_is_abs(&v) ? SYM_ABS : SYM_REL;
+    if (!s->fixed_len) {
+        s->len = asm_equ_left_len(a, s->deferred);
+        s->has_len = 1;
+    }
+    s->deferred = NULL;
+    return 1;
 }
 
 int asm_abs_expr(Asm *a, Stmt *st, Operand o, const char *what, int64_t *out) {
@@ -1147,7 +1228,57 @@ static void finish(Asm *a) {
         *xa = x->attr;
         xa->reference = x->attr.reference ? xstrdup(x->attr.reference) : NULL;
         xa->psect = x->attr.psect ? xstrdup(x->attr.psect) : NULL;
+        xa->psect_cls = NULL;
+        xa->psect_sym = NULL;
+        if (xa->psect) {
+            Symbol *ps = asm_lookup(a, xa->psect);
+            int ok = 1;
+            if (!ps) {
+                ok = 0;
+            } else if (ps->kind == SYM_LABEL && ps->piece) {
+                if (s->kind != SYM_EXT && s->sect && ps->piece->cls->sect != s->sect) ok = 0;
+                else xa->psect_cls = ps->piece->cls;
+            } else if (ps->kind == SYM_SECT && ps->sect) {
+                if (s->kind != SYM_EXT && s->sect && ps->sect != s->sect) ok = 0;
+                else xa->psect_cls = ps->sect->classes.v[0];
+            } else if (ps->kind == SYM_DXD) {
+                xa->psect_sym = ps;
+            } else if (ps->kind == SYM_EXT) {
+                xa->psect_sym = ps;
+            } else {
+                ok = 0;
+            }
+            /* HLASM only validates the PSECT operand for an internal name;
+             * on an external symbol it is accepted and has no object effect. */
+            if (!ok && s->kind != SYM_EXT) {
+                diag_help(rep_errorf(a->rep, "ZA3038", x->st->name_span,
+                                     "PSECT \"%s\" is not a class label, a section or a DXD in "
+                                     "the same section as \"%s\"",
+                                     xa->psect, s->name),
+                          "name a label in the PSECT class, or a CSECT, ENTRY or DXD name");
+                free(xa->reference);
+                free(xa->psect);
+                free(xa);
+                continue;
+            }
+        }
         s->xattr = xa;
+    }
+    /* A forward-reference EQU that is never used must still resolve, so a
+     * source with a typo in an EQU value is an error. */
+    for (i = 0; i < a->mod->sym_order.n; i++) {
+        Symbol *s = a->mod->sym_order.v[i];
+        if (s->kind != SYM_DEFERRED) continue;
+        if (asm_resolve_equ(a, s, s->def_stmt, 0)) continue;
+        if (!s->failed)
+            diag_help(rep_errorf(a->rep, "ZA1035", s->def,
+                                 "the EQU value for \"%s\" is still undefined", s->name),
+                      "the EQU value must eventually resolve; check the symbols it names");
+        s->kind = SYM_ABS;
+        s->val = value_abs(0);
+        s->len = 1;
+        s->has_len = 1;
+        s->deferred = NULL;
     }
     if (a->mod->sections.n == 0 && rep_error_count(a->rep) == 0) {
         diag_help(rep_errorf(a->rep, "ZA3002", span_make(a->mod->name, 0, 0, 0),
@@ -1167,7 +1298,7 @@ static void run(Asm *a) {
     finish(a);
 }
 
-int za_strict_registers;
+ZA_TLS int za_strict_registers;
 
 static Asm *assemble_once(const SrcLine *lines, size_t n, const char *name, Reporter *rep,
                           StrMap *hints) {
@@ -1286,6 +1417,7 @@ static void asm_state_free(Asm *a, int keep_module) {
     free(a->using_stack.v);
     free(a->ac_stack.v);
     if (a->end_entry && (!a->mod || a->mod->entry != a->end_entry)) free(a->end_entry);
+    isa_free_thread();
     if (keep_module && a->mod) a->mod->arena = a->arena;
     else arena_free(a->arena);
     a->arena = NULL;
@@ -1329,7 +1461,11 @@ Module *asm_assemble_all(const SrcLine *lines, size_t n, const char *name, Repor
 
 Module *asm_assemble(const SrcLine *lines, size_t n, const char *name, Reporter *rep) {
     Module *m = asm_assemble_all(lines, n, name, rep);
-    return rep_error_count(rep) > 0 ? NULL : m;
+    if (rep_error_count(rep) > 0) {
+        asm_free(m);
+        return NULL;
+    }
+    return m;
 }
 
 Module *asm_assemble_text(const char *file, const char *text, size_t len, Reporter *rep) {

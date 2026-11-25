@@ -30,7 +30,7 @@ Base base_sym(Symbol *s) {
 
 int base_eq(Base a, Base b) { return a.kind == b.kind && a.p == b.p; }
 
-static Arena *value_arena;
+static ZA_TLS Arena *value_arena;
 
 void value_set_arena(Arena *a) { value_arena = a; }
 

@@ -536,6 +536,7 @@ static const char *kind_name(const Symbol *s) {
     case SYM_REL: return "equ rel";
     case SYM_EXT: return s->weak ? "wxtrn" : "extrn";
     case SYM_SECT: return "section";
+    case SYM_DEFERRED: return "equ";
     default: return "dxd";
     }
 }

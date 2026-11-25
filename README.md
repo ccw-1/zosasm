@@ -29,6 +29,7 @@ build/zosasm -disasm old.o -o back.za   # GOFF object -> zosasm source
 ```sh
 make          # build/zosasm, build/hlasm2za, build/zafmt and build/zosasm-mcp
 make test     # unit tests and command line tests
+make test-threads  # optional: two concurrent assemblies (POSIX pthreads)
 make clean
 ```
 

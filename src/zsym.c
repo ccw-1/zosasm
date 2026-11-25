@@ -11,8 +11,8 @@
 
 /* ---- CRC-32 (IEEE, reflected) -------------------------------------------- */
 
-static uint32_t crc_table[256];
-static int crc_ready;
+static ZA_TLS uint32_t crc_table[256];
+static ZA_TLS int crc_ready;
 
 static uint32_t crc_update(uint32_t crc, uint8_t byte) {
     if (!crc_ready) {
@@ -228,7 +228,7 @@ static int stmt_kind(const char *op) {
 /* ---- the writer ---------------------------------------------------------------- */
 
 static void put_sym(Buf *b, const Symbol *s) {
-    static const char kinds[] = {ZY_LABEL, ZY_ABS, ZY_REL, ZY_EXT, ZY_SECT, ZY_DXD};
+    static const char kinds[] = {ZY_LABEL, ZY_ABS, ZY_REL, ZY_EXT, ZY_SECT, ZY_DXD, ZY_ABS};
     int64_t scope = -1, val = 0;
     size_t i;
     int flags = (s->weak ? ZYF_WEAK : 0) | (s->entry ? ZYF_ENTRY : 0);
@@ -613,7 +613,7 @@ uint8_t *zsym_extract(const GoffModule *m, size_t *len) { return zsym_extract_cl
 
 static const char *const stmt_names[] = {"other", "insn", "dc", "ds", "equ", "using", "drop",
                                          "org",   "ltorg", "section", "extern", "dxd", "end"};
-static const char *const sym_names[] = {"label", "abs", "rel", "ext", "sect", "dxd"};
+static const char *const sym_names[] = {"label", "abs", "rel", "ext", "sect", "dxd", "deferred"};
 
 static void dump_tmpl(const ZBlock *b, const ZTmpl *t, FILE *f) {
     char *s = zsym_render(b, t);

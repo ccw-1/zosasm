@@ -187,7 +187,33 @@ static void test_qy(void) {
     expect_codes("QY length", "T CSECT\n DC QYL4(W)\nW DXD F\n", "ZA2016");
 }
 
+/* XATTR PSECT: the LD of an entry points its ADA at the PSECT class ED
+ * (HLASM R6.0 probe pps.asm); the ER made for R(entry) does not. */
+static void test_psect(void) {
+    GoffModule *g = emit_src("Q CSECT\n"
+                             "CODE CATTR ALIGN(2)\n"
+                             "ENT LR 1,2\n"
+                             " ENTRY ENT\n"
+                             "DATA CATTR ALIGN(3)\n"
+                             "PSTART DS 0D\n"
+                             "PS2 DS CL8\n"
+                             "ENT XATTR LINKAGE(XPLINK),PSECT(PSTART)\n"
+                             " DC R(ENT)\n");
+    uint32_t data_id = 0, ld_id = 0, er_id = 0;
+    const GoffESD *data, *ld, *er;
+    if (!g) return;
+    data = find_esd(g, GOFF_ED, "DATA", &data_id);
+    ld = find_esd(g, GOFF_LD, "ENT", &ld_id);
+    er = find_esd(g, GOFF_ER, "ENT", &er_id);
+    CHECK(data && ld && er);
+    if (data && ld && er) {
+        CHECK(ld->ada_id == data_id);
+        CHECK(er->ada_id == 0);
+    }
+}
+
 int main(void) {
+    test_psect();
     test_qy();
     test_structure();
     test_r_and_indirect();

@@ -23,7 +23,7 @@ static void big_trim(Big *b) {
 /* Big buffers for an assembly are allocated from the Module arena, so
  * asm_free() releases them; outside an assembly (the float unit tests) they
  * use malloc.  The arena cannot grow a block in place, so copy on growth. */
-static Arena *big_arena;
+static ZA_TLS Arena *big_arena;
 
 void big_set_arena(Arena *a) { big_arena = a; }
 
@@ -460,7 +460,7 @@ static Big big_ones(size_t bits) {
  * or 15 bits for E, D and L) when the length is not the natural one: HLASM
  * builds the constant in a format with that exponent and 8*n-1-bits fraction
  * bits. 0: use the natural format of the length. */
-static int ieee_ebits;
+static ZA_TLS int ieee_ebits;
 
 void float_set_type(char typ) { ieee_ebits = typ == 'E' ? 8 : typ == 'D' ? 11 : typ == 'L' ? 15 : 0; }
 

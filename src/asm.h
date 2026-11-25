@@ -150,7 +150,7 @@ int value_simple(const Value *v, Base *b);
 Value value_add(Value a, Value b, int sign);
 Value value_neg(Value v);
 
-typedef enum { SYM_LABEL, SYM_ABS, SYM_REL, SYM_EXT, SYM_SECT, SYM_DXD } SymKind;
+typedef enum { SYM_LABEL, SYM_ABS, SYM_REL, SYM_EXT, SYM_SECT, SYM_DXD, SYM_DEFERRED } SymKind;
 
 typedef struct {
     int linkage; /* GOFF_LINKAGE_*, -1 = unset */
@@ -158,6 +158,8 @@ typedef struct {
     char *reference; /* "CODE", "DATA" or NULL */
     int indirect;    /* REFERENCE(INDIRECT) = 1, REFERENCE(DIRECT) = 0, -1 = unset */
     char *psect;
+    Class *psect_cls;   /* resolved PSECT class (ED), or NULL */
+    Symbol *psect_sym;  /* resolved PSECT DXD (PR), or NULL */
     Span def;
 } XAttr;
 
@@ -174,6 +176,13 @@ struct Symbol {
     int align;     /* SYM_LABEL: alignment of the item in bytes (alignof) */
     char type;    /* type attribute (C, X, F, ...); 0 is a valid type when has_type is set */
     unsigned has_type; /* the type attribute is set (an EQU third operand or a label type) */
+    unsigned fixed_len; /* an explicit EQU length operand was given */
+    /* a forward-reference EQU: the value expression is owned by Asm.exprs
+     * (freed when the assembly state is released) and resolved lazily */
+    Expr *deferred;
+    Stmt *def_stmt;
+    int resolving;
+    int failed; /* a reference already reported that this EQU does not resolve */
     int scale;    /* scale attribute */
     size_t def_idx; /* index of the defining statement */
     int weak;     /* WXTRN */
@@ -520,6 +529,7 @@ struct Asm {
     int64_t star_len; /* L'* of the current statement, 0 = unknown */
     int64_t loc_bias; /* temporary offset for * while a duplicated constant is evaluated */
     int saw_loc;      /* the last dc_values evaluation used the location counter */
+    int trial;        /* a speculative evaluation: do not set statement/symbol errors */
     Piece *pool_piece; /* the literal pool of END was written here, from pool_loc (ZSYM) */
     int64_t pool_loc;
     /* alignment bytes before the first byte of the statement (ZRec.pad) */
@@ -548,7 +558,7 @@ Module *asm_assemble_text(const char *file, const char *text, size_t len, Report
 /* Strict registers (-strict-registers): in a register position only %r1 (any
  * case, also %f %a %c %v) and names made with `NAME EQU %r1` are accepted, not
  * plain numbers or other symbols. Default 0. Read when assembling starts. */
-extern int za_strict_registers;
+extern ZA_TLS int za_strict_registers;
 
 typedef void (*Handler)(Asm *a, Stmt *st);
 
@@ -566,6 +576,10 @@ Expr *asm_expr(Asm *a, Stmt *st, Operand o);
 Span asm_op_span(Stmt *st, Operand o);
 int asm_abs_expr(Asm *a, Stmt *st, Operand o, const char *what, int64_t *out);
 int asm_eval(Asm *a, Stmt *st, const Expr *e, int need, Value *out);
+/* the length attribute of the leftmost term of an EQU value (HLASM rule) */
+int64_t asm_equ_left_len(Asm *a, const Expr *e);
+/* resolve a forward-reference EQU; 1 on success (the symbol is now ABS or REL) */
+int asm_resolve_equ(Asm *a, Symbol *s, Stmt *st, int need);
 void asm_expr_err(Asm *a, Stmt *st, Span sp, const char *code, const char *fmt, ...);
 void asm_stmt(Asm *a, Stmt *st);
 void asm_align(Asm *a, int64_t n);

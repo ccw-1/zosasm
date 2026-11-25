@@ -13,9 +13,9 @@ CFLAGS_ALL = $(STD) $(WARN) $(CFLAGS) -MMD -MP
 
 LIBSRC := $(filter-out src/main.c src/hlasm2za.c src/mcp.c src/zafmt.c,$(wildcard src/*.c))
 OBJ    := $(LIBSRC:src/%.c=build/%.o)
-TESTS  := $(patsubst tests/%.c,build/%,$(wildcard tests/test_*.c))
+TESTS  := $(patsubst tests/%.c,build/%,$(filter-out tests/test_threads.c,$(wildcard tests/test_*.c)))
 
-.PHONY: all test test-maclib test-mcp-asan test-free-asan test-cblock-runtime clean isa isa-check ebcdic-check pdf
+.PHONY: all test test-maclib test-mcp-asan test-free-asan test-cblock-runtime test-threads clean isa isa-check ebcdic-check pdf
 all: build/zosasm build/hlasm2za build/zafmt build/zosasm-mcp
 
 build:
@@ -78,6 +78,12 @@ test-free-asan: build/zosasm build/libzosasm.a
 		-Isrc -I. -o build/test_asm_free_asan tests/test_asm_free.c build/libzosasm.a -lm \
 		-fsanitize=address,undefined
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/test_asm_free_asan
+
+# concurrency: two threads assemble at the same time (POSIX pthreads; not
+# part of make test because z/OS has no -pthread spelling)
+test-threads: build/libzosasm.a
+	$(CC) $(STD) $(WARN) $(CFLAGS) -Isrc -I. -pthread -o build/test_threads tests/test_threads.c build/libzosasm.a -lm -pthread
+	./build/test_threads
 
 # CBLOCK runtime test (optional cross tools: s390x-linux-gnu-ld, qemu-s390x)
 test-cblock-runtime: build/zosasm

@@ -1,0 +1,10 @@
+Q        CSECT
+CODE     CATTR ALIGN(2)
+ENT      LR    1,2
+         ENTRY ENT
+DATA     CATTR ALIGN(3)
+PSTART   DS    0D
+PS2      DS    CL8
+ENT      XATTR LINKAGE(XPLINK),PSECT(PSTART)
+         DC    R(ENT)
+         END

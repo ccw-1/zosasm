@@ -448,7 +448,10 @@ of other tools (the disassembler writes them): `RMODE(NONE)` and
 `TASKING(NONE)`.
 
 `XATTR` attributes: `LINKAGE(OS|XPLINK)`, `SCOPE(SECTION|MODULE|LIBRARY|EXPORT|IMPORT)`,
-`REFERENCE(CODE|DATA[,DIRECT|INDIRECT])`, `PSECT(name)`.
+`REFERENCE(CODE|DATA[,DIRECT|INDIRECT])`, `PSECT(name)`.  `PSECT` names a
+label in another class of the same section, a section or a DXD; zosasm writes
+its ESD id in the LD/PR ADA field (`ZA3038` for a bad name).  On an external
+symbol the attribute is accepted and ignored, as HLASM does.
 
 <!-- example: sections.za -->
 ```za
@@ -591,7 +594,9 @@ Points worth knowing:
 * `EQU` takes up to three operands: value, length attribute (0 to 65535,
   otherwise `ZA1034`) and type attribute (a number 0 to 255 or a character).
   Without a second operand the length comes from the leftmost term, as in
-  HLASM: `ALIAS EQU SRC` has the length of `SRC`.
+  HLASM: `ALIAS EQU SRC` has the length of `SRC`.  A value may name a symbol
+  that is defined later; it resolves at assembly time (`ZA1035` if it never
+  does, including a circular chain).
 * `CNOP byte,boundary` aligns to `byte` modulo `boundary` (2,8 = a halfword
   position inside a doubleword) with no-op instructions.
 
@@ -1341,9 +1346,11 @@ HELLO    CSECT
          END   HELLO
 ```
 
-After converting, zosasm assembles the text again and compares it with the
-object; if the source does not give the same object, it says so (and with
-ZSYM it first falls back to the generic text). A section whose bytes were
+Generic conversion does not rebuild `XATTR PSECT`: the ADA field of an LD or
+PR is lost. The ZSYM path keeps the original XATTR statement. After
+converting, zosasm assembles the text again and compares it with the object;
+if the source does not give the same object, it says so (and with ZSYM it
+first falls back to the generic text). A section whose bytes were
 patched after assembling is written generically by itself, the rest of the
 module still gets its names.
 
@@ -1452,9 +1459,9 @@ bit-length `DS`.
 | `LTORG` in a DSECT with pending literals | `ZA3043` |
 | `DC ...P(7)...` program type | not accepted; the converter warns |
 | `XATTR ATTRIBUTES(label)` | not supported (`ZA3030`) |
-| `XATTR PSECT(name)` | accepted, not emitted, not validated |
+| `XATTR PSECT(name)` | supported for an internal label, section or DXD; sets the LD/PR ADA field, `ZA3038` for a bad name. On an external symbol it is accepted and ignored |
 | `R(symbol)` of a DXD or a local non-ENTRY | `ZA2060`; HLASM accepts it and creates an ER |
-| forward-reference `EQU` | rejected (`ZA1010`) |
+| forward-reference `EQU` | supported; the value resolves later (`ZA1035` if it never does) |
 
 `hlasm2za` (section 16) converts HLASM source to the zosasm form: it cuts the
 card columns, folds names to upper case, writes registers as `%r1`, and

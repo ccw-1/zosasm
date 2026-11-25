@@ -37,7 +37,7 @@ enum { F_ADDR = 0x01, F_DATA2 = 0x05, F_DATA4 = 0x06, F_DATA1 = 0x0b, F_STRING =
 #define TAG_IBM_FILE 0xde10
 #define LANG_ASM 0x8001 /* DW_LANG_Mips_Assembler, what other assemblers write for ELF */
 
-static uint32_t ab_dir_off, ab_file_off;
+static ZA_TLS uint32_t ab_dir_off, ab_file_off;
 
 static void build_abbrev(Dbg *g) {
     Buf *b = &g->sec[SEC_ABBREV].d;

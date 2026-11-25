@@ -99,6 +99,7 @@ static Symbol *reg_symbol(Asm *a, const char *t) {
     const char *err;
     char *n = sym_text(t, &err);
     Symbol *s = n ? asm_lookup(a, n) : NULL;
+    free(n);
     return s && s->regkind ? s : NULL;
 }
 
@@ -1003,7 +1004,7 @@ static int rel_field(Asm *a, Stmt *st, Operand o, const IsaOperand *f, int64_t *
 }
 
 /* evaluate one D(X,B)-style operand */
-static int64_t dp_prev_len; /* DP and MP: the first length of the statement */
+static ZA_TLS int64_t dp_prev_len; /* DP and MP: the first length of the statement */
 
 static int addr_field(Asm *a, Stmt *st, Operand o, const Slot *sl, int slot_no, int64_t *vals,
                       const IsaInst *in) {

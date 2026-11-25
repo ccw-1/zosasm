@@ -2,7 +2,7 @@
 
 #include "util.h"
 
-int za_ascii;
+ZA_TLS int za_ascii;
 
 unsigned char *charset_from_source(const char *s, size_t n, size_t *outlen) {
     unsigned char *out;

@@ -673,24 +673,6 @@ void dir_extrn(Asm *a, Stmt *st) {
 
 /* ---- EQU / ORG / CNOP / END -------------------------------------------- */
 
-/* The length attribute HLASM assigns to an EQU without a second operand: the
- * length of the leftmost term (Language Reference, EQU, length attribute
- * value, cases 1 to 5). */
-static int64_t equ_derived_len(Asm *a, const Expr *e) {
-    const Symbol *s;
-    if (!e) return 1;
-    switch (e->kind) {
-    case EX_SYM:
-        s = asm_lookup(a, e->name);
-        return s && s->has_len ? s->len : 1;
-    case EX_BIN:
-    case EX_UN:
-        return equ_derived_len(a, e->l);
-    default:
-        return 1; /* a self-defining term, *, or an attribute reference */
-    }
-}
-
 void dir_equ(Asm *a, Stmt *st) {
     OperandVec ops = {0};
     Expr *e = NULL;
@@ -727,9 +709,35 @@ void dir_equ(Asm *a, Stmt *st) {
                 free(t0);
                 return;
             }
-            if (!asm_eval(a, st, e, 1, &v)) {
-                free(t0);
-                return;
+            {
+                /* A missing symbol makes the EQU deferred; a real error (a
+                 * CSECT size that would have to size storage, for example)
+                 * must be reported now.  Try with need=1 in a scratch
+                 * reporter and look at the codes. */
+                Reporter *tr = rep_new(0), *save = a->rep;
+                int ok0, bad0 = st->bad, real = 0;
+                size_t di;
+                a->rep = tr;
+                a->trial = 1;
+                ok0 = asm_eval(a, st, e, 1, &v);
+                a->trial = 0;
+                a->rep = save;
+                st->bad = bad0;
+                for (di = 0; di < rep_count(tr); di++) {
+                    const Diag *d = rep_get(tr, di);
+                    if (strcmp(d->code, "ZA1010") != 0) real = 1;
+                }
+                rep_free(tr);
+                if (!ok0 || !v.defined) {
+                    if (real) {
+                        asm_eval(a, st, e, 1, &v);
+                        st->bad = 1;
+                        free(t0);
+                        return;
+                    }
+                    v = value_abs(0);
+                    v.defined = 0; /* defer */
+                }
             }
         }
         free(t0);
@@ -760,16 +768,24 @@ void dir_equ(Asm *a, Stmt *st) {
         }
         have_type = 1;
     }
-    if (!have_len) length = regkind ? 1 : equ_derived_len(a, e);
+    if (!have_len) length = regkind ? 1 : asm_equ_left_len(a, e);
     s = asm_define(a, st, st->name, st->name_span, &created);
     if (created) {
-        s->val = v;
         s->len = length;
         s->has_len = 1;
+        s->fixed_len = (unsigned)have_len;
         s->has_type = (unsigned)have_type;
         s->type = have_type ? (za_ascii ? (char)type : (char)ZA_A(type)) : 0;
-        s->kind = value_is_abs(&v) ? SYM_ABS : SYM_REL;
         s->regkind = regkind;
+        if (v.defined) {
+            s->val = v;
+            s->kind = value_is_abs(&v) ? SYM_ABS : SYM_REL;
+        } else {
+            s->kind = SYM_DEFERRED;
+            s->deferred = e;
+            s->def_stmt = st;
+            s->val = value_abs(0);
+        }
     }
 }
 

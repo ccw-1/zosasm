@@ -21,9 +21,11 @@ checked in). The Go version is no longer in the repository (the history was
 squashed to drop GPL-derived table data). Rules for the C code: `-std=c99 -Wall -Wextra
 -pedantic` clean (gcc and clang), no locale dependent functions
 (`za_isalpha`, `za_toupper`, ... in `util.c`), all memory from
-`xmalloc`/`xcalloc` (aborts on failure). The one-shot programs do not free;
-library callers call `asm_free(Module *)` and `rep_free(Reporter *)` after
-each assembly (section 7).
+`xmalloc`/`xcalloc` (aborts on failure). The one-shot programs free the
+`Module` and `Reporter` after writing the object and leave the preprocessor
+and emitter buffers to process exit. A library caller calls
+`asm_free(Module *)` and `rep_free(Reporter *)` after each assembly (section
+7).
 
 ## 1. Scope
 
@@ -305,6 +307,11 @@ EXT      XATTR REFERENCE(DATA,INDIRECT)
   or a part name; `Q` also a part name (`ZA2060` for anything else).
 * `R(name)` names an external symbol, a section or an ENTRY label
   (`ZA2060`); `CXD` and `R` use the labels the same way as `A`.
+* `XATTR PSECT(name)` associates an LD or PR with a PSECT class: the ESD's
+  ADA field becomes the ESD id of that class.  The name may be a label of
+  another class in the same section, a section or a DXD; anything else is
+  `ZA3038`.  On an external symbol the attribute is accepted and ignored,
+  as HLASM does.
 * Lengths: `ZA2029`. `QY` is 3 bytes, is not aligned (HLASM R6.0), and uses
   reference type 9 with the long-displacement field.
 * `REFERENCE(CODE|DATA, DIRECT|INDIRECT)`: one value from each group, in
@@ -471,10 +478,13 @@ error[ZA2001]: unknown instruction "LGRR"
   vectors and the scratch reporter; `asm_assemble_all()` frees those
   after each pass and transfers the arena to the returned Module.
   `make test-free-asan` runs `tests/test_asm_free.c` under ASan/UBSan with leak
-  detection on. The assembler state is process global (`value_arena`,
-  `za_ascii`, `ieee_ebits`, the DP/MP length), so two threads must not call
-  `asm_assemble()` at the same time; a library caller serializes assemblies
-  or runs one process per assembly.
+  detection on. Per-assembly state (`value_arena`, `za_ascii`, `ieee_ebits`,
+  the Big arena, the DP/MP length and the instruction/debug caches) is
+  `ZA_TLS`: with gcc or clang two threads can call `asm_assemble()` at the
+  same time, each with its own `za_ascii` and `za_strict_registers`. A
+  compiler without thread-local support falls back to process globals, and
+  then a library caller serializes assemblies. `make test-threads` runs two
+  concurrent jobs and compares their objects with sequential assemblies.
 * final proof: object files must go through the z/OS binder (`ld`) and run.
 
 ## 8. Preprocessor (implemented, `src/pp.c`)
@@ -558,7 +568,10 @@ conflict).
   `8L-S-1`, P `2L-S-1`, Z `L-S`, E/D/L `2(L-1)-S`, otherwise 0). `K'` and
   `N'` belong to the macro language and give `ZA1032`; `ZA1031` is a
   `X'*` that cannot be evaluated; `ZA1033` is an EQU type operand outside
-  0-255; `ZA1034` is an EQU length attribute outside 0-65535. The third EQU operand sets the type attribute (it was ignored).
+  0-255; `ZA1034` is an EQU length attribute outside 0-65535; `ZA1035` is an
+  EQU value that never resolves (including a circular chain); `ZA3038` is a
+  PSECT operand that is not a class label, section or DXD in the same
+  section. The third EQU operand sets the type attribute (it was ignored).
 
 ## 10. Disassembler (`-disasm`, `src/disasm.c`)
 

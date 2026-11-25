@@ -34,7 +34,7 @@ headers. The expected values are in the tests and in the review report.
 | `pd.asm` | an unnamed `DSECT` is accepted |
 | `pe.asm` | `EQU` with 5 operands is accepted; type A, assembler type GR, program type 7 |
 | `pattr.asm` | `XATTR ATTRIBUTES(L)` is accepted |
-| `pf.asm`, `pf2.asm`, `pg.asm` | `PSECT` on an external symbol and the `START` address; HLASM writes the class offset 4096 |
+| `pf.asm`, `pf2.asm`, `pg.asm`, `pps.asm` | `PSECT` on an external symbol, the `START` address and a valid internal PSECT; HLASM writes the class offset 4096 and sets the LD's ADA field to the PSECT class ED |
 | `pi.asm` | odd `FPR` operands in `LD`, `CD`, `LDR` and `STD` are accepted, like zosasm |
 | `pj.asm` | literal duplication (`=2F'0'`) matches |
 | `pk.asm` | `ENTRY A,B`, `EXTRN X,Y` and `WXTRN W1,W2` match |
@@ -46,4 +46,4 @@ headers. The expected values are in the tests and in the review report.
 | `px.asm` | `DXD`, `Q`, `QD`, `QY`, `J`, `JD`, `CXD`, `R` and `RD` ESD and RLD match |
 | `py.asm` | `A(X-Y)`, `A(X-*)` and `A(*-Y)` RLD actions match; the class-origin addend differs |
 | `pz.asm` | `DD`, `ED`, `LD`, `EB`, `DB` and `LB` are byte identical |
-| `pfw.asm` | a forward-reference `EQU` is accepted by HLASM and rejected by zosasm |
+| `pfw.asm`, `pfw2.asm` | forward-reference `EQU` (value and length) is accepted; `ALIAS EQU SRC` before `SRC` has length 8 |

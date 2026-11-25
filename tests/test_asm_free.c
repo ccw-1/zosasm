@@ -52,5 +52,9 @@ int main(void) {
     free_source("T CSECT\n  DC F'1',D'2',L'3',DD'4.5',ED'-2'\n END\n", 1);
     /* errors with a partially built module */
     free_source("T CSECT\n  L 1,NOSUCH\n  DS 0H\n END\n", 0);
+    /* a continuation error leaves the operand fields partly built */
+    free_source("T CSECT\n  DC C'A',\n\n  END\n", 0);
+    /* an unterminated quote */
+    free_source("T CSECT\n  DC C'AB\n  END\n", 0);
     TEST_MAIN_END();
 }

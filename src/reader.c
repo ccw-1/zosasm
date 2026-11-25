@@ -436,7 +436,9 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
         st->li = i;
         st->nli = 1;
         st->name = xstrdup("");
-        st->op = st->operands = st->remark = "";
+        st->op = NULL; /* set below */
+        st->operands = xstrdup("");
+        st->remark = xstrdup("");
         /* name field */
         if (!is_blank((unsigned char)line[0])) {
             size_t nl;
@@ -481,9 +483,6 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
                       "an operation (instruction or directive) must follow the name; labels need "
                       "to start in column 1 and the operation must be separated by blanks");
             st->bad = 1;
-            /* asm_free_stmt() frees these; a bare "" literal is not ours */
-            st->operands = xstrdup("");
-            st->remark = xstrdup("");
             vec_push(out, st);
             continue;
         }
@@ -594,10 +593,12 @@ void read_statements(StmtVec *out, const SrcLine *lines, size_t n, Reporter *rep
                     continue;
                 }
             }
+            free(st->remark);
             st->remark = xstrdup(rest);
             free(seg);
             break;
         }
+        free(st->operands);
         st->operands = xstrdup(buf_cstr(&ops));
         free(ops.p);
         st->segs = segs.v;

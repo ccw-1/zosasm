@@ -21,7 +21,7 @@ typedef struct {
     int complete;
 } Logical;
 
-static char errbuf[160];
+static ZA_TLS char errbuf[160];
 
 static const char *fail(const char *fmt, int a, int b) {
     snprintf(errbuf, sizeof errbuf, fmt, a, b);

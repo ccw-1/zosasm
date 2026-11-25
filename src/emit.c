@@ -96,6 +96,14 @@ int module_validate(const Module *m, char *err, size_t errsz) {
     } while (0)
 
 /* write an ESD and release the name it carries (the writer copies it) */
+/* the ESD id a PSECT association points at (the class ED or the DXD PR) */
+static uint32_t psect_esd(const XAttr *x) {
+    if (!x) return 0;
+    if (x->psect_cls) return x->psect_cls->esd;
+    if (x->psect_sym) return x->psect_sym->esd;
+    return 0;
+}
+
 static const char *put_esd(GoffWriter *w, GoffESD *e) {
     const char *r = goff_write_esd(w, e);
     free(e->name);
@@ -197,6 +205,7 @@ static const char *emit_prv(GoffWriter *w, const Module *m, Section *s) {
         pr.attr.bind_strength = GOFF_STRENGTH_WEAK;
         pr.attr.alignment = lg;
         apply_xattr(&pr.attr, sym->xattr);
+        if (sym->xattr) pr.ada_id = psect_esd(sym->xattr);
         if ((e = put_esd(w, &pr)) != NULL) return e;
         sym->esd = pr.id;
     }
@@ -471,11 +480,12 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
             GoffESD ld;
             Symbol *sym;
             init_ld(&ld, s, s->name, s->classes.v[0], 1);
+            sym = module_symbol(m, s->name);
             apply_xattr(&ld.attr, xattr_of(m, s->name));
+            if (sym && sym->xattr) ld.ada_id = psect_esd(sym->xattr);
             if (s->name[0] && ld.attr.scope == GOFF_SCOPE_UNSPEC && is_blank_name(s->name))
                 ld.attr.scope = GOFF_SCOPE_SECTION;
             TRY(put_esd(w, &ld));
-            sym = module_symbol(m, s->name);
             if (sym) sym->ld_esd = ld.id;
         }
         {
@@ -505,6 +515,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
                 }
                 ld.offset = (uint32_t)ek[i].off;
                 apply_xattr(&ld.attr, sym->xattr);
+                if (sym->xattr) ld.ada_id = psect_esd(sym->xattr);
                 TRY(put_esd(w, &ld));
                 sym->ld_esd = ld.id;
             }

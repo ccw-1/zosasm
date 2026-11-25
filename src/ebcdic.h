@@ -4,13 +4,15 @@
 
 #include <stddef.h>
 
+#include "util.h"
+
 extern const unsigned char za_to_ebcdic[256];
 extern const unsigned char za_to_latin1[256];
 
 /* Character set of C'..' constants and of the type attribute: IBM-1047
  * (default) or ISO-8859-1 (-ascii, and implied by -elf).  Names in the GOFF
  * object and the EBCDIC DC variants (CE) always use IBM-1047. */
-extern int za_ascii;
+extern ZA_TLS int za_ascii;
 
 #define ZA_E(c) (za_ascii ? (unsigned char)(c) : za_to_ebcdic[(unsigned char)(c)])
 #define ZA_A(c) (za_to_latin1[(unsigned char)(c)])
