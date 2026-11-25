@@ -213,8 +213,9 @@ chapter 18, `DESIGN.md` section 18.
 
 `make test-mcp-asan` runs the MCP harness with ASan/UBSan+LSan
 (`detect_leaks=1`). Core assembler tests use `ASAN_OPTIONS=detect_leaks=0`
-because one-shot CLI allocations are intentional; MCP is long-lived, so
-request-scope leaks are treated as bugs.
+because the test harness itself keeps process-wide state; the CLI frees its
+preprocessor and emitter buffers, and MCP is long-lived, so request-scope
+leaks are treated as bugs.
 
 ## Regenerating the instruction table (developers only)
 

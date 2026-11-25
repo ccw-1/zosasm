@@ -22,8 +22,10 @@ squashed to drop GPL-derived table data). Rules for the C code: `-std=c99 -Wall 
 -pedantic` clean (gcc and clang), no locale dependent functions
 (`za_isalpha`, `za_toupper`, ... in `util.c`), all memory from
 `xmalloc`/`xcalloc` (aborts on failure). The one-shot programs free the
-`Module` and `Reporter` after writing the object and leave the preprocessor
-and emitter buffers to process exit. A library caller calls
+`Module` and `Reporter` after writing the object, plus the preprocessor, its
+source/output lines, the listing events and the ZSYM temporaries. A plain
+source therefore runs LeakSanitizer clean; macro-heavy sources leave a few
+macro-system internals to process exit. A library caller calls
 `asm_free(Module *)` and `rep_free(Reporter *)` after each assembly (section
 7).
 
