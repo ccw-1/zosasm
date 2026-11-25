@@ -1602,8 +1602,9 @@ static int ctemp_parse(CBlock *b, const char *rest, int line) {
         char *ta = trim(a), *tc = trim(c), *td = trim(d);
         int ok;
         if (!reg_parse(ta, &reg)) { free(ta); free(tc); free(td); goto bad; }
-        if (reg == 0) {
-            cb_error(b, line, 1, "ZA5005", "ctemp cannot use %%r0 as its base register");
+        if (reg == 0 || reg == 1) {
+            cb_error(b, line, 1, "ZA5005",
+                     "ctemp cannot use %%r0 or %%r1 as its base register (internal scratch)");
             free(ta); free(tc); free(td); free(s); return 0;
         }
         errno = 0;

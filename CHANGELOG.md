@@ -4,6 +4,12 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 `vX.Y.Z`. Things not compared with IBM's tools are marked in the User's Guide
 (section 14).
 
+## Unreleased
+
+* CBLOCK rejects `%r1` as the `ctemp` base register. Like `%r0`, `%r1` is an
+  internal scratch register; using it as the temp base made the generated code
+  clobber the base part way through a block.
+
 ## 0.4.1 - 2026-11-25
 
 Patch release: HLASM comparison fixes, section `START`/`LTORG` model updates,

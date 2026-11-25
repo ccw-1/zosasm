@@ -54,8 +54,10 @@ It creates no symbol and does not touch `%r14` or the stack pointer.
 | `cbegin` | start the C body |
 | `cend` | end the block |
 
-The temp base register cannot be `%r0`. A bound register cannot also appear in
-`cscratch`. `%r0` and `%r1` are internal scratch registers. If both are missing from
+The temp base register cannot be `%r0` or `%r1`; both are internal scratch registers.
+A bound register cannot also appear in
+`cscratch`. `%r0` and `%r1` are internal scratch registers. `%r0` is used only as a value
+scratch; it is never a base, index or branch register. If both are missing from
 `cscratch`, the block saves and restores them as a pair with `STMG`/`LMG`;
 if only one is missing, it uses `STG`/`LG`. A bound `cin`/`cout` register
 therefore cannot be `%r0` or `%r1`.

@@ -182,6 +182,15 @@ int main(void) {
            "#pragma cend\n"
            " END\n",
            "ZA5006", NULL);
+    expect("ctemp r1 is internal scratch",
+           "#pragma cblock demo\n"
+           "#pragma ctemp %r1, 64, down\n"
+           "#pragma cbegin\n"
+           "int32_t x;\n"
+           "x = 1;\n"
+           "#pragma cend\n"
+           " END\n",
+           "ZA5005", NULL);
     expect("read before assign",
            "#pragma cblock demo\n"
            "#pragma cout int32_t b=%r3\n"
