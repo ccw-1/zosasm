@@ -2224,14 +2224,34 @@ result of a macro that matters against its source.
 
 *Unverified against IBM except for one program (`wr3.asm`, below).*
 
-From the first conditional assembly statement (`SETA`, `SETB`, `SETC`,
-`LCLx`, `GBLx`, `AIF`, `AGO`, `ANOP`, `ACTR`, a name starting with `.` or `&`,
-or a `&variable` in any field) to the end of the source, `hlasm2za` collects
-the statements into a synthetic macro `OPENCODE` with no parameters and
-converts it like a macro definition (section 16.4). The result is the text
-`#macro OPENCODE() { ... #}` followed by the call line `         OPENCODE`.
-`&variables` that are not declared become local variables (a warning). With
-`-m` (library members) nothing is wrapped.
+ HLASM lets you write **conditional-assembly statements** (`&variable`
+ assignment, `AIF`/`AGO`/`ANOP`, `SETA`/`SETB`/`SETC`, etc.) directly in the
+ free-form body of the program, mixed with the real object-code statements.
+ zosasm's `#macro` language can express the same thing, but only *inside* a
+ `#macro ... #` block — not in free-form open code.
+
+ `hlasm2za` therefore handles open code automatically. When it sees the
+ **first conditional-assembly statement** anywhere in the source (a
+ `SETA`/`SETB`/`SETC`, `LCLx`/`GBLx`, `AIF`/`AGO`/`ANOP`, `ACTR`, a name
+ starting with `.` or `&`, or a `&variable` in any field), it assumes the
+ rest of the file is open code. It then wraps that whole region in a
+ **synthetic macro named `OPENCODE`** with no parameters and emits a single
+ call to it. In the converted output this looks like:
+
+ ```
+ #macro OPENCODE() {
+   ... all the open-code statements ...
+ #}
+         OPENCODE
+ ```
+
+ `OPENCODE` is purely an artifact of the converter — you never write it by
+ hand. It is what lets `hlasm2za` translate free-form HLASM open code into a
+ form zosasm's `#macro` language can assemble.
+
+ `&variables` that are not explicitly declared in the program become local
+ variables inside the synthetic macro (a warning is emitted). With `-m`
+ (library members) nothing is wrapped — the open code is left as-is.
 
 HLASM folds the whole statement to upper case after the `&variable`
 substitution, except inside quotes; zosasm symbols are case sensitive. So a
