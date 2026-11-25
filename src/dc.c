@@ -657,6 +657,7 @@ static int dc_bits(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
             b = nbv;
             nb = want;
         }
+        free(nib);
         push_val(out, b, nb);
     }
     return 1;
@@ -1170,6 +1171,8 @@ static int dc_decimal(Asm *a, Stmt *st, const DcSpec *sp, DcVec *out) {
                 nb = want;
             }
         }
+        free(t);
+        free(dig);
         push_val(out, b, nb);
     }
     return 1;

@@ -249,6 +249,7 @@ static void test_dc(void) {
         {" DC 10EBP(7)L2'12'", "4140414041404140414041404140414041404140"},
         {" DC C'A'\n DC 0D\n DC 0F\n DC F'0'", "c10000000000000000000000"},
         {" DSECT\nF1 DS F\nF2 DS CL4", ""},
+        {" DSECT\nF1 DS F\n LTORG", ""},
         {" ORG *,8,2\nL1 DC F'0'", "0000000000000000"},
         {"X EQU 5,0\n DC AL1(L'X)", "00"},
         {"X EQU Y+4\nY DC F'1'\n DC A(X)", "0000000100000004"},

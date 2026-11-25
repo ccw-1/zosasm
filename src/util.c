@@ -80,6 +80,18 @@ char *za_strlower(const char *s) {
     return r;
 }
 
+char *za_strlower_own(char *s) {
+    char *r = za_strlower(s);
+    free(s);
+    return r;
+}
+
+char *za_strupper_own(char *s) {
+    char *r = za_strupper(s);
+    free(s);
+    return r;
+}
+
 int za_strncmpi(const char *a, const char *b, size_t n) {
     for (; n; n--, a++, b++) {
         int x = za_tolower((unsigned char)*a), y = za_tolower((unsigned char)*b);

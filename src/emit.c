@@ -65,7 +65,7 @@ int module_validate(const Module *m, char *err, size_t errsz) {
             }
             for (i = 0; i < c->relocs.n; i++) {
                 const Reloc *r = &c->relocs.v[i];
-                if (r->off < 0 || r->off + r->len > c->len) {
+                if (r->off < c->base || r->off + r->len > c->base + c->len) {
                     snprintf(err, errsz, "a relocation of the class %s lies outside its text",
                              c->name ? c->name : "");
                     return 0;
@@ -137,6 +137,7 @@ static const char *emit_class(GoffWriter *w, const Module *m, Section *s, Class 
     set_name(&ed, c->name);
     ed.name_space = GOFF_NS_NORMAL;
     ed.length = (uint32_t)c->len;
+    ed.offset = (uint32_t)c->base;
     ed.attr.amode = c->attr.cattr ? 0 : s->amode;
     ed.attr.rmode = rmode;
     ed.attr.bind_algorithm = bind;
@@ -164,6 +165,7 @@ static const char *emit_class(GoffWriter *w, const Module *m, Section *s, Class 
     set_name(&pr, c->part);
     pr.name_space = GOFF_NS_PARTS3;
     pr.length = (uint32_t)c->len;
+    pr.offset = (uint32_t)c->base;
     pr.attr.amode = c->attr.cattr ? 0 : s->amode;
     pr.attr.rmode = rmode;
     pr.attr.bind_algorithm = bind;
@@ -227,6 +229,7 @@ static void init_ld(GoffESD *ld, Section *s, const char *name, const Class *c, i
     memset(ld, 0, sizeof *ld);
     ld->type = GOFF_LD;
     ld->parent = c->part ? c->pr : c->esd;
+    ld->offset = (uint32_t)c->base;
     set_name(ld, name);
     ld->name_space = GOFF_NS_NORMAL;
     if (is_sect) {
@@ -526,7 +529,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
                     ld.attr.amode = sym->amode ? sym->amode : GOFF_AMODE_31;
                     ld.attr.rmode = sym->rmode;
                 }
-                ld.offset = (uint32_t)ek[i].off;
+                ld.offset = (uint32_t)(sym->piece->cls->base + ek[i].off);
                 apply_xattr(&ld.attr, sym->xattr);
                 if (sym->xattr) {
                     ld.ada_id = psect_esd(sym->xattr);
@@ -583,7 +586,8 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
         for (ci = 0; ci < secs.v[si]->classes.n; ci++) {
             Class *c = secs.v[si]->classes.v[ci];
             if (c->len == 0 || secs.v[si]->kind == K_COM) continue;
-            TRY(goff_write_text(w, class_target(c), 0, GOFF_STYLE_BYTE, c->data, (size_t)c->len));
+            TRY(goff_write_text(w, class_target(c), (uint32_t)c->base, GOFF_STYLE_BYTE, c->data,
+                                (size_t)c->len));
         }
     for (k = 0; k < 2; k++)
         if (adata[k]) TRY(goff_write_text(w, aesd[k], 0, GOFF_STYLE_UNSTRUCTURED, adata[k], alen[k]));
@@ -618,7 +622,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
             end.name = ebcdic_from_source(e->name, strlen(e->name), &end.name_len);
         } else {
             Class *c = e->piece->cls;
-            int64_t off = e->piece->start;
+            int64_t off = c->base + e->piece->start;
             if (e->kind == SYM_LABEL) off += e->off;
             end.kind = GOFF_ENTRY_BYID;
             end.esdid = class_target(c);

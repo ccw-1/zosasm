@@ -55,6 +55,8 @@ typedef struct {
 
 /* step_limit: statements per expansion (0 = default 1,000,000). elf selects __ELF__. */
 MacSys *mac_new(Reporter *rep, const MacHost *host, long step_limit, int elf);
+void mac_free(MacSys *ms);
+void mac_text_free(MacText *t);
 
 /* Does the source line t start a macro statement at the top level of a file?
  * 0: no (an ordinary line or a preprocessor directive), 1: a #macro definition,

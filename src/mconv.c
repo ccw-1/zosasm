@@ -428,7 +428,7 @@ static E parse_ref(XP *p) {
     Var *v;
     E r;
     while (is_hlc((unsigned char)p->s[j])) j++;
-    hl = za_strupper(xstrndup(p->s + st, j - st));
+    hl = za_strupper_own(xstrndup(p->s + st, j - st));
     p->i = j;
     if (m->label_var && !strcmp(hl, m->label_var)) {
         r = e_make(xstrdup("sys.label"), P_ATOM, T_STR);
@@ -710,7 +710,7 @@ static E parse_prim(XP *p) {
         size_t j = p->i;
         char *w;
         while (is_hlc((unsigned char)p->s[j])) j++;
-        w = za_strupper(xstrndup(p->s + p->i, j - p->i));
+        w = za_strupper_own(xstrndup(p->s + p->i, j - p->i));
         if (p->s[j] == '\'') {
             if (strlen(w) == 1 && strchr("KNTLDIOS", w[0])) {
                 p->i = j;
@@ -864,7 +864,7 @@ static char *amp_name(const char *t, size_t *end) {
     while (is_hlc((unsigned char)t[j])) j++;
     if (j == 1) return NULL;
     if (end) *end = j;
-    return za_strupper(xstrndup(t + 1, j - 1));
+    return za_strupper_own(xstrndup(t + 1, j - 1));
 }
 
 static Var *declare(MC *m, const char *hl, Ty ty, int array, int global, int dim, int explicit_decl) {

@@ -132,6 +132,12 @@ static const char *const programs[] = {
     "         DC    A(MAIN,ALT)\n"
     "         END   ALT\n",
 
+    /* START address: the section location space starts at 4096 */
+    "PG       START 4096\n"
+    "L1       DC    F'1'\n"
+    "L2       DC    A(L1)\n"
+    "         END   PG\n",
+
     /* PSECT/ADA: the LD points at the DATA class */
     "PQ       CSECT\n"
     "CODE     CATTR ALIGN(2)\n"

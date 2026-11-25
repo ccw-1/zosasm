@@ -441,6 +441,7 @@ static char *expand(Pp *pp, const char *s, const Active *act) {
     if (pp->too_big && i < n) buf_puts(&out, s + i);
     {
         char *r = xstrdup(buf_cstr(&out));
+        free(out.p);
         pp->expand_depth--;
         return r;
     }
@@ -469,7 +470,11 @@ static char *convert_breaks(const char *b) {
             buf_putc(&out, b[i++]);
         }
     }
-    return xstrdup(buf_cstr(&out));
+    {
+        char *r = xstrdup(buf_cstr(&out));
+        free(out.p);
+        return r;
+    }
 }
 
 static int same_macro(const Macro *a, const Macro *b) {
@@ -958,7 +963,7 @@ static void do_pragma(Pp *pp, const char *rest, Span sp) {
     char *r = str_trim(rest), *word, *arg;
     size_t n = 0;
     while (r[n] && !is_blank((unsigned char)r[n])) n++;
-    word = za_strlower(xstrndup(r, n));
+    word = za_strlower_own(xstrndup(r, n));
     arg = str_trim(r + n);
     if (!strcmp(word, "title")) {
         size_t l = strlen(arg);
@@ -983,7 +988,7 @@ static void do_pragma(Pp *pp, const char *rest, Span sp) {
         rep_errorf(pp->rep, "ZA5001", sp,
                    "#pragma %s is only valid inside a #pragma cblock block", word);
     } else if (!strcmp(word, "print")) {
-        char *a = za_strlower(xstrdup(arg));
+        char *a = za_strlower_own(xstrdup(arg));
         if (strcmp(a, "on") && strcmp(a, "off") && strcmp(a, "data") && strcmp(a, "nodata") &&
             strcmp(a, "gen") && strcmp(a, "nogen"))
             diag_help(rep_errorf(pp->rep, "ZA4061", sp,
@@ -1165,6 +1170,13 @@ static int stmt_fields(const char *part, StmtFields *f) {
     return 1;
 }
 
+static void stmt_fields_free(StmtFields *f) {
+    free(f->name);
+    free(f->op);
+    free(f->operands);
+    f->name = f->op = f->operands = NULL;
+}
+
 static int op_chars_ok(const char *op) {
     size_t i;
     if (!op[0]) return 0;
@@ -1180,7 +1192,7 @@ static int try_library_dir(Pp *pp, const char *dir, const char *lname) {
     /* the member is found by its lower case or its upper case name (hlasm2za -macro-dir keeps the
      * case of the HLASM member) */
     for (i = 0; i < 4; i++) {
-        char *base = i < 2 ? xstrdup(lname) : za_strupper(xstrdup(lname));
+        char *base = i < 2 ? xstrdup(lname) : za_strupper_own(xstrdup(lname));
         char *file = xasprintf("%s%s", base, exts[i & 1]);
         char *path = join_path(dir, file);
         size_t len;
@@ -1215,7 +1227,7 @@ static int is_macro_op(Pp *pp, const char *op) {
     if (mac_defined(pp->mac, op)) return 1;
     if (pp->opt->macro_dirs.n == 0 && pp->opt->include_dirs.n == 0) return 0;
     if (!op_chars_ok(op) || mac_known_op(op)) return 0;
-    l = za_strlower(xstrdup(op));
+    l = za_strlower_own(xstrdup(op));
     if (strmap_get(&pp->lib_tried, l)) return 0;
     strmap_put(&pp->lib_tried, l, (void *)1);
     for (i = 0; i < pp->opt->macro_dirs.n; i++)
@@ -1245,6 +1257,8 @@ static void do_macro_call(Pp *pp, const char *name, const char *op, const char *
     mac_call(pp->mac, op, name, cs, args, ov.n);
     pp->mdepth--;
     if (pp->mdepth == 0) flush_inserts(pp);
+    free(args);
+    free(ov.v);
 }
 
 static void emit_line(Pp *pp, const char *text, int first_line, const int *plines, const size_t *poffs, size_t nplines);
@@ -1283,6 +1297,7 @@ static void emit_multi(Pp *pp, const char *text, int first_line, const int *plin
             buf_write(&b, c, end);
         }
         do_macro_call(pp, f.name, f.op, buf_cstr(&b));
+        stmt_fields_free(&f);
         free(b.p);
         for (i = 0; i < parts.n; i++) free(parts.v[i]);
         free(parts.v);
@@ -1322,11 +1337,17 @@ static void emit_part(Pp *pp, const char *part, int line) {
             char *up = za_strupper(f.op);
             for (i = 0; i < 5; i++)
                 if (!strcmp(up, types[i])) {
-                    pp->sect = f.name;
+                    free(pp->sect);
+                    pp->sect = xstrdup(f.name);
+                    free(pp->sectype);
                     pp->sectype = xstrdup(types[i]);
+                    free(pp->loc);
                     pp->loc = NULL;
                 }
-            if (!strcmp(up, "LOCTR")) pp->loc = f.name;
+            if (!strcmp(up, "LOCTR")) {
+                free(pp->loc);
+                pp->loc = xstrdup(f.name);
+            }
             if (!strcmp(up, "AMODE") || !strcmp(up, "RMODE")) {
                 char *t = str_trim(f.operands), *v = za_strupper(t);
                 int n = !strcmp(v, "24") ? 24 : !strcmp(v, "31") ? 31 : !strcmp(v, "64") ? 64 : 0;
@@ -1340,12 +1361,14 @@ static void emit_part(Pp *pp, const char *part, int line) {
                 free(v);
                 free(t);
             }
+            free(up);
+            stmt_fields_free(&f);
         }
     }
     l.file = pp->file;
     l.line = line;
     l.text = xstrdup(part);
-    l.orig = pp->cur_orig && pp->line == line && !strcmp(part, pp->cur_text) ? pp->cur_orig : NULL;
+    l.orig = pp->cur_orig && pp->line == line && !strcmp(part, pp->cur_text) ? xstrdup(pp->cur_orig) : NULL;
     l.plines = NULL;
     l.poffs = NULL;
     l.nplines = 0;
@@ -1361,23 +1384,30 @@ static int opsyn_macro(Pp *pp, const StmtFields *f) {
     sp = strpbrk(tgt, " \t");
     if (sp) *sp = 0;
     if (!*tgt) {
-        if (is_macro_op(pp, name)) strmap_put(&pp->msyn, name, "");
+        if (is_macro_op(pp, name)) strmap_put(&pp->msyn, name, xstrdup(""));
         return 0;
     }
     if (is_macro_op(pp, tgt)) {
         strmap_put(&pp->msyn, name, xstrdup(mac_alias(pp, tgt)));
         return 1;
     }
-    if (is_macro_op(pp, name)) strmap_put(&pp->msyn, name, "");
+    if (is_macro_op(pp, name)) strmap_put(&pp->msyn, name, xstrdup(""));
     return 0;
 }
 
 static void emit_part_or_call(Pp *pp, const char *part, int line) {
     StmtFields f;
-    if (!pp->comma && stmt_fields(part, &f) && !za_strncmpi(f.op, "OPSYN", 6) && opsyn_macro(pp, &f)) return;
-    if (!pp->comma && stmt_fields(part, &f) && is_macro_op(pp, f.op)) {
-        do_macro_call(pp, f.name, f.op, f.operands);
-        return;
+    if (!pp->comma && stmt_fields(part, &f)) {
+        if (!za_strncmpi(f.op, "OPSYN", 6) && opsyn_macro(pp, &f)) {
+            stmt_fields_free(&f);
+            return;
+        }
+        if (is_macro_op(pp, f.op)) {
+            do_macro_call(pp, f.name, f.op, f.operands);
+            stmt_fields_free(&f);
+            return;
+        }
+        stmt_fields_free(&f);
     }
     emit_part(pp, part, line);
 }
@@ -1449,10 +1479,12 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
     SrcVec *save_rd = pp->rd_lines;
     size_t *save_rn = pp->rd_next;
     src_split(&lines, file, text, len);
-    /* the empty segment after the final newline is not a line */
+    {
+        char *basebuf = lines.n ? (char *)lines.v[0].text : NULL;
+        /* the empty segment after the final newline is not a line */
     if (lines.n > 1 && lines.v[lines.n - 1].text[0] == 0 && len > 0 && text[len - 1] == '\n') lines.n--;
-    src_blank_comments(&lines, pp->rep);
-    pp->file = file;
+        src_blank_comments(&lines, pp->rep);
+        pp->file = file;
     pp->rd_lines = &lines;
     pp->rd_next = &nxt;
     while (i < lines.n) {
@@ -1508,7 +1540,7 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
                     ev.line = ev.line_end = lines.v[i + j].line;
                     ev.depth = pp->depth;
                     ev.kind = on ? PE_DIRECTIVE : PE_SKIPPED;
-                    ev.text = lines.v[i + j].orig ? lines.v[i + j].orig : lines.v[i + j].text;
+                    ev.text = xstrdup(lines.v[i + j].orig ? lines.v[i + j].orig : lines.v[i + j].text);
                     ev.first = first;
                     ev.n = 0;
                     vec_push(pp->opt->events, ev);
@@ -1529,6 +1561,7 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
                         }
                     }
                 }
+                mac_text_free(&mt);
                 pp->line = ln;
                 i = nxt;
                 continue;
@@ -1576,7 +1609,7 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
                         ev.line = ev.line_end = pp->out->v[q].line;
                         ev.depth = pp->depth;
                         ev.kind = PE_LINE;
-                        ev.text = pp->out->v[q].orig ? pp->out->v[q].orig : pp->out->v[q].text;
+                        ev.text = xstrdup(pp->out->v[q].orig ? pp->out->v[q].orig : pp->out->v[q].text);
                         ev.first = q;
                         ev.n = 1;
                         vec_push(pp->opt->events, ev);
@@ -1590,7 +1623,7 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
         }
         if (!dir && active(pp) && !pp->comma) {
             /* a call of a macro continues on the next lines while its operands end in a comma */
-            StmtFields f;
+            StmtFields f = {0};
             if (stmt_fields(t, &f) && is_macro_op(pp, f.op)) {
                 Buf b = {0};
                 int cont = 0;
@@ -1609,7 +1642,11 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
                     } else {
                         if (!stmt_fields(last, &lf)) break;
                         end = strlen(lf.operands);
-                        if (end == 0 || lf.operands[end - 1] != ',') break;
+                        if (end == 0 || lf.operands[end - 1] != ',') {
+                            stmt_fields_free(&lf);
+                            break;
+                        }
+                        stmt_fields_free(&lf);
                     }
                     if (k + 1 >= lines.n) break;
                     k++;
@@ -1620,6 +1657,7 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
                 if (cont) t = xstrdup(buf_cstr(&b));
                 free(b.p);
             }
+            stmt_fields_free(&f);
         }
         {
             PpEvent ev;
@@ -1630,7 +1668,7 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
             ev.line = ln;
             ev.line_end = lines.v[k].line;
             ev.depth = pp->depth;
-            ev.text = joined_t ? t : (lines.v[i].orig ? lines.v[i].orig : t);
+            ev.text = rec ? xstrdup(joined_t ? t : (lines.v[i].orig ? lines.v[i].orig : t)) : NULL;
             ev.first = pp->out->n;
             ev.n = 0;
             if (dir) {
@@ -1697,10 +1735,15 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
             diag_help(d, "if this was a macro #if block, its \"{\" must be on the same line as "
                          "the #if, and the block ends with \"#}\"");
     }
-    pp->file = save_file;
-    pp->line = save_line;
-    pp->rd_lines = save_rd;
-    pp->rd_next = save_rn;
+        pp->file = save_file;
+        pp->line = save_line;
+        pp->rd_lines = save_rd;
+        pp->rd_next = save_rn;
+        for (i = 0; i < lines.n; i++)
+            if (lines.v[i].orig) free((char *)lines.v[i].text);
+        free(basebuf);
+        free(lines.v);
+    }
 }
 
 /* ---- the macro host ---------------------------------------------------------- */
@@ -1713,6 +1756,7 @@ static void host_emit_cb(void *user, const char *text, int srcline) {
         char *first = xstrdup(text), *nl = strchr(first, '\n');
         if (nl) *nl = 0;
         rep_add_expansion(pp->rep, pp->file, pp->line, first, pp->exp_macro, pp->exp_def);
+        free(first);
         pp->exp_done = 1;
     }
     emit_line(pp, text, srcline > 0 ? srcline : pp->line, NULL, NULL, 0);
@@ -1787,6 +1831,40 @@ static int host_defined_cb(void *user, const char *name) {
     return strmap_get(&pp->macros, name) != NULL || is_builtin(name);
 }
 
+static void pp_free(Pp *pp) {
+    size_t i;
+    for (i = 0; i < pp->macros.cap; i++) {
+        Macro *m = pp->macros.vals[i];
+        if (!m) continue;
+        free(pp->macros.keys[i]);
+        free(m->name);
+        for (size_t j = 0; j < (size_t)m->nparams; j++) free(m->params[j]);
+        free(m->params);
+        free(m->body);
+        free(m);
+    }
+    free(pp->macros.keys);
+    free(pp->macros.vals);
+    for (i = 0; i < pp->lib_tried.cap; i++) free(pp->lib_tried.keys[i]);
+    free(pp->lib_tried.keys);
+    free(pp->lib_tried.vals);
+    for (i = 0; i < pp->msyn.cap; i++) {
+        free(pp->msyn.keys[i]);
+        free(pp->msyn.vals[i]);
+    }
+    free(pp->msyn.keys);
+    free(pp->msyn.vals);
+    for (i = 0; i < pp->ains.n; i++) free(pp->ains.v[i]);
+    free(pp->ains.v);
+    free(pp->conds.v);
+    free(pp->sect);
+    free(pp->sectype);
+    free(pp->loc);
+    free((char *)pp->exp_macro);
+    mac_free(pp->mac);
+    free(pp);
+}
+
 void pp_run(const char *file, const char *text, size_t len, const PpOptions *opt, Reporter *rep,
             SrcVec *out) {
     Pp *pp = xcalloc(sizeof *pp);
@@ -1816,7 +1894,7 @@ void pp_run(const char *file, const char *text, size_t len, const PpOptions *opt
         const char *names[2];
         names[0] = opt->elf ? "__ELF__ 1" : "__GOFF__ 1";
         names[1] = za_ascii ? "__ASCII__ 1" : "__EBCDIC__ 1";
-        for (i = 0; i < 2; i++) do_define(pp, xstrdup(names[i]), span_make("<command line>", 0, 0, 0));
+        for (i = 0; i < 2; i++) do_define(pp, names[i], span_make("<command line>", 0, 0, 0));
     }
     for (i = 0; i < opt->defines.n; i++) {
         char *d = xstrdup(opt->defines.v[i]);
@@ -1829,6 +1907,9 @@ void pp_run(const char *file, const char *text, size_t len, const PpOptions *opt
             def = xasprintf("%s 1", d);
         }
         do_define(pp, def, span_make("<command line>", 0, 0, 0));
+        if (def != d) free(def);
+        free(d);
     }
     pp_file(pp, file, text, len);
+    pp_free(pp);
 }

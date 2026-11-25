@@ -247,18 +247,6 @@ void dir_ltorg(Asm *a, Stmt *st) {
         a->pool_no++;
         return;
     }
-    if (a->sect->kind == K_DSECT) {
-        if (a->pass == 1) {
-            LitPool *p = cur_pool(a);
-            if (p && p->lits.n > 0) {
-                rep_errorf(a->rep, "ZA3043", stmt_span(st),
-                           "LTORG in a dummy section cannot hold literals");
-                /* st->bad stays clear: pass 2 must still close the pool */
-            }
-        }
-        a->pool_no++;
-        return;
-    }
     asm_align(a, 8);
     asm_define_label(a, st, 1, 0);
     asm_close_pool(a);

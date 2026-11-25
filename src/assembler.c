@@ -309,9 +309,15 @@ Value asm_addr_value(Asm *a, Piece *p, int64_t off) {
     v.nterms = 1;
     v.terms = arena_alloc(a->arena, sizeof(Term));
     v.terms[0].coef = 1;
-    if (a->laid && p->cls->sect->kind != K_DSECT) {
-        v.abs = p->start + off;
-        v.terms[0].base = base_class(p->cls);
+    if (p->cls->sect->kind != K_DSECT) {
+        int64_t base = a->laid ? p->cls->base : p->cls->sect->start_addr;
+        if (a->laid) {
+            v.abs = base + p->start + off;
+            v.terms[0].base = base_class(p->cls);
+        } else {
+            v.abs = base + off;
+            v.terms[0].base = base_piece(p);
+        }
     } else {
         v.abs = off;
         v.terms[0].base = base_piece(p);
@@ -877,7 +883,7 @@ void asm_reloc(Asm *a, int n, Symbol *target, Class *cls, RelocKind kind, int su
     if (a->pass != 2 || a->cur->cls->sect->kind == K_DSECT) return;
     c = a->cur->cls;
     memset(&r, 0, sizeof r);
-    r.off = a->cur->start + a->cur->loc;
+    r.off = c->base + a->cur->start + a->cur->loc;
     r.len = n;
     r.target = target;
     r.cls = cls;
@@ -948,9 +954,20 @@ static void layout(Asm *a) {
     for (si = 0; si < a->mod->sections.n; si++) {
         Section *s = a->mod->sections.v[si];
         s->cur = s->text_cur = s->classes.v[0]->pieces.v[0];
-        for (ci = 0; ci < s->classes.n; ci++) {
-            Class *c = s->classes.v[ci];
-            int64_t off = 0;
+        {
+            int64_t secbase = s->kind == K_DSECT ? 0 : s->start_addr;
+            int64_t classbase = secbase;
+            for (ci = 0; ci < s->classes.n; ci++) {
+                Class *c = s->classes.v[ci];
+                int64_t off = 0;
+                if (secbase) {
+                    if (ci > 0) {
+                        int64_t al = c->attr.align >= 0 ? ((int64_t)1 << c->attr.align) : 8;
+                        classbase = (classbase + al - 1) / al * al;
+                    }
+                    c->base = classbase;
+                }
+                {
             for (pi = 0; pi < c->pieces.n; pi++) {
                 Piece *p = c->pieces.v[pi];
                 p->start = off;
@@ -975,6 +992,9 @@ static void layout(Asm *a) {
             for (pi = 0; pi < c->pieces.n; pi++) {
                 c->pieces.v[pi]->loc = 0;
                 c->pieces.v[pi]->max = 0;
+            }
+                }
+                if (secbase) classbase = c->base + c->len;
             }
         }
     }

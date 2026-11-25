@@ -85,6 +85,7 @@ struct DClass {
     DSect *sect;
     const GoffESD *ed, *pr;
     char *name, *part;
+    int64_t base; /* class offset in the section location space */
     uint8_t *data;
     size_t len;
     DRel *rels;
@@ -233,6 +234,7 @@ static int load_esds(Ctx *x) {
             c->idx = x->classes.n;
             c->sect = s;
             c->ed = e;
+            c->base = e->offset;
             c->name = src_name(x, e, "class");
             if (!c->name) return 0;
             vec_push(&s->classes, c);
@@ -337,7 +339,11 @@ static int load_text(Ctx *x) {
         }
         if (t->style != GOFF_STYLE_BYTE)
             warnf(x, "text record style %d of class %s is taken as bytes", t->style, c->name);
-        end = (uint64_t)t->offset + t->len;
+        if ((int64_t)t->offset < c->base) {
+            warnf(x, "text for class %s starts before its offset and is ignored", c->name);
+            continue;
+        }
+        end = (uint64_t)((int64_t)t->offset - c->base) + t->len;
         if (end > MAX_CLASS_LEN) return failf(x, "class %s is too large", c->name);
         if (end > c->len) c->len = (size_t)end;
     }
@@ -354,7 +360,7 @@ static int load_text(Ctx *x) {
     for (i = 0; i < m->texts.n; i++) {
         const GoffText *t = &m->texts.v[i];
         DClass *c = class_of(x, t->esdid);
-        if (c && t->len) memcpy(c->data + t->offset, t->data, t->len);
+        if (c && t->len) memcpy(c->data + ((int64_t)t->offset - c->base), t->data, t->len);
     }
     return 1;
 }
@@ -383,17 +389,18 @@ static int load_labels(Ctx *x) {
         c = sl->cls;
         nm = src_name(x, e, "label");
         if (!nm) return 0;
-        if (sl->off > (int64_t)c->len) {
+        if ((int64_t)e->offset < c->base || (int64_t)e->offset - c->base > (int64_t)c->len) {
             warnf(x, "label %s lies outside class %s and is ignored", nm, c->name);
             x->by_id[i + 1].kind = 0;
             continue;
         }
-        if (c->sect->name && !strcmp(nm, c->sect->name) && c == c->sect->classes.v[0] && sl->off == 0 &&
+        if (c->sect->name && !strcmp(nm, c->sect->name) && c == c->sect->classes.v[0] &&
+            (int64_t)e->offset - c->base == 0 &&
             !c->sect->ld) {
             c->sect->ld = e;
             add_name(c, 0, nm, e, 1);
         } else {
-            add_name(c, sl->off, nm, e, 0);
+            add_name(c, (int64_t)e->offset - c->base, nm, e, 0);
         }
     }
     return 1;
@@ -483,8 +490,8 @@ static int has_accepted_sub_at(Ctx *x, const GoffReloc *r, const DClass *c) {
         int n = o->length;
         int32_t at;
         DRel *p;
-        if (o->action != GOFF_ACTION_SUB || o->pid != r->pid || o->offset != r->offset ||
-            o->length != r->length)
+        if (o->action != GOFF_ACTION_SUB || o->pid != r->pid ||
+            (int64_t)o->offset - (c ? c->base : 0) != r->offset || o->length != r->length)
             continue;
         t = o->rid && o->rid <= m->esds.n ? &x->by_id[o->rid] : NULL;
         if (!t || (t->kind != 'E' && t->kind != 'C' && t->kind != 'L')) continue;
@@ -513,6 +520,7 @@ static int load_relocs(Ctx *x) {
     for (pass = 0; pass < 2; pass++)
     for (i = 0; i < m->relocs.n; i++) {
         const GoffReloc *r = &m->relocs.v[i];
+        GoffReloc rr;
         DClass *c = class_of(x, r->pid);
         DRel d;
         int n = r->length, ri = r->reference == GOFF_REF_RELIMM;
@@ -523,6 +531,13 @@ static int load_relocs(Ctx *x) {
             if (!pass) warnf(x, "relocation in ESD %u is ignored (not a class)", r->pid);
             continue;
         }
+        rr = *r;
+        if ((int64_t)rr.offset < c->base) {
+            warnf(x, "relocation in %s starts before its class offset and is ignored", c->name);
+            continue;
+        }
+        rr.offset -= (uint32_t)c->base;
+        r = &rr;
         if (pass) { /* the subtrahend of an address constant */
             int32_t at = r->offset < c->len ? c->rel_at[r->offset] : 0;
             DRel *p = at ? &c->rels[at - 1] : NULL;
@@ -543,7 +558,7 @@ static int load_relocs(Ctx *x) {
                         d.er2 = t->p;
                     } else {
                         d.cls2 = t->kind == 'C' ? t->p : t->cls;
-                        base2 = t->kind == 'L' ? t->off : 0;
+                        base2 = t->kind == 'L' ? (int64_t)t->off - t->cls->base : 0;
                     }
                     d.val = stored_value(c->data + r->offset, n) - base2;
                     goto push;
@@ -617,7 +632,7 @@ static int load_relocs(Ctx *x) {
             d.cls = t->p;
         } else if (t && t->kind == 'L') {
             d.cls = t->cls;
-            d.base = t->off;
+            d.base = (int64_t)t->off - t->cls->base;
         } else {
             warnf(x, "relocation at %s+%u refers to ESD %u, which cannot be a target; ignored", c->name,
                   r->offset, r->rid);
@@ -628,7 +643,8 @@ static int load_relocs(Ctx *x) {
             if (d.er) {
                 d.val = sv;
             } else {
-                d.val = sv + d.base;
+                int64_t tbase = (t && t->kind == 'L' && t->cls) ? t->cls->base : c->base;
+                d.val = sv - tbase + d.base;
                 d.vcon = 0;
                 if (d.val < 0 || d.val > (int64_t)d.cls->len) {
                     if (has_accepted_sub_at(x, r, c)) {
@@ -1292,7 +1308,7 @@ static void emit_dxd(Ctx *x, const DPr *p) {
 
 static void emit_section(Ctx *x, DSect *s, size_t sect_idx) {
     DClass *first = s->classes.n ? s->classes.v[0] : NULL;
-    const char *op = s->common ? "COM" : "CSECT";
+    const char *op = s->common ? "COM" : (first && first->base ? "START" : "CSECT");
     size_t i;
     uint8_t rmode = first ? first->ed->attr.rmode : 0;
     if (!first || strcmp(first->name, DEFAULT_CLASS) != 0)
@@ -1300,7 +1316,13 @@ static void emit_section(Ctx *x, DSect *s, size_t sect_idx) {
               s->name ? s->name : "(unnamed)", DEFAULT_CLASS);
     if (first && first->ed->attr.read_only && !s->common) op = "RSECT";
     if (sect_idx) buf_putc(&x->out, '\n');
-    stmt(&x->out, s->name, op, NULL);
+    if (first && first->base) {
+        char *a = xasprintf("%lld", (long long)first->base);
+        stmt(&x->out, s->name, "START", a);
+        free(a);
+    } else {
+        stmt(&x->out, s->name, op, NULL);
+    }
     if (first) {
         const char *am = amode_name(first->ed->attr.amode);
         const char *rm = rmode_name(rmode);
@@ -1473,7 +1495,8 @@ static Smart *smart_plan(Ctx *x) {
         DClass *c = class_of(x, r->pid);
         size_t kk;
         if (!c) continue;
-        for (kk = 0; kk < r->length && r->offset + kk < c->len; kk++) mask[c->idx][r->offset + kk] = 1;
+        for (kk = 0; kk < r->length && (int64_t)r->offset - c->base + kk < c->len; kk++)
+                    mask[c->idx][(int64_t)r->offset - c->base + kk] = 1;
     }
     for (i = 0; i < b->stmts.n; i++) {
         const ZStmt *s = &b->stmts.v[i];
@@ -1680,10 +1703,11 @@ char *disasm_ex(const GoffModule *m, int flags, FILE *warn, int *nwarn, int *sma
     }
     if (m->end.kind == GOFF_ENTRY_BYID) {
         DClass *c = class_of(&x, m->end.esdid);
-        if (c && m->end.offset <= c->len) {
+        int64_t off = c ? (int64_t)m->end.offset - c->base : -1;
+        if (c && off >= 0 && off <= (int64_t)c->len) {
             x.end_cls = c;
-            x.end_off = m->end.offset;
-            c->lab[m->end.offset] |= 1;
+            x.end_off = off;
+            c->lab[off] |= 1;
         } else {
             warnf(&x, "the entry point of the object is not in a class and is ignored");
         }

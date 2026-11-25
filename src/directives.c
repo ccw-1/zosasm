@@ -66,6 +66,7 @@ void dir_section(Asm *a, Stmt *st) {
     char *genname = NULL;
     const char *secname = st->name;
     int unnamed = 0;
+    int64_t start_addr = 0;
     if (!strcmp(op, "CSECT") || !strcmp(op, "START"))
         kind = K_CSECT;
     else if (!strcmp(op, "RSECT"))
@@ -92,11 +93,18 @@ void dir_section(Asm *a, Stmt *st) {
         if (!strcmp(op, "START") && st->operands[0]) {
             OperandVec ops = {0};
             int64_t v;
-            if (asm_ops(a, st, 0, 1, &ops) && ops.n == 1 &&
-                asm_abs_expr(a, st, ops.v[0], "the START address", &v) && v != 0)
-                diag_help(rep_warnf(a->rep, "ZA3005", asm_op_span(st, ops.v[0]),
-                                    "START address %lld is ignored", (long long)v),
-                          "the binder assigns the load address");
+            if (!asm_ops(a, st, 0, 1, &ops)) return;
+            if (ops.n == 1 && ops.v[0].text[0]) {
+                if (!asm_abs_expr(a, st, ops.v[0], "the START address", &v)) return;
+                if (v < 0 || v > ZA_MAX_LOC) {
+                    rep_errorf(a->rep, "ZA3056", asm_op_span(st, ops.v[0]),
+                               "the START address %lld is outside 0 to %lld", (long long)v,
+                               (long long)ZA_MAX_LOC);
+                    st->bad = 1;
+                    return;
+                }
+                start_addr = v;
+            }
         }
     }
     sec = strmap_get(&a->secs, secname);
@@ -109,6 +117,7 @@ void dir_section(Asm *a, Stmt *st) {
         sec = xcalloc(sizeof *sec);
         sec->name = xstrdup(secname);
         sec->kind = kind;
+        sec->start_addr = kind == K_DSECT ? 0 : start_addr;
         sec->def = stmt_span(st);
         if (st->name[0] && !unnamed) {
             int created;
@@ -577,20 +586,23 @@ void dir_mode(Asm *a, Stmt *st) {
                                      "invalid %s \"%s\"", up, val),
                           is_a ? "use 24, 31, 64, ANY or MIN" : "use 24, 31, 64 or ANY");
                 st->bad = 1;
-                return;
+                free(up);
+        return;
             }
             sm.name = xstrdup(st->name);
             sm.sp = st->name_span;
             sm.is_amode = is_a;
             sm.val = v;
             vec_push(&a->symmodes, sm);
-            return;
+            free(up);
+        return;
         }
     }
     if (!sec) {
         diag_help(rep_errorf(a->rep, "ZA3001", st->op_span, "%s has no section to apply to", up),
                   "name the section in the name field or place the statement after a CSECT");
         st->bad = 1;
+        free(up);
         return;
     }
     val = ops.v[0].text;
@@ -600,9 +612,11 @@ void dir_mode(Asm *a, Stmt *st) {
                                  "invalid AMODE \"%s\"", val),
                       "use 24, 31, 64, ANY or MIN");
             st->bad = 1;
-            return;
+            free(up);
+        return;
         }
         sec->amode = v;
+        free(up);
         return;
     }
     if (!rmode_byte(val, &v)) {
@@ -610,9 +624,11 @@ void dir_mode(Asm *a, Stmt *st) {
                              val),
                   "use 24, 31, 64 or ANY");
         st->bad = 1;
+        free(up);
         return;
     }
     sec->rmode = v;
+    free(up);
 }
 
 /* ---- ENTRY / EXTRN / WXTRN --------------------------------------------- */
@@ -911,7 +927,10 @@ void dir_org(Asm *a, Stmt *st) {
             ok_kind = 1; /* absolute: offset from the start of the current piece */
         } else if (is_rel &&
                    (base_eq(b, base_piece(a->cur)) || base_eq(b, base_class(a->cur->cls)))) {
-            if (b.kind == B_CLASS) off -= a->cur->start;
+            if (b.kind == B_CLASS)
+                off -= a->cur->start + a->cur->cls->base;
+            else
+                off -= a->cur->cls->sect->start_addr;
             ok_kind = 1;
         }
     }

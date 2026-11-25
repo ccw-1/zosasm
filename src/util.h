@@ -41,6 +41,8 @@ int za_toupper(int c);
 int za_tolower(int c);
 char *za_strupper(const char *s); /* new string */
 char *za_strlower(const char *s);
+char *za_strlower_own(char *s);
+char *za_strupper_own(char *s);
 int za_streqi(const char *a, const char *b);
 int za_strncmpi(const char *a, const char *b, size_t n);
 /* a whole non-negative decimal option value that fits in an int */

@@ -332,16 +332,6 @@ static int has_amp(const char *s) {
     return 0;
 }
 
-/* operand forms that zosasm rejects or interprets differently; report them
- * here so the converted source does not fail with an unrelated diagnostic */
-static void check_forms(Conv *c, const LS *l) {
-    OperandVec ops = {0};
-    split_operands(&ops, l->operands);
-    if (!strcmp(l->op, "START") && ops.n > 0)
-        warnf(c, l->line, "START address is ignored by zosasm (the binder assigns the load address)");
-    operands_free(&ops); /* split_operands owns the operand text */
-}
-
 static void classify(Conv *c, const LS *l) {
     const char *op = l->op;
     int bad = 1;
@@ -505,7 +495,7 @@ static int copy_member(Conv *c, const char *name, MHStmtVec *st, int depth, int 
     for (k = 0; base[k]; k++)
         if (base[k] == '/' || base[k] == '\\' || base[k] == '\'' || base[k] == ' ') return 0;
     up = za_strupper(base);
-    lo = za_strlower(xstrdup(base));
+    lo = za_strlower_own(xstrdup(base));
     for (k = 0; k < 3 * 3 && !text; k++) {
         const char *nm = k / 3 == 0 ? up : k / 3 == 1 ? lo : base;
         text = read_file(xasprintf("%s/%s%s", c->o.copy_dir, nm, ext[k % 3]), &len);
@@ -833,7 +823,6 @@ static void parse(Conv *c) {
         }
         push_stmt(c, line, fn, fp, fo, remark);
         classify(c, &c->ls.v[c->ls.n - 1]);
-        check_forms(c, &c->ls.v[c->ls.n - 1]);
     }
     if (c->wrapping) open_finish(c);
 }

@@ -1460,9 +1460,8 @@ bit-length `DS`.
 | `*-LABEL` length tricks | `sizeof`, `offsetof`, `alignof`, `countof` |
 | listing | `-l` (section 11.2), a different layout; `TITLE`, `EJECT`, `SPACE`, `PRINT` work in it; `PUNCH`, `ICTL`, `ISEQ` are accepted and ignored |
 | object deck / OBJ output | GOFF only |
-| `START address` | ignored with `ZA3005`; the binder assigns the load address |
-| `LTORG` in a DSECT with pending literals | `ZA3043` |
-| `XATTR ATTRIBUTES(label)` | not supported (`ZA3030`) |
+| `START address` | sets the section location space: the ED/TXT offsets, labels and addends start at `address`; the binder still assigns the load address |
+| `XATTR ATTRIBUTES(label)` | supported: writes the class ED id and offset in the LD/PR extended attribute; `ZA3039` for a bad name. `-disasm` without ZSYM keeps it best effort |
 | `XATTR PSECT(name)` | supported for an internal label, section, DXD or class name (the class name is a zosasm extension); sets the LD/PR ADA field, `ZA3038` for a bad name. On an external symbol it is accepted and ignored |
 | `R(symbol)` of an absolute EQU | `ZA2060`; HLASM accepted a DXD and a local label in the probes, zosasm now does too |
 | forward-reference `EQU` | supported; the value resolves later (`ZA1035` if it never does) |

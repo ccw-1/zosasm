@@ -92,6 +92,7 @@ struct Class {
     PieceVec pieces;
     ClassAttr attr;
     char *part; /* PR name when PART(...) was given, else NULL */
+    int64_t base; /* class start in the section location space (0 unless START had an address) */
     int64_t len;
     uint8_t *data;
     uint32_t esd; /* ED esdid */
@@ -109,6 +110,7 @@ struct Section {
     Piece *cur;           /* location counter to resume with */
     Section *prv_owner;   /* DSECT: the section started last when it was defined (owns its pseudo register) */
     Piece *text_cur;      /* last location counter of the first class (B_TEXT): CSECT resumes there */
+    int64_t start_addr;   /* START address: the section location space starts here */
     uint32_t esd;
     int max_align;        /* strictest alignment of the data (bytes) */
     int prv;              /* needs the pseudo register class B_PRV */

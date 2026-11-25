@@ -186,6 +186,7 @@ size_t v_items(MVal v, const MVal **items) {
         split_operands(&ov, inner);
         a = xcalloc(ov.n * sizeof *a);
         for (i = 0; i < ov.n; i++) a[k++] = v_str(ov.v[i].text);
+        free(ov.v);
         *items = a;
         return k;
     }
@@ -199,6 +200,11 @@ size_t v_items(MVal v, const MVal **items) {
         *items = a;
         return 1;
     }
+}
+
+void v_items_free(MVal v, const MVal **items) {
+    if (v.t != V_LIST) free((void *)*items);
+    *items = NULL;
 }
 
 /* ---- argument helpers ------------------------------------------------------ */

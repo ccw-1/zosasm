@@ -1499,7 +1499,7 @@ static int pragma_split(const char *line, char **word, char **rest) {
     while (*p == ' ' || *p == '\t') p++;
     while (p[n] && p[n] != ' ' && p[n] != '\t') n++;
     if (!n) return 0;
-    *word = za_strlower(xstrndup(p, n));
+    *word = za_strlower_own(xstrndup(p, n));
     *rest = trim(p + n);
     return 1;
 }

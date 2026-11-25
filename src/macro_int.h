@@ -32,6 +32,7 @@ int v_parse_int(const char *s, int64_t *out);
 /* the elements when the value is a list or the text of a list; a non-list non-empty value is
  * one element, "" has none */
 size_t v_items(MVal v, const MVal **items);
+void v_items_free(MVal v, const MVal **items);
 int v_is_list(MVal v);
 
 /* ---- evaluation context -------------------------------------------------- */
@@ -40,6 +41,7 @@ typedef struct Var {
     char *name; /* lower case */
     int depth;
     MVal *slot;
+    int owns_slot;
 } Var;
 
 typedef struct Macro Macro;

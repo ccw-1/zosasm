@@ -22,8 +22,8 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
   with leak detection on.
 * `-o` and `-l` cannot overwrite the input source; `-disasm -o` cannot
   overwrite the input object; `-E` honours `-o` and rejects `-l`.
-* `hlasm2za` reports legal HLASM forms that zosasm does not accept: `EQU`
-  with 4 or 5 operands, `DC 0D` without a value, `CNOP` above 16, a
+* `hlasm2za` no longer warns about legal HLASM forms that zosasm now accepts:
+  `EQU` with 4 or 5 operands, `DC 0D` without a value, `CNOP` above 16, a
   three-operand `ORG`, an unnamed `DSECT`, a `START` address and
   `XATTR ATTRIBUTES`.
 * Removed the dead `Asm.round8` fallback; `DESIGN.md` now says that a LOCTR
@@ -36,8 +36,13 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
   `CNOP` boundaries 4 to 4096, `ORG expression,boundary,offset`, an unnamed
   `DSECT`, `EQU` program and assembler type operands, and the `DC` program
   type subfield `P(n)`, and `XATTR ATTRIBUTES(label)` (the LD/PR extended
-  attribute is the class ED id and the label's class offset).  `hlasm2za`
-  now warns only about `START` addresses.
+  attribute is the class ED id and the label's class offset).  `LTORG` may
+  assemble a pool in a DSECT (no object bytes; a CSECT reference still needs
+  addressability).  `START address` now drives the section location space,
+  the ED/TXT offsets, labels and addends.  `CNOP` above 16 keeps the
+  `0700`/`47000700` no-op fill (HLASM may use a different long NOP pattern).
+  Generic `-disasm` keeps `XATTR ATTRIBUTES` best effort; the ZSYM path is
+  byte exact.
 * `XATTR PSECT(name)` now writes the ADA field of the LD or PR with the ESD id
   of the PSECT class, as HLASM does.  A bad name on an internal symbol is
   `ZA3038`; on an external symbol the attribute is accepted and ignored.
@@ -47,6 +52,11 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
   Big arena, the DP/MP length, the instruction/debug caches and the ZSYM CRC
   table use `ZA_TLS` (`__thread` on gcc/clang).  Two threads can assemble at
   the same time; `make test-threads` checks it and CI runs it.
+
+* The one-shot CLI frees the preprocessor, its source and output lines, the
+  events, and the emitter's ZSYM temporaries.  A plain source assembles
+  LeakSanitizer clean; macro-heavy sources still leave a few hundred bytes
+  of macro-system internals to process exit.
 
 ### Tests
 
@@ -115,8 +125,9 @@ GOFF/ELF/`.dbg` objects, `make test-free-asan` and `make ebcdic-check`.
   (`CDADwarf.cpp`, `locateEmbedded`); not yet verified on z/OS.
 
 * Library memory management: `asm_free(Module *)` and `rep_free(Reporter *)`
-  release a module and a reporter. The one-shot programs still rely on process
-  exit; `make test-free-asan` runs the destructor test under ASan/UBSan.
+  release a module and a reporter; the one-shot CLI also frees its
+  preprocessor, source/output lines, events and ZSYM temporaries.
+  `make test-free-asan` runs the destructor test under ASan/UBSan.
 * New macro built-ins `sys.asm`, `sys.ver`, `sys.system_id`, `sys.clock`,
   `sys.stmt` and `sys.opt_elf|strict_registers|ascii|ebcdic`; `fill(n, v)`
   and `aread()` are documented with the other functions.

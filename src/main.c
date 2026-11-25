@@ -728,5 +728,26 @@ int main(int argc, char **argv) {
     asm_free(mod);
     rep_free(rep);
     free(obj);
+    {
+        size_t k;
+        for (k = 0; k < lines.n; k++) {
+            free((char *)lines.v[k].text);
+            free((char *)lines.v[k].orig);
+            free((int *)lines.v[k].plines);
+            free((size_t *)lines.v[k].poffs);
+        }
+        free(lines.v);
+    }
+    free(text);
+    free(outname);
+    free(dbgname);
+    free(ppo.defines.v);
+    free(ppo.include_dirs.v);
+    free(ppo.macro_dirs.v);
+    {
+        size_t k;
+        for (k = 0; k < events.n; k++) free((char *)events.v[k].text);
+    }
+    free(events.v);
     return 0;
 }

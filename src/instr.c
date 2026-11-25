@@ -1044,26 +1044,28 @@ static int addr_field(Asm *a, Stmt *st, Operand o, const Slot *sl, int slot_no, 
                 mid = n;
             } else {
                 int64_t r;
-                if (!asm_register(a, st, *mid_item, mf->flags, &r)) return 0;
+                if (!asm_register(a, st, *mid_item, mf->flags, &r)) goto fail;
                 vals[sl->mid] = 0;
-                if (!check_reg(a, asm_op_span(st, *mid_item), mf, r, vals, sl->mid)) return 0;
+                if (!check_reg(a, asm_op_span(st, *mid_item), mf, r, vals, sl->mid)) goto fail;
                 mid = r;
             }
         }
+        free(tr);
     }
     if (base_item) {
         int64_t r;
         char *tr = str_trim(base_item->text);
         if (!tr[0]) {
             rep_errorf(a->rep, "ZA2035", asm_op_span(st, *base_item), "the base register is empty");
-            return 0;
+            goto fail;
         }
         if (!asm_register(a, st, *base_item, F_GPR, &r)) return 0;
         if (r < 0 || r > 15) {
             rep_errorf(a->rep, "ZA2041", asm_op_span(st, *base_item),
                        "register %lld is out of range 0 to 15", (long long)r);
-            return 0;
+            goto fail;
         }
+        free(tr);
         base_reg = r;
         explicit_base = 1;
     }
@@ -1079,7 +1081,7 @@ static int addr_field(Asm *a, Stmt *st, Operand o, const Slot *sl, int slot_no, 
             diag_help(rep_errorf(a->rep, "ZA2036", e->sp, "displacement %lld is out of range %lld to %lld",
                                  (long long)disp, (long long)dmin, (long long)dmax),
                       "use a smaller displacement or load a base register");
-            return 0;
+            goto fail;
         }
     } else if (explicit_base) {
         diag_help(diag_label(rep_errorf(a->rep, "ZA2037", e->sp,
@@ -1088,7 +1090,7 @@ static int addr_field(Asm *a, Stmt *st, Operand o, const Slot *sl, int slot_no, 
                              "this is an address"),
                   "drop the base register to let USING supply it, or write the displacement as a "
                   "number");
-        return 0;
+        goto fail;
     } else {
         Base b;
         long at = -1;
@@ -1096,12 +1098,12 @@ static int addr_field(Asm *a, Stmt *st, Operand o, const Slot *sl, int slot_no, 
         if (value_simple(&dv, &b)) at = find_using(a, base_key(b), dv.abs, q, dmin, dmax, &disp);
         if (at < 0) {
             no_addressability(a, e, dv, q, dmin, dmax);
-            return 0;
+            goto fail;
         }
         base_reg = a->usings.v[at].reg;
         if (sl->base < 0) {
             rep_errorf(a->rep, "ZA2038", e->sp, "this operand has no base register field");
-            return 0;
+            goto fail;
         }
     }
     /* default length for SS instructions */
@@ -1124,18 +1126,18 @@ static int addr_field(Asm *a, Stmt *st, Operand o, const Slot *sl, int slot_no, 
                               "example `%s(8)`",
                               desc, ad.disp.text);
                 }
-                return 0;
+                goto fail;
             }
             if (isa_rule(in, 'E', slot_no, NULL) && (mid & 1)) {
                 rep_errorf(a->rep, "ZA2083", e->sp, "length %lld must be even", (long long)mid);
-                return 0;
+                goto fail;
             }
             if (isa_rule(in, 'D', slot_no, NULL)) { /* DP, MP: the divisor is shorter */
                 if (dp_prev_len > 0 && mid >= dp_prev_len) {
                     rep_errorf(a->rep, "ZA2084", e->sp,
                                "the second length %lld must be less than the first (%lld)",
                                (long long)mid, (long long)dp_prev_len);
-                    return 0;
+                    goto fail;
                 }
                 dp_prev_len = mid;
             }
@@ -1145,7 +1147,11 @@ static int addr_field(Asm *a, Stmt *st, Operand o, const Slot *sl, int slot_no, 
         }
     }
     if (sl->base >= 0) vals[sl->base] = base_reg;
+    addr_op_free(&ad);
     return 1;
+fail:
+    addr_op_free(&ad);
+    return 0;
 }
 
 /* The nominal value of an S or SY constant: either an address (the base

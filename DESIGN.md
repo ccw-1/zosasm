@@ -186,7 +186,8 @@ bytes + relocations. External symbols are ESD items of the module.
 
 | Source | GOFF |
 |---|---|
-| `X CSECT`, `X RSECT`, `X START` | SD `X`, ED `B_TEXT` (default class) under it, LD `X` at offset 0 |
+| `X CSECT`, `X RSECT` | SD `X`, ED `B_TEXT` (default class) under it, LD `X` at offset 0 |
+| `X START address` | the same, but the section location space starts at `address`: the ED and TXT offsets, the class bases, labels and addends include it (`ZA3056` outside 0 to 2 GB-1) |
 | `X CATTR attrs` | ED named `X` (class) in the current section; following statements go there until the next section/class/LOCTR statement |
 | `CATTR ...,PART(P)` | PR `P` in that class; text is attached to the PR |
 | `X XATTR attrs` | attributes (linkage, scope, reference, data type) of the ESD of `X` (LD/ER/PR) |
@@ -557,8 +558,9 @@ conflict).
 
 * `ZA2053` is the floating point *range* error (the Go version reused
   `ZA2051`, "empty literal").
-* `ZA3043` is "LTORG in a dummy section cannot hold literals" (the Go
-  version reused `ZA3040`, "AMODE names a section that is not defined").
+* `ZA3043` ("LTORG in a dummy section cannot hold literals") is retired: a
+  pool may be assembled in a DSECT; it has no object bytes, and a CSECT
+  reference to such a literal still needs its own addressability.
 * Attribute references (assembler operands): `L' T' S' I'` and `D' O'` are
   evaluated, `L'*` for machine instructions and for a DC/DS whose first
   operand has an explicit length or a fixed-length type. `T'`, `D'` and
@@ -1386,7 +1388,7 @@ sources are.
 
 **Binder check** (`tools/oracle_ld.sh`, `testdata/oracle/ld/`): objects made by zosasm and by HLASM are interchangeable for `ld`/`xlc`; the four mixes give the same result at run time. The same holds for plain `ld -o x obj` of `g1`, `g2`, `g3`, `dc2b`: the same IEW messages (only the expected unresolved externals). Observation: an `A(SDNAME)` stored in a second class (`CATTR`) of the same CSECT is 504 bytes off after binding with HLASM's own object as well (no class: correct); not investigated.
 
-**Object comparison** (`tools/oracle_obj.sh`, `tools/oracle_obj.py`, 2026-11-16): the HLASM object is fetched with z-scp and read by `zosasm -dump`, as is ours; the script compares the ESD tree (names path, attributes), text and RLD items structurally. It ignores the extra `B_IDRL` and an empty `B_PRV`, `C_ADATA*`, the class offsets of the HLASM location space (HLASM puts one space over all classes of a section; zosasm's offsets are class relative) and the ED offset stored in A-con and relative-immediate text. Found and fixed: CATTR defaults (`ClassAttr.cattr`), CNOP pad bytes, COM, Q/QY referent CLASS, B_PRV/DXD attributes, owner of a pseudo register (`Section.prv_owner`, `dir_dxd`), `R(local)` ER (`Symbol.r_er`), one-sided AMODE/RMODE, CSECT resume (`Section.text_cur`), LOCTR pieces without padding. The last needs an alignment that depends on the final start of the piece: `asm_assemble_all` repeats the assembly with the starts of the previous run (`Piece.hint`, a map keyed `section\x01class\x01piece`) until all starts agree modulo 4096. If they do not settle after five rounds the
+**Object comparison** (`tools/oracle_obj.sh`, `tools/oracle_obj.py`, 2026-11-16): the HLASM object is fetched with z-scp and read by `zosasm -dump`, as is ours; the script compares the ESD tree (names path, attributes), text and RLD items structurally. It ignores the extra `B_IDRL` and an empty `B_PRV`, `C_ADATA*`, the class offsets of the HLASM location space for objects without `START` (HLASM puts one space over all classes of a section; zosasm keeps the ZSYM and addend offsets class relative, but the ED/TXT offsets now carry `START`) and the ED offset stored in A-con and relative-immediate text. Found and fixed: CATTR defaults (`ClassAttr.cattr`), CNOP pad bytes, COM, Q/QY referent CLASS, B_PRV/DXD attributes, owner of a pseudo register (`Section.prv_owner`, `dir_dxd`), `R(local)` ER (`Symbol.r_er`), one-sided AMODE/RMODE, CSECT resume (`Section.text_cur`), LOCTR pieces without padding. The last needs an alignment that depends on the final start of the piece: `asm_assemble_all` repeats the assembly with the starts of the previous run (`Piece.hint`, a map keyed `section\x01class\x01piece`) until all starts agree modulo 4096. If they do not settle after five rounds the
 assembly reports `ZA9002`; there is no fallback to a different layout. A module
 without a second location counter is assembled once. Diagnostics of the discarded runs are removed with `rep_mark`/`rep_rewind`. ER rule: every `SYM_EXT` becomes an ER in `module_emit`, parent = `Symbol.ext_sect` (section current at the EXTRN/WXTRN), `-dump` shows it, `oracle_obj.py` compares it; the disassembler writes every ER back as EXTRN/WXTRN unless `R(label)` recreates it. `tools/oracle_amb.sh` is the amblist cross-check.
 

@@ -346,7 +346,8 @@ static void lit_rows(L *l, long zrec) {
     for (k = l->lit_head[zrec]; k >= 0; k = l->lit_next[k]) {
         const LitRec *r = &l->m->lits.v[k];
         const uint8_t *b = r->cls && r->cls->data && r->off + r->len <= r->cls->len ? r->cls->data + r->off : NULL;
-        obj_rows(l, r->off, 1, b, b ? r->len : 0, ' ', 0, ' ', r->key);
+        obj_rows(l, r->cls ? r->cls->base + r->off : r->off, 1, b, b ? r->len : 0, ' ', 0, ' ',
+                 r->key);
     }
 }
 
@@ -378,9 +379,9 @@ static void line_row(L *l, size_t k, int mark, int info) {
     showloc = z && z->cls && (z->len > 0 || op_is(st, "DC") || op_is(st, "DS") || op_is(st, "LTORG") ||
                               op_is(st, "CNOP")) && !op_is(st, "ORG");
     if (showloc) {
-        loc = z->off + z->pad;
+        loc = (z->cls ? z->cls->base : 0) + z->off + z->pad;
         nb = z->len - z->pad;
-        if (!no_bytes && nb > 0 && z->cls->data && z->off + z->len <= z->cls->len) bytes = z->cls->data + loc;
+        if (!no_bytes && nb > 0 && z->cls->data && z->off + z->len <= z->cls->len) bytes = z->cls->data + z->off + z->pad;
         else nb = 0;
     } else if (op_is(st, "EQU") && st->name && *st->name) {
         const Symbol *s = module_symbol(l->m, st->name);
@@ -560,7 +561,7 @@ static void table_symbols(L *l) {
         Buf b = {0};
         int col;
         if (s->kind == SYM_LABEL && s->piece) {
-            val = xasprintf("%llX", (unsigned long long)(s->piece->start + s->off));
+            val = xasprintf("%llX", (unsigned long long)(s->piece->cls->base + s->piece->start + s->off));
             sec = s->piece->cls ? sect_name(s->piece->cls->sect) : "";
         } else if (s->kind == SYM_ABS && value_is_abs(&s->val)) {
             val = xasprintf("%llX", (unsigned long long)s->val.abs);

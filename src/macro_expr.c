@@ -113,7 +113,7 @@ void ps_next(Parser *ps) {
             while (za_is_idc((unsigned char)s[q])) q++;
         }
         ps->tk = TK_ID;
-        ps->ts = za_strlower(xstrndup(s + p, q - p));
+        ps->ts = za_strlower_own(xstrndup(s + p, q - p));
         ps->p = q;
         return;
     }
@@ -233,6 +233,7 @@ static MExpr *parse_primary(Parser *ps) {
         if (!strcmp(name, "true") || !strcmp(name, "false")) {
             e = mk(X_INT);
             e->i = name[0] == 't';
+            free(name);
             return e;
         }
         if (ps->tk == '(') {
@@ -281,7 +282,8 @@ static MExpr *parse_primary(Parser *ps) {
         }
         if (!strncmp(name, "sys.", 4)) {
             e = mk(X_SYS);
-            e->s = name + 4;
+            e->s = xstrdup(name + 4);
+            free(name);
         } else if (is_builtin_name(name)) {
             e = mk(X_SYS);
             e->s = name;

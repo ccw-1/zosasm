@@ -63,9 +63,14 @@ char *zsym_render(const ZBlock *b, const ZTmpl *t) {
                 buf_putc(&out, '\'');
             }
             buf_puts(&out, q);
+            free(q);
         }
     }
-    return xstrdup(buf_cstr(&out));
+    {
+        char *r = xstrdup(buf_cstr(&out));
+        free(out.p);
+        return r;
+    }
 }
 
 /* ---- encoding -------------------------------------------------------------- */
@@ -120,7 +125,11 @@ static const Symbol *sym_at(const Module *m, const char *s, size_t i, size_t *en
         while (is_sym_char((unsigned char)s[j])) j++;
         w = xstrndup(s + i, j - i);
         *end = j;
-        return module_symbol(m, w);
+        {
+            const Symbol *r = module_symbol(m, w);
+            free(w);
+            return r;
+        }
     }
     return NULL;
 }
@@ -173,6 +182,7 @@ static void tmpl_build(const Module *m, const char *s, ZTmpl *t) {
                     item_sym(t, &text, 's', 0, sym);
                 else
                     buf_write(&text, s + i, j - i);
+                free(w);
                 i = j;
             }
         } else if (za_isdigit(c) || c == '%') {
@@ -186,6 +196,16 @@ static void tmpl_build(const Module *m, const char *s, ZTmpl *t) {
         }
     }
     item_text(t, &text);
+    free(text.p);
+}
+
+static void ztmpl_free(ZTmpl *t) {
+    size_t i;
+    for (i = 0; i < t->n; i++)
+        if (t->v[i].tag == 't') free(t->v[i].text);
+    free(t->v);
+    t->v = NULL;
+    t->n = t->cap = 0;
 }
 
 static void put_tmpl(Buf *b, const ZTmpl *t) {
@@ -240,7 +260,7 @@ static void put_sym(Buf *b, const Symbol *s) {
     case SYM_LABEL:
         if (s->piece) {
             scope = s->piece->cls->zid;
-            val = s->piece->start + s->off;
+            val = s->piece->cls->base + s->piece->start + s->off;
         }
         break;
     case SYM_ABS:
@@ -296,8 +316,10 @@ static uint8_t *reloc_mask(const Class *c) {
     int64_t k;
     for (i = 0; i < c->relocs.n; i++) {
         const Reloc *r = &c->relocs.v[i];
-        for (k = 0; k < r->len; k++)
-            if (r->off + k >= 0 && r->off + k < c->len) mask[r->off + k] = 1;
+        for (k = 0; k < r->len; k++) {
+            int64_t at = r->off - c->base + k;
+            if (at >= 0 && at < c->len) mask[at] = 1;
+        }
     }
     return mask;
 }
@@ -405,6 +427,8 @@ uint8_t *zsym_build(Module *m, size_t *len) {
             put_tmpl(&p, &label);
             put_str(&p, st->op ? st->op : "");
             put_tmpl(&p, &ops);
+            ztmpl_free(&label);
+            ztmpl_free(&ops);
         }
         zsym_put_chunk(&out, ZK_STMTS, &p);
     }
@@ -418,6 +442,15 @@ uint8_t *zsym_build(Module *m, size_t *len) {
     res = xmalloc(out.len + 1);
     memcpy(res, out.p, out.len);
     *len = out.len;
+    for (i = 0; i < scopes.n; i++) free(masks[i]);
+    free(masks);
+    for (i = 0; i < files.cap; i++) free(files.keys[i]);
+    free(files.keys);
+    free(files.vals);
+    free(filev.v);
+    free(scopes.v);
+    free(out.p);
+    free(p.p);
     return res;
 }
 

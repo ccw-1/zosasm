@@ -101,6 +101,8 @@ struct MacSys {
     long ndx, nexp, stmt;
 };
 
+static void mstmt_free(MStmt *st);
+
 Reporter *ms_rep(MacSys *ms) { return ms->rep; }
 
 /* ---- small helpers ---------------------------------------------------------------- */
@@ -293,6 +295,7 @@ static void model_fields(const char *line, int is_cont, Fields *f) {
         while (is_blank((unsigned char)m[p])) p++;
         f->rs = p;
     }
+    free(m);
 }
 
 /* does the model statement line continue on the next line (operands end in a comma)? */
@@ -392,11 +395,13 @@ size_t mac_collect(MacSys *ms, const SrcLine *lines, size_t n, size_t i, int kin
             }
             depth += code_delta(skipb(buf_cstr(&b)) + 1);
             vec_push(&out->lines, make_line(line, buf_cstr(&b)));
+            free(b.p);
             if (depth <= 0) break;
         } else if (*p == 0 || (p[0] == '/' && p[1] == '/')) {
             /* blank lines and macro comments are dropped */
         } else if (*p == '*') {
             vec_push(&out->lines, make_line(line, t));
+            free(b.p);
         } else {
             int cont = 0;
             while (model_continues(cont ? lines[k - 1].text : t, cont) && k < n) {
@@ -405,6 +410,7 @@ size_t mac_collect(MacSys *ms, const SrcLine *lines, size_t n, size_t i, int kin
                 cont = 1;
             }
             vec_push(&out->lines, make_line(line, buf_cstr(&b)));
+            free(b.p);
         }
     }
     if (depth > 0 && out->lines.n > 0)
@@ -587,11 +593,12 @@ static Tmpl tmpl_compile(Cmp *cp, const MacLine *ml, const char *line, size_t fr
                 j++;
                 while (j < to && za_is_idc((unsigned char)line[j])) j++;
             }
-            name = za_strlower(xstrndup(line + i + 1, j - i - 1));
+            name = za_strlower_own(xstrndup(line + i + 1, j - i - 1));
             x = xcalloc(sizeof *x);
             if (!strncmp(name, "sys.", 4)) {
                 x->k = X_SYS;
-                x->s = name + 4;
+                x->s = xstrdup(name + 4);
+                free(name);
             } else if (is_builtin_name(name)) {
                 x->k = X_SYS;
                 x->s = name;
@@ -627,6 +634,7 @@ static Tmpl tmpl_compile(Cmp *cp, const MacLine *ml, const char *line, size_t fr
         }
     }
     part_text(&parts, &lit);
+    free(lit.p);
     t.p = parts.v;
     t.n = (int)parts.n;
     return t;
@@ -656,6 +664,7 @@ static void cp_model(Cmp *cp, const MacLine *ml) {
     first = nl ? xstrndup(t, (size_t)(nl - t)) : xstrdup(t);
     if (*p == '*') { /* a comment line, emitted as written */
         m->comment = xstrdup(p);
+        free(first);
         emit_st(cp, &s);
         return;
     }
@@ -674,8 +683,10 @@ static void cp_model(Cmp *cp, const MacLine *ml) {
         c.ops = tmpl_compile(cp, ml, line, cf.ps, cf.pe);
         c.remark = cf.rs < strlen(line) ? trim_dup(line + cf.rs, strlen(line) - cf.rs) : NULL;
         vec_push(&conts, c);
+        free(line);
         nl = e;
     }
+    free(first);
     m->conts = conts.v;
     m->nconts = (int)conts.n;
     emit_st(cp, &s);
@@ -1315,11 +1326,14 @@ static int is_asm_op(const char *name) {
     size_t n, i;
     const char *const *dn;
     char *up = za_strupper(name);
-    if (isa_lookup(name, &n) && n > 0) return 1;
-    n = asm_directive_names(&dn);
-    for (i = 0; i < n; i++)
-        if (!strcmp(dn[i], up)) return 1;
-    return 0;
+    int r = isa_lookup(name, &n) && n > 0;
+    if (!r) {
+        n = asm_directive_names(&dn);
+        for (i = 0; i < n; i++)
+            if (!strcmp(dn[i], up)) { r = 1; break; }
+    }
+    free(up);
+    return r;
 }
 
 int mac_known_op(const char *name) { return is_asm_op(name); }
@@ -1403,7 +1417,7 @@ static Macro *parse_header(Cmp *cp, const MacLine *ml) {
     }
     n = (size_t)(q - p);
     if (*skipb(q) == ':') {
-        m->labelvar = za_strlower(xstrndup(p, n));
+        m->labelvar = za_strlower_own(xstrndup(p, n));
         if (ident_len(p) != n || is_reserved(m->labelvar)) {
             cerr(cp, ml, (int)(p - t) + 1, "ZA4100", "\"%s\" cannot name the name field variable", m->labelvar);
             return NULL;
@@ -1417,7 +1431,7 @@ static Macro *parse_header(Cmp *cp, const MacLine *ml) {
         }
         n = (size_t)(q - p);
     }
-    m->name = za_strupper(xstrndup(p, n));
+    m->name = za_strupper_own(xstrndup(p, n));
     m->def = span_make(cp->file, ml->line, (int)(p - t) + 1, (int)n);
     ps_init(&ps, cp->ms, cp->file, ml->line, (int)(q - t) + 1, q);
     if (ps.tk == '(') {
@@ -1479,6 +1493,20 @@ static Macro *parse_header(Cmp *cp, const MacLine *ml) {
     return m;
 }
 
+
+static void cmp_cleanup(Cmp *cp) {
+    size_t i;
+    for (i = 0; i < cp->blk.n; i++) {
+        free(cp->blk.v[i].ends.v);
+        free(cp->blk.v[i].brk.v);
+        free(cp->blk.v[i].cont.v);
+    }
+    free(cp->blk.v);
+    free(cp->bpar.v);
+    free(cp->labels.v);
+    free(cp->gotos.v);
+}
+
 void mac_define(MacSys *ms, const MacText *t) {
     Cmp cp;
     Macro *m;
@@ -1501,6 +1529,7 @@ void mac_define(MacSys *ms, const MacText *t) {
     if (!compile_body(&cp, t, 1)) return;
     m->code.st = cp.st.v;
     m->code.n = cp.st.n;
+    cmp_cleanup(&cp);
     {
         Macro *old = strmap_get(&ms->macros, m->name);
         if (old) {
@@ -1548,7 +1577,9 @@ Diag *ma_warn(Ctx *c, const char *code, const char *fmt, ...) {
 
 int mac_defined(const MacSys *ms, const char *op) {
     char *u = za_strupper(op);
-    return strmap_get(&ms->macros, u) != NULL;
+    int r = strmap_get(&ms->macros, u) != NULL;
+    free(u);
+    return r;
 }
 
 int ma_defined(Ctx *c, const char *lname) {
@@ -1579,15 +1610,17 @@ static MVal declare(Ctx *c, const char *name, int depth, MVal v, MVal *slot) {
     var.depth = depth;
     if (slot) {
         var.slot = slot;
+        var.owns_slot = 0;
     } else {
         var.slot = xcalloc(sizeof *var.slot);
         *var.slot = v;
+        var.owns_slot = 1;
     }
     vec_push(&c->f->vars, var);
     return v;
 }
 
-static const char *eval_tmpl(Ctx *c, const Tmpl *t) {
+static char *eval_tmpl(Ctx *c, const Tmpl *t) {
     Buf b = {0};
     int i;
     for (i = 0; i < t->n; i++) {
@@ -1596,7 +1629,11 @@ static const char *eval_tmpl(Ctx *c, const Tmpl *t) {
         else
             buf_puts(&b, t->p[i].text);
     }
-    return xstrdup(buf_cstr(&b));
+    {
+        char *r = xstrdup(buf_cstr(&b));
+        free(b.p);
+        return r;
+    }
 }
 
 static char *field_trim(const char *s) {
@@ -1617,12 +1654,19 @@ static void run_model(Ctx *c, const Model *m) {
         host_emit(c, m->comment, line);
         return;
     }
-    label = field_trim(eval_tmpl(c, &m->label));
-    op = field_trim(eval_tmpl(c, &m->op));
-    opd = field_trim(eval_tmpl(c, &m->opd));
-    if (!*op && !*label) return;
+    {
+        char *el = eval_tmpl(c, &m->label);
+        char *eo = eval_tmpl(c, &m->op);
+        char *ed = eval_tmpl(c, &m->opd);
+        label = field_trim(el);
+        op = field_trim(eo);
+        opd = field_trim(ed);
+        free(el); free(eo); free(ed);
+    }
+    if (!*op && !*label) { free(label); free(op); free(opd); return; }
     if (!*op) {
         host_emit(c, label, line);
+        free(label); free(op); free(opd);
         return;
     }
     if (*label) {
@@ -1655,8 +1699,11 @@ static void run_model(Ctx *c, const Model *m) {
             buf_putc(&b, ' ');
             buf_puts(&b, m->conts[i].remark);
         }
+        free(co);
     }
     host_emit(c, buf_cstr(&b), line);
+    free(b.p);
+    free(label); free(op); free(opd);
 }
 
 static MVal set_path(Ctx *c, MVal base, MVal *idx, int k, int nidx, MVal nv) {
@@ -1669,22 +1716,26 @@ static MVal set_path(Ctx *c, MVal base, MVal *idx, int k, int nidx, MVal nv) {
         at = idx[k].i;
     } else if (!v_parse_int(v_text(idx[k]), &at)) {
         ma_err(c, "ZA4112", "\"%s\" is not a valid index", v_text(idx[k]));
+        v_items_free(base, &it);
         return base;
     }
     if (at < 0 || at >= MAX_LIST) {
         ma_err(c, "ZA4112", "the index %lld is out of range", (long long)at);
+        v_items_free(base, &it);
         return base;
     }
     nn = (size_t)at + 1 > n ? (size_t)at + 1 : n;
     if (c->ms->list_work > 8u * 1024u * 1024u ||
         nn > 8u * 1024u * 1024u - c->ms->list_work) {
         ma_err(c, "ZA4112", "list assignment is too large (index %lld)", (long long)at);
+        v_items_free(base, &it);
         return base;
     }
     c->ms->list_work += nn;
     a = xcalloc(nn * sizeof *a);
     for (i = 0; i < nn; i++) a[i] = i < n ? it[i] : v_str("");
     a[at] = k + 1 == nidx ? nv : set_path(c, a[at], idx, k + 1, nidx, nv);
+    v_items_free(base, &it);
     return v_list(a, nn);
 }
 
@@ -1695,11 +1746,27 @@ static MVal get_path(MVal base, MVal *idx, int nidx) {
         size_t n = v_items(base, &it);
         int64_t at;
         if (!(idx[k].t == V_INT ? (at = idx[k].i, 1) : v_parse_int(v_text(idx[k]), &at)) || at < 0 ||
-            (uint64_t)at >= n)
+            (uint64_t)at >= n) {
+            v_items_free(base, &it);
             return v_str("");
-        base = it[at];
+        }
+        {
+            MVal old = base;
+            base = it[at];
+            v_items_free(old, &it);
+        }
     }
     return base;
+}
+
+
+static void frame_pop(Frame *f, int depth) {
+    while (f->vars.n > 0 && f->vars.v[f->vars.n - 1].depth > depth) {
+        Var *v = &f->vars.v[f->vars.n - 1];
+        free(v->name);
+        if (v->owns_slot) free(v->slot);
+        f->vars.n--;
+    }
 }
 
 static void run_code(MacSys *ms, const Code *code, Frame *f) {
@@ -1717,7 +1784,7 @@ static void run_code(MacSys *ms, const Code *code, Frame *f) {
             ms->aborted = 1;
             break;
         }
-        while (f->vars.n > 0 && f->vars.v[f->vars.n - 1].depth > st->depth) f->vars.n--;
+        frame_pop(f, st->depth);
         switch (st->kind) {
         case S_NOP:
             break;
@@ -1781,10 +1848,12 @@ static void run_code(MacSys *ms, const Code *code, Frame *f) {
             if (!l || !ix) break;
             n = v_items(*l, &it);
             if ((size_t)ix->i >= n) {
+                v_items_free(*l, &it);
                 pc = (size_t)st->target;
                 continue;
             }
             declare(&c, st->name, st->vdepth, it[ix->i], NULL);
+            v_items_free(*l, &it);
             ix->i++;
             break;
         }
@@ -1827,7 +1896,7 @@ static void run_code(MacSys *ms, const Code *code, Frame *f) {
         }
         pc++;
     }
-    while (f->vars.n > 0 && f->vars.v[f->vars.n - 1].depth > 0) f->vars.n--;
+    frame_pop(f, 0);
 }
 
 char *ma_aread(Ctx *c) { return c->ms->host.aread ? c->ms->host.aread(c->ms->host.user) : NULL; }
@@ -1922,7 +1991,7 @@ static int keyword_arg(const Macro *m, const char *a, const char **val) {
     char *l;
     int i;
     if (n == 0 || a[n] != '=') return -1;
-    l = za_strlower(xstrndup(a, n));
+    l = za_strlower_own(xstrndup(a, n));
     i = find_param(m, l);
     if (i >= 0 && !m->params[i].rest) {
         *val = a + n + 1;
@@ -1933,7 +2002,8 @@ static int keyword_arg(const Macro *m, const char *a, const char **val) {
 
 void mac_call(MacSys *ms, const char *op, const char *label, Span callsite, char **args,
               size_t nargs) {
-    Macro *m = strmap_get(&ms->macros, za_strupper(op));
+    char *opu = za_strupper(op);
+    Macro *m = strmap_get(&ms->macros, opu);
     Frame f;
     Ctx c;
     MVal *vals;
@@ -1941,6 +2011,7 @@ void mac_call(MacSys *ms, const char *op, const char *label, Span callsite, char
     size_t i;
     int next = 0, restp = -1, p;
     Vec(MVal) posargs = {0}, restv = {0};
+    free(opu);
     if (!m || ms->aborted) return;
     if (ms->depth == 0) {
         ms->steps = 0;
@@ -2020,6 +2091,15 @@ void mac_call(MacSys *ms, const char *op, const char *label, Span callsite, char
         declare(&c, m->params[p].name, 0, v, NULL);
     }
     run_code(ms, &m->code, &f);
+    for (i = 0; i < f.vars.n; i++) {
+        free(f.vars.v[i].name);
+        if (f.vars.v[i].owns_slot) free(f.vars.v[i].slot);
+    }
+    free(f.vars.v);
+    free(vals);
+    free(given);
+    free(posargs.v);
+    free(restv.v);
     ms->depth--;
     ms->nexp++;
     if (ms->depth == 0) ms->aborted = 0;
@@ -2039,6 +2119,7 @@ void mac_exec(MacSys *ms, const MacText *t) {
     if (!compile_body(&cp, t, 0)) return;
     code.st = cp.st.v;
     code.n = cp.st.n;
+    cmp_cleanup(&cp);
     ms->top.open = 1;
     if (ms->depth == 0) {
         ms->steps = 0;
@@ -2048,11 +2129,16 @@ void mac_exec(MacSys *ms, const MacText *t) {
     run_code(ms, &code, &ms->top);
     ms->depth--;
     if (ms->depth == 0) ms->aborted = 0;
+    for (size_t i = 0; i < code.n; i++) mstmt_free(&code.st[i]);
+    free(code.st);
 }
 
 Span mac_def_span(const MacSys *ms, const char *op) {
-    const Macro *m = strmap_get(&ms->macros, za_strupper(op));
-    return m ? m->def : span_make("", 0, 0, 0);
+    char *u = za_strupper(op);
+    const Macro *m = strmap_get(&ms->macros, u);
+    Span sp = m ? m->def : span_make("", 0, 0, 0);
+    free(u);
+    return sp;
 }
 
 void mac_load_library(MacSys *ms, const char *file, const char *text, size_t len) {
@@ -2066,6 +2152,7 @@ void mac_load_library(MacSys *ms, const char *file, const char *text, size_t len
             MacText mt;
             i += mac_collect(ms, lines.v, lines.n, i, 1, &mt);
             mac_define(ms, &mt);
+            mac_text_free(&mt);
         } else {
             i++;
         }
@@ -2073,6 +2160,108 @@ void mac_load_library(MacSys *ms, const char *file, const char *text, size_t len
 }
 
 long mac_expansions(const MacSys *ms) { return ms->nexp; }
+
+void mac_text_free(MacText *t) {
+    size_t i;
+    for (i = 0; i < t->lines.n; i++) free(t->lines.v[i].text);
+    free(t->lines.v);
+    memset(t, 0, sizeof *t);
+}
+
+
+/* ---- cleanup ---------------------------------------------------------------- */
+
+static void me_free(MExpr *e) {
+    size_t i;
+    if (!e) return;
+    free(e->s);
+    me_free(e->a);
+    me_free(e->b);
+    me_free(e->c);
+    for (i = 0; i < (size_t)e->nargs; i++) me_free(e->args[i]);
+    free(e->args);
+    free(e);
+}
+
+static void part_free(Part *p) {
+    free(p->text);
+    me_free(p->e);
+}
+
+static void tmpl_free(Tmpl *t) {
+    int i;
+    for (i = 0; i < t->n; i++) part_free(&t->p[i]);
+    free(t->p);
+    t->p = NULL;
+    t->n = 0;
+}
+
+static void model_free(Model *m) {
+    int i;
+    if (!m) return;
+    tmpl_free(&m->label);
+    tmpl_free(&m->op);
+    tmpl_free(&m->opd);
+    free(m->remark);
+    for (i = 0; i < m->nconts; i++) {
+        tmpl_free(&m->conts[i].ops);
+        free(m->conts[i].remark);
+    }
+    free(m->conts);
+    free(m->comment);
+    free(m);
+}
+
+static void mstmt_free(MStmt *st) {
+    int i;
+    free(st->name);
+    me_free(st->e);
+    for (i = 0; i < st->nidx; i++) me_free(st->idx[i]);
+    free(st->idx);
+    for (i = 0; i < st->ncases; i++) me_free(st->cases[i]);
+    free(st->cases);
+    /* hl/hi are shared with the S_LET statements that declare them */
+    model_free(st->model);
+}
+
+static void macro_def_free(Macro *m) {
+    size_t i;
+    if (!m) return;
+    free(m->name);
+    free(m->labelvar);
+    for (i = 0; i < (size_t)m->np; i++) {
+        free(m->params[i].name);
+        me_free(m->params[i].def);
+    }
+    free(m->params);
+    for (i = 0; i < m->code.n; i++) mstmt_free(&m->code.st[i]);
+    free(m->code.st);
+    free(m);
+}
+
+void mac_free(MacSys *ms) {
+    size_t i;
+    if (!ms) return;
+    for (i = 0; i < ms->macros.cap; i++) {
+        if (!ms->macros.vals[i]) continue;
+        free(ms->macros.keys[i]);
+        macro_def_free(ms->macros.vals[i]);
+    }
+    free(ms->macros.keys);
+    free(ms->macros.vals);
+    for (i = 0; i < ms->globals.cap; i++) {
+        free(ms->globals.keys[i]);
+        free(ms->globals.vals[i]);
+    }
+    free(ms->globals.keys);
+    free(ms->globals.vals);
+    for (i = 0; i < ms->top.vars.n; i++) {
+        free(ms->top.vars.v[i].name);
+        if (ms->top.vars.v[i].owns_slot) free(ms->top.vars.v[i].slot);
+    }
+    free(ms->top.vars.v);
+    free(ms);
+}
 
 MacSys *mac_new(Reporter *rep, const MacHost *host, long step_limit, int elf) {
     MacSys *ms = xcalloc(sizeof *ms);
