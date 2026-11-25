@@ -1356,7 +1356,8 @@ HELLO    CSECT
 ```
 
 Generic conversion writes `XATTR PSECT(classname)` from the ADA field of an LD
-or PR. The ZSYM path keeps the original XATTR statement. After
+or PR. It does not rebuild `XATTR ATTRIBUTES` (the extended-attribute id and
+offset); the ZSYM path keeps the original statement. After
 converting, zosasm assembles the text again and compares it with the object;
 if the source does not give the same object, it says so (and with ZSYM it
 first falls back to the generic text). A section whose bytes were
