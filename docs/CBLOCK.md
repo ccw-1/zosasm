@@ -92,8 +92,36 @@ needed. `&*p` is just `p`. A bound `cin`/`cout` register has no storage, so
 
 A named pointer is opaque. It can be assigned, compared, passed to the
 memory intrinsics and adjusted by a byte count, but it cannot be
-dereferenced with `*p` or `p[i]` and has no `p->field` operator. Use
-`__offsetof(PARM, field)` with a byte pointer for manual field access.
+dereferenced with `*p` or `p[i]` and has no `p->field` operator.
+
+### Addressing a DSECT element
+
+CBLOCK has no `p->field` operator, so it does not know the layout of a
+DSECT. Compute the address of a field yourself: cast the named pointer to a
+byte pointer, add `__offsetof(DSECT, field)`, and cast the result to the
+field's type when you want a typed load or store.
+
+```c
+PARM     DSECT
+P_FLAGS  DS    F        /* offset 0 */
+P_NAME   DS    CL4      /* offset 4 */
+P_SIZE   DS    D        /* offset 8 */
+
+PARM *parm;             /* opaque: cannot write parm->P_FLAGS */
+uint8_t *base;
+uint32_t *pf;
+
+base = (uint8_t *)parm;                              /* opaque -> byte pointer */
+pf = (uint32_t *)(base + __offsetof(PARM, P_FLAGS)); /* &parm->P_FLAGS */
+*pf = 12;                                            /* write the fullword   */
+base[__offsetof(PARM, P_NAME)] = 88;                 /* &parm->P_NAME[0]     */
+```
+
+The base must be a byte pointer (`uint8_t *`, `char *` or `void *`). Its
+`+` count is in bytes and it can be indexed byte by byte. A typed pointer
+such as `uint32_t *` counts in elements, so `base + __offsetof(...)` and
+then a cast is safer than mixing the two. `__offsetof` returns an integer,
+not a typed field, and the DSECT must be visible to the assembler.
 
 Statements:
 

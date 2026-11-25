@@ -69,6 +69,26 @@ CBLOCK   CSECT
     size = (int32_t)__sizeof(PARM) + (int32_t)__offsetof(PARM, P_NAME) + *ip;
 #pragma cend
 
+* Address of a DSECT element: byte pointer plus __offsetof.
+* A named pointer has no p->field, so compute the field address by hand.
+         LARL  %r2,PARM_AREA
+         LARL  %r10,TEMP5
+#pragma cblock dsect
+#pragma cin PARM *parm=%r2
+#pragma cout int32_t flags=%r4
+#pragma cscratch %r0, %r1, %r5, %r6
+#pragma ctemp %r10, 128, down
+#pragma cbegin
+    uint8_t *base;
+    uint32_t *pf;
+
+    base = (uint8_t *)parm;                              /* opaque -> byte pointer */
+    pf = (uint32_t *)(base + __offsetof(PARM, P_FLAGS)); /* &parm->P_FLAGS */
+    *pf = 12;                                            /* write P_FLAGS */
+    base[__offsetof(PARM, P_NAME)] = 88;                 /* &parm->P_NAME[0] */
+    flags = (int32_t)*pf;                                /* 12 */
+#pragma cend
+
 * Pointer arithmetic and every memory/scan intrinsic.
          LARL  %r2,SRC
          LARL  %r3,DST
@@ -94,9 +114,12 @@ SRC      DC    C'ABCDE',X'00'
          DS    0H
 DST      DS    CL16
          DS    0D
+PARM_AREA DS   CL16
+         DS    0D
 TEMP1    DS    128D
 TEMP2    DS    128D
 TEMP3    DS    128D
 TEMP4    DS    128D
+TEMP5    DS    128D
          LTORG
          END   CBLOCK
