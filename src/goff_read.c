@@ -490,9 +490,9 @@ void goff_dump_readable(const GoffModule *m, FILE *w, int insn) {
         fprintf(w, "  %-5s %4u  parent=%-4u off=0x%08x len=%-8d %s\n",
                 esd_kind(e->type), (unsigned)e->id, (unsigned)e->parent,
                 (unsigned)e->offset, (int)(int32_t)e->length, nm);
-        fprintf(w, "         amode=%d rmode=%d align=%d exec=%d scope=%d ns=%d\n",
+        fprintf(w, "         amode=%d rmode=%d align=%d exec=%d scope=%d ns=%d renameable=%s\n",
                 e->attr.amode, e->attr.rmode, e->attr.alignment, e->attr.executable,
-                e->attr.scope, e->name_space);
+                e->attr.scope, e->name_space, e->renameable ? "yes" : "no");
         free(nm);
     }
     fprintf(w, "\nText\n");

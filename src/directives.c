@@ -450,7 +450,7 @@ void dir_cattr(Asm *a, Stmt *st) {
     a->sect->cur = a->cur;
 }
 
-static const char *const xattr_keys[] = {"LINKAGE", "SCOPE", "REFERENCE", "PSECT", "ATTRIBUTES"};
+static const char *const xattr_keys[] = {"LINKAGE", "SCOPE", "REFERENCE", "PSECT", "ATTRIBUTES", "RENAME"};
 
 void dir_xattr(Asm *a, Stmt *st) {
     OperandVec ops = {0};
@@ -472,6 +472,7 @@ void dir_xattr(Asm *a, Stmt *st) {
     x->attr.linkage = -1;
     x->attr.scope = -1;
     x->attr.indirect = -1;
+    x->attr.renameable = -1;
     x->attr.def = stmt_span(st);
     parse_attrs(a, st, &ops, &ats);
     for (i = 0; i < ats.n; i++) {
@@ -547,6 +548,21 @@ void dir_xattr(Asm *a, Stmt *st) {
         } else if (!strcmp(at->key, "ATTRIBUTES")) {
             if (want_args(a, st, at, 1, "ATTRIBUTES(label)"))
                 x->attr.attributes = xstrdup(at->args.v[0]);
+        } else if (!strcmp(at->key, "RENAME")) {
+            char *v;
+            if (!want_args(a, st, at, 1, "RENAME(YES|NO)")) continue;
+            v = za_strupper(at->args.v[0]);
+            if (!strcmp(v, "YES"))
+                x->attr.renameable = 1;
+            else if (!strcmp(v, "NO"))
+                x->attr.renameable = 0;
+            else {
+                diag_help(rep_errorf(a->rep, "ZA3044", at->asp.v[0],
+                                     "invalid RENAME \"%s\"", at->args.v[0]),
+                          "use RENAME(YES) or RENAME(NO)");
+                st->bad = 1;
+            }
+            free(v);
         } else {
             bad_attr(a, st, at, xattr_keys, sizeof xattr_keys / sizeof xattr_keys[0]);
         }
