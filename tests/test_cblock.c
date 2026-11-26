@@ -217,6 +217,17 @@ int main(void) {
            "#pragma cend\n"
            " END\n",
            "", "CLC 0(1,%r1),0(%r5)");
+    expect("strcpy compile",
+           "#pragma cblock cp\n"
+           "#pragma cin char *d=%r2, char *s=%r3\n"
+           "#pragma cout char *r=%r4\n"
+           "#pragma cscratch %r0, %r1, %r5\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "r = __strcpy(d, s);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "MVC 0(1,");
     expect("bad string alignment",
            "#pragma cblock lit\n"
            "#pragma ctemp %r12, 128, down\n"

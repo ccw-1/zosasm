@@ -81,6 +81,16 @@ SB       DC    C'ABC'
 SSTART   DS    0H" \
     '#pragma cin char *a=%r2, char *b=%r3' '#pragma cout int32_t c=%r4' \
     'c = __strcmp(a,b);' 0
+run_case strcpy "         LGR   %r2,%r15
+         AGHI  %r2,-256
+         LARL  %r3,CS
+         BRCL  15,CSTART
+         DS    0H
+CS       DC    C'HELLO'
+         DS    0H
+CSTART   DS    0H" \
+    '#pragma cin char *d=%r2, char *s=%r3' '#pragma cout int32_t c=%r4' \
+    'char *r = __strcpy(d,s); c = __strlen(r) + d[0];' 77
 run_case memcmpcond "         LARL  %r2,MA
          LARL  %r3,MB
          BRCL  15,MSTART

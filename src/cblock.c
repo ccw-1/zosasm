@@ -674,10 +674,13 @@ static CBExpr *parse_primary(Parser *p) {
             }
         }
         if (!strcmp(name, "__strlen") || !strcmp(name, "__memchr") ||
-            !strcmp(name, "__memcmp") || !strcmp(name, "__strcmp")) {
+            !strcmp(name, "__memcmp") || !strcmp(name, "__strcmp") ||
+            !strcmp(name, "__strcpy")) {
             CBExpr *e = mk_expr(E_CALL, type_of(64, 1), line, col);
-            int want = !strcmp(name, "__strlen") ? 1 : !strcmp(name, "__strcmp") ? 2 : 3;
+            int want = !strcmp(name, "__strlen") ? 1 :
+                       (!strcmp(name, "__strcmp") || !strcmp(name, "__strcpy")) ? 2 : 3;
             int is_memchr = !strcmp(name, "__memchr");
+            int is_strcpy = !strcmp(name, "__strcpy");
             e->name = xstrdup(name);
             free(name);
             lex_next(l);
@@ -721,12 +724,16 @@ static CBExpr *parse_primary(Parser *p) {
                 cb_error(p->b, line, col, "ZA5003", "%s needs pointer arguments", e->name);
                 p->err = 1;
             }
+            if (is_strcpy && e->b && !e->b->type.ptr) {
+                cb_error(p->b, line, col, "ZA5003", "__strcpy needs two pointers");
+                p->err = 1;
+            }
             if (want == 3 && e->c && e->c->type.ptr) {
                 cb_error(p->b, line, col, "ZA5003", "%s needs an integer length", e->name);
                 p->err = 1;
             }
             if (!strcmp(e->name, "__strlen")) e->type = type_of(64, 1);
-            else if (is_memchr) e->type = type_ptr();
+            else if (is_memchr || is_strcpy) e->type = type_ptr();
             else e->type = type_of(32, 0);
             return e;
         }
@@ -2299,6 +2306,34 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             res = alloc_slot(cg);
             store_slot(b, e->line, res, type_of(64, 0), 0);
             *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__strcpy")) {
+            int ra, rb, saved;
+            char *top, *end;
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+            ra = pick_addr(b, 0, 0);
+            rb = pick_addr(b, ra, 0);
+            if (ra < 0 || rb < 0) {
+                cb_error(b, e->line, e->col, "ZA5005", "__strcpy needs two nonzero scratch registers");
+                return 0;
+            }
+            load_slot(b, e->line, sa, type_ptr(), ra);
+            load_slot(b, e->line, sp, type_ptr(), rb);
+            saved = alloc_slot(cg);
+            store_slot(b, e->line, saved, type_ptr(), ra);
+            top = new_label(b); end = new_label(b);
+            emit_label(b, e->line, top);
+            asm_line(b, e->line, "MVC 0(1,%%r%d),0(%%r%d)", ra, rb);
+            asm_line(b, e->line, "LLGC %%r0,0(%%r%d)", rb);
+            asm_line(b, e->line, "LTR %%r0,%%r0");
+            asm_line(b, e->line, "BRCL 8,%s", end);
+            asm_line(b, e->line, "AGHI %%r%d,1", ra);
+            asm_line(b, e->line, "AGHI %%r%d,1", rb);
+            asm_line(b, e->line, "BRCL 15,%s", top);
+            emit_label(b, e->line, end);
+            *slotp = saved;
+            free(top); free(end);
             return 1;
         }
         if (!strcmp(e->name, "__memcmp")) {

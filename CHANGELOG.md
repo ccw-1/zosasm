@@ -4,6 +4,13 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 `vX.Y.Z`. Things not compared with IBM's tools are marked in the User's Guide
 (section 14).
 
+## 0.7.0 - 2026-11-25
+
+* CBLOCK `__strcpy(dst, src)` copies through the zero byte and returns the
+  original destination pointer.
+* `__memcmp` and `__strcmp` used directly as `if`/`while`/`for` conditions
+  branch on the `CLC` condition code without creating a -1/0/1 temporary.
+
 ## 0.6.0 - 2026-11-25
 
 * CBLOCK `__memcmp(a, b, len)` and `__strcmp(a, b)` return -1, 0 or 1,
