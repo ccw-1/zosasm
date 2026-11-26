@@ -1298,6 +1298,11 @@ static CBExpr *parse_postfix(Parser *p) {
             p->err = 1;
             return e;
         }
+        if (e->type.flt) {
+            cb_error(p->b, e->line, e->col, "ZA5003", "++/-- on a floating-point value is not implemented");
+            p->err = 1;
+            return e;
+        }
         n = mk_expr(E_INC, e->type, e->line, e->col);
         n->op = p->l.tok.op;
         n->var = e->var;
@@ -1401,6 +1406,11 @@ static CBExpr *parse_unary(Parser *p) {
         if (!a) return NULL;
         if (a->kind != E_VAR) {
             cb_error(p->b, a->line, a->col, "ZA5003", "++/-- needs a variable");
+            p->err = 1;
+            return a;
+        }
+        if (a->type.flt) {
+            cb_error(p->b, a->line, a->col, "ZA5003", "++/-- on a floating-point value is not implemented");
             p->err = 1;
             return a;
         }
@@ -2507,6 +2517,99 @@ static int load_fp_expr(Cg *cg, CBExpr *e, int fpr) {
     return 1;
 }
 
+/* Load an already evaluated value from a temporary slot into an FPR,
+ * converting integer values to the requested floating-point width. */
+static void load_fp_from_slot(CBlock *b, int line, int slot, CType src, int fpr, int bits) {
+    if (src.flt) {
+        load_fp_slot(b, line, slot, src, fpr);
+        if (src.bits != bits)
+            asm_line(b, line, bits == 64 ? "LDEBR %%f%d,%%f%d" : "LEDBR %%f%d,%%f%d", fpr, fpr);
+        return;
+    }
+    load_slot(b, line, slot, src, 0);
+    if (bits == 64) {
+        if (src.unsig) asm_line(b, line, "CELGBR %%f%d,0,%%r0,0", fpr);
+        else asm_line(b, line, "CDGBR %%f%d,%%r0", fpr);
+    } else {
+        if (src.unsig) asm_line(b, line, "CELFBR %%f%d,0,%%r0,0", fpr);
+        else asm_line(b, line, "CEFBR %%f%d,%%r0", fpr);
+    }
+}
+
+static int emit_value_test(Cg *cg, CBExpr *e) {
+    CBlock *b = cg->b;
+    int slot, fp, zero;
+    if (!e->type.flt) {
+        if (!eval(cg, e, &slot)) return 0;
+        load_slot(b, e->line, slot, e->type, 0);
+        emit_test(b, e->line, e->type);
+        return 1;
+    }
+    fp = pick_fpr(b, -1, -1);
+    zero = pick_fpr(b, fp, -1);
+    if (fp < 0 || zero < 0) {
+        cb_error(b, e->line, e->col, "ZA5005", "a floating condition needs two cscratch FPRs");
+        return 0;
+    }
+    if (!eval(cg, e, &slot)) return 0;
+    load_fp_slot(b, e->line, slot, e->type, fp);
+    asm_line(b, e->line, e->type.bits == 64 ? "LZDR %%f%d" : "LZER %%f%d", zero);
+    asm_line(b, e->line, e->type.bits == 64 ? "CDBR %%f%d,%%f%d" : "CEBR %%f%d,%%f%d", fp, zero);
+    return 1;
+}
+
+static int eval_float_bin(Cg *cg, CBExpr *e, int *slotp) {
+    CBlock *b = cg->b;
+    CType ot = type_usual(e->a->type, e->b->type);
+    int fa, fb, sa, sb, res;
+    if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sb)) return 0;
+    fa = pick_fpr(b, -1, -1);
+    fb = pick_fpr(b, fa, -1);
+    if (fa < 0 || fb < 0) {
+        cb_error(b, e->line, e->col, "ZA5005", "a floating expression needs two cscratch FPRs");
+        return 0;
+    }
+    load_fp_from_slot(b, e->line, sa, e->a->type, fa, ot.bits);
+    load_fp_from_slot(b, e->line, sb, e->b->type, fb, ot.bits);
+    if (e->op == OP_EQ || e->op == OP_NE || e->op == '<' || e->op == '>' ||
+        e->op == OP_LE || e->op == OP_GE) {
+        const char *aval = xasprintf("$CB%d", ++b->label_no);
+        int mask;
+        asm_line(b, e->line, ot.bits == 64 ? "CDBR %%f%d,%%f%d" : "CEBR %%f%d,%%f%d", fa, fb);
+        switch (e->op) {
+        case '<': mask = 4; break;
+        case '>': mask = 2; break;
+        case OP_LE: mask = 12; break;
+        case OP_GE: mask = 10; break;
+        case OP_EQ: mask = 8; break;
+        default: mask = 14; break;
+        }
+        asm_line(b, e->line, "LHI %%r0,1");
+        asm_line(b, e->line, "BRCL %d,%s", mask, aval);
+        asm_line(b, e->line, "LHI %%r0,0");
+        emit_label(b, e->line, aval);
+        free((char *)aval);
+        res = alloc_slot(cg);
+        store_slot(b, e->line, res, type_of(32, 0), 0);
+        *slotp = res;
+        return 1;
+    }
+    switch (e->op) {
+    case '+': asm_line(b, e->line, ot.bits == 64 ? "ADBR %%f%d,%%f%d" : "AEBR %%f%d,%%f%d", fa, fb); break;
+    case '-': asm_line(b, e->line, ot.bits == 64 ? "SDBR %%f%d,%%f%d" : "SEBR %%f%d,%%f%d", fa, fb); break;
+    case '*': asm_line(b, e->line, ot.bits == 64 ? "MDBR %%f%d,%%f%d" : "MEBR %%f%d,%%f%d", fa, fb); break;
+    case '/': asm_line(b, e->line, ot.bits == 64 ? "DDBR %%f%d,%%f%d" : "DEBR %%f%d,%%f%d", fa, fb); break;
+    default:
+        cb_error(b, e->line, e->col, "ZA5002",
+                 "floating-point operator is not implemented (only + - * / and comparisons)");
+        return 0;
+    }
+    res = alloc_slot(cg);
+    store_fp_slot(b, e->line, res, ot, fa);
+    *slotp = res;
+    return 1;
+}
+
 static int eval_bin(Cg *cg, CBExpr *e, int *slotp) {
     CBlock *b = cg->b;
     int s0, s1, res;
@@ -2515,13 +2618,9 @@ static int eval_bin(Cg *cg, CBExpr *e, int *slotp) {
     if (e->op == OP_LAND || e->op == OP_LOR) {
         char *lab = new_label(b), *end = new_label(b);
         res = alloc_slot(cg);
-        if (!eval(cg, e->a, &s0)) { free(lab); free(end); return 0; }
-        load_slot(b, e->line, s0, e->a->type, 0);
-        emit_test(b, e->line, e->a->type);
+        if (!emit_value_test(cg, e->a)) { free(lab); free(end); return 0; }
         asm_line(b, e->line, "BRCL %d,%s", e->op == OP_LAND ? 8 : 7, lab);
-        if (!eval(cg, e->b, &s1)) { free(lab); free(end); return 0; }
-        load_slot(b, e->line, s1, e->b->type, 0);
-        emit_test(b, e->line, e->b->type);
+        if (!emit_value_test(cg, e->b)) { free(lab); free(end); return 0; }
         asm_line(b, e->line, "BRCL 8,%s", lab);
         asm_line(b, e->line, "LHI %%r0,1");
         asm_line(b, e->line, "BRCL 15,%s", end);
@@ -2533,6 +2632,7 @@ static int eval_bin(Cg *cg, CBExpr *e, int *slotp) {
         *slotp = res;
         return 1;
     }
+    if (ot.flt && !e->a->type.ptr && !e->b->type.ptr) return eval_float_bin(cg, e, slotp);
     if (!eval(cg, e->a, &s0) || !eval(cg, e->b, &s1)) return 0;
     if (e->op == OP_EQ || e->op == OP_NE || e->op == '<' || e->op == '>' || e->op == OP_LE ||
         e->op == OP_GE) {
@@ -2694,9 +2794,10 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             } else {
                 if (!eval(cg, e->a, &s0)) return 0;
                 load_slot(b, e->line, s0, e->a->type, 0);
-                if (e->a->type.bits == 64) {
+                if (e->type.bits == 64 || e->a->type.bits == 64) {
                     if (e->a->type.unsig) asm_line(b, e->line, "CELGBR %%f%d,0,%%r0,0", fp);
                     else asm_line(b, e->line, "CDGBR %%f%d,%%r0", fp);
+                    if (e->type.bits == 32) asm_line(b, e->line, "LEDBR %%f%d,%%f%d", fp, fp);
                 } else {
                     if (e->a->type.unsig) asm_line(b, e->line, "CELFBR %%f%d,0,%%r0,0", fp);
                     else asm_line(b, e->line, "CEFBR %%f%d,%%r0", fp);
@@ -2716,16 +2817,16 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             if (!load_fp_expr(cg, e->a, fp)) return 0;
             if (e->type.bits == 64) {
                 if (e->type.unsig)
-                    asm_line(b, e->line, e->a->type.bits == 64 ? "CLGDBR %%r0,0,%%f%d,0"
-                                                              : "CLGEBR %%r0,0,%%f%d,0", fp);
-                else asm_line(b, e->line, e->a->type.bits == 64 ? "CGDBR %%r0,0,%%f%d"
-                                                               : "CGEBR %%r0,0,%%f%d", fp);
+                    asm_line(b, e->line, e->a->type.bits == 64 ? "CLGDBR %%r0,5,%%f%d,0"
+                                                              : "CLGEBR %%r0,5,%%f%d,0", fp);
+                else asm_line(b, e->line, e->a->type.bits == 64 ? "CGDBR %%r0,5,%%f%d"
+                                                               : "CGEBR %%r0,5,%%f%d", fp);
             } else {
                 if (e->type.unsig)
-                    asm_line(b, e->line, e->a->type.bits == 64 ? "CLFDBR %%r0,0,%%f%d,0"
-                                                              : "CLFEBR %%r0,0,%%f%d,0", fp);
-                else asm_line(b, e->line, e->a->type.bits == 64 ? "CFDBR %%r0,0,%%f%d"
-                                                               : "CFEBR %%r0,0,%%f%d", fp);
+                    asm_line(b, e->line, e->a->type.bits == 64 ? "CLFDBR %%r0,5,%%f%d,0"
+                                                              : "CLFEBR %%r0,5,%%f%d,0", fp);
+                else asm_line(b, e->line, e->a->type.bits == 64 ? "CFDBR %%r0,5,%%f%d"
+                                                               : "CFEBR %%r0,5,%%f%d", fp);
             }
             res = alloc_slot(cg);
             store_slot(b, e->line, res, e->type, 0);
@@ -2741,6 +2842,48 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
         *slotp = res;
         return 1;
     case E_UN:
+        if (e->a->type.flt) {
+            int fp = pick_fpr(b, -1, -1);
+            if (fp < 0) {
+                cb_error(b, e->line, e->col, "ZA5005", "a floating unary operator needs a cscratch FPR");
+                return 0;
+            }
+            if (e->op == '!') {
+                int zero = pick_fpr(b, fp, -1);
+                const char *lab = xasprintf("$CB%d", ++b->label_no);
+                if (zero < 0) {
+                    free((char *)lab);
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "a floating condition needs two cscratch FPRs");
+                    return 0;
+                }
+                if (!eval(cg, e->a, &s0)) { free((char *)lab); return 0; }
+                load_fp_slot(b, e->line, s0, e->a->type, fp);
+                asm_line(b, e->line, e->a->type.bits == 64 ? "LZDR %%f%d" : "LZER %%f%d", zero);
+                asm_line(b, e->line, e->a->type.bits == 64 ? "CDBR %%f%d,%%f%d" : "CEBR %%f%d,%%f%d", fp, zero);
+                asm_line(b, e->line, "LHI %%r0,1");
+                asm_line(b, e->line, "BRCL 8,%s", lab);
+                asm_line(b, e->line, "LHI %%r0,0");
+                emit_label(b, e->line, lab);
+                free((char *)lab);
+                res = alloc_slot(cg);
+                store_slot(b, e->line, res, type_of(32, 0), 0);
+                *slotp = res;
+                return 1;
+            }
+            if (e->op == '-' || e->op == '+') {
+                if (!eval(cg, e->a, &s0)) return 0;
+                load_fp_slot(b, e->line, s0, e->a->type, fp);
+                if (e->op == '-')
+                    asm_line(b, e->line, e->a->type.bits == 64 ? "LCDBR %%f%d,%%f%d" : "LCEBR %%f%d,%%f%d", fp, fp);
+                res = alloc_slot(cg);
+                store_fp_slot(b, e->line, res, e->type, fp);
+                *slotp = res;
+                return 1;
+            }
+            cb_error(b, e->line, e->col, "ZA5002", "floating unary operator is not implemented");
+            return 0;
+        }
         if (!eval(cg, e->a, &s0)) return 0;
         load_slot(b, e->line, s0, e->a->type, 0);
         if (e->op == '!') {
@@ -3399,15 +3542,18 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
                 return 1;
             }
             /* three-operand multiply-add/subtract */
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sb) || !eval(cg, e->c, &sc))
+                return 0;
             fa = pick_fpr(b, -1, -1);
             fb = pick_fpr(b, fa, -1);
             fc = pick_fpr(b, fa, fb);
-            if (fa < 0 || fb < 0 || fc < 0 ||
-                !load_fp_expr(cg, e->a, fa) || !load_fp_expr(cg, e->b, fb) ||
-                !load_fp_expr(cg, e->c, fc)) {
+            if (fa < 0 || fb < 0 || fc < 0) {
                 cb_error(b, e->line, e->col, "ZA5005", "%s needs three cscratch FPRs", e->name);
                 return 0;
             }
+            load_fp_from_slot(b, e->line, sa, e->a->type, fa, e->type.bits);
+            load_fp_from_slot(b, e->line, sb, e->b->type, fb, e->type.bits);
+            load_fp_from_slot(b, e->line, sc, e->c->type, fc, e->type.bits);
             asm_line(b, e->line, !strcmp(e->name, "__maebr") || !strcmp(e->name, "__fmadds")
                                    ? "MAEBR %%f%d,%%f%d,%%f%d" :
                  !strcmp(e->name, "__msebr") || !strcmp(e->name, "__fmsubs")
@@ -3743,6 +3889,20 @@ static int emit_cond_zero(Cg *cg, CBExpr *e, const char *label) {
             if (!strcmp(call->name, "__memcmp")) return emit_memcmp_cond(cg, call, op, label);
             if (!strcmp(call->name, "__strcmp")) return emit_strcmp_cond(cg, call, op, label);
         }
+    }
+    if (e->type.flt) {
+        int fp = pick_fpr(b, -1, -1), zero = -1;
+        if (fp < 0 || (zero = pick_fpr(b, fp, -1)) < 0) {
+            cb_error(b, e->line, e->col, "ZA5005",
+                     "a floating condition needs two cscratch FPRs");
+            return 0;
+        }
+        if (!eval(cg, e, &s)) return 0;
+        load_fp_slot(b, e->line, s, e->type, fp);
+        asm_line(b, e->line, e->type.bits == 64 ? "LZDR %%f%d" : "LZER %%f%d", zero);
+        asm_line(b, e->line, e->type.bits == 64 ? "CDBR %%f%d,%%f%d" : "CEBR %%f%d,%%f%d", fp, zero);
+        asm_line(b, e->line, "BRCL 8,%s", label);
+        return 1;
     }
     if (!eval(cg, e, &s)) return 0;
     load_slot(b, e->line, s, e->type, 0);

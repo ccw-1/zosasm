@@ -26,7 +26,7 @@ $setup
 #pragma cblock $name
 $cin
 $cout
-#pragma cscratch %r0, %r1, %r5, %r6
+#pragma cscratch %r0, %r1, %r5, %r6, %f0, %f2, %f4, %f6
 #pragma ctemp %r12, 128, down
 #pragma cbegin
 $body
@@ -110,6 +110,30 @@ CS       DC    C'HELLO'
 CSTART   DS    0H" \
     '#pragma cin char *d=%r2, char *s=%r3' '#pragma cout int32_t c=%r4' \
     'char *r = __strcpy(d,s); c = __strlen(r) + d[0];' 77
+run_case floatarith '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'c = (int32_t)(1.5 + 2.25);' 3
+run_case floatcmp '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'c = (1.5 < 2.25) + (2.5 >= 2.5) * 2;' 3
+run_case floatmixed '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'c = (int32_t)(1 + 2.5) + (int32_t)(5.0 / 2.0) * 10;' 23
+run_case floatcond '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'if (0.0) c = 1; else c = 2;' 2
+run_case floatand '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'c = (1.5 && 0.0) ? 1 : 2;' 2
+run_case floatsqrt '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'c = (int32_t)__sqdbr(4.0);' 2
+run_case floatassign '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'float x = 1.5f; x += 2.0f; c = (int32_t)x;' 3
+run_case floatunary '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'c = (int32_t)(-1.5) + (!0.0) * 10;' 9
 run_case memcmpimpossible "         LARL  %r2,MA
          LARL  %r3,MB
          BRCL  15,MSTART
@@ -265,7 +289,7 @@ $setup
 #pragma cblock $name
 $cin
 $cout
-#pragma cscratch %r0, %r1, %r5, %r6
+#pragma cscratch %r0, %r1, %r5, %r6, %f0, %f2, %f4, %f6
 #pragma ctemp %r12, 128, down
 #pragma cbegin
 $body

@@ -84,8 +84,10 @@ Types:
   raw 4-byte or 8-byte value in a temporary slot; use a `%fN` binding to
   read or write it without a conversion. Floating-point literals with an
   optional `f` suffix initialize `float` and `double` variables. Casts
-  convert between integer, `float` and `double` values. Floating-point
-  arithmetic and comparisons are not implemented yet.
+  convert between integer, `float` and `double` values. Arithmetic
+  (`+ - * /`), comparisons and conditions work on floating-point values;
+  mixed integer and floating-point operands are converted to the floating
+  type. The `%` operator is not available for floating point.
 * `uint8_t *`, `void *` and `char *` byte pointers
 * 16-bit scalars promote to 32 bits in expressions; loads use `LGH`/`LLGH`
   and stores use `STH`
@@ -362,8 +364,15 @@ convert-to-fixed forms store the integer through the first pointer and
 return the condition code. `__efpc` returns the floating-point control
 register; `__sfpc` writes it.
 
-Long double, hexadecimal floating point, test-data-class, divide-to-integer
-and the `-qfloat=hex` forms are not implemented.
+Floating-point arithmetic keeps the IEEE binary result in the variable's
+type. `float` and `double` values can be compared with `<`, `>`, `<=`, `>=`,
+`==` and `!=`; the result is an `int32_t`. Unary `+`, unary `-` and `!` work,
+and floating-point values can be used in `if`, `while`, `for`, `&&` and
+`||`. Compound assignments such as `f += 2` work. A conversion to an integer
+truncates toward zero. `++`/`--`, `%` and bit operations on floating-point
+values are not implemented. Long double, hexadecimal floating point,
+test-data-class, divide-to-integer and the `-qfloat=hex` forms are not
+implemented.
 
 The length arguments must currently be compile-time constants in the
 architectural 0..15 length-field range. Runtime lengths need the same

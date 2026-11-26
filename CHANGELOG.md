@@ -29,9 +29,11 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
   `__msdbr`, `__fmadd`, `__fmadds`, `__fmsub`, `__fmsubs`, `__lpebr`,
   `__lpdbr`, `__lnebr`, `__lndbr`, `__cfebr`, `__cfdbr`, `__cgebr`,
   `__cgdbr`, `__efpc` and `__sfpc`. Floating literals use `1.5` for
-  `double` and `1.5f` for `float`. Floating arithmetic and comparisons are
-  not implemented yet; long double and hexadecimal float forms are
-  deferred.
+  `double` and `1.5f` for `float`; `+ - * /`, comparisons, unary operators
+  and conditions work on `float` and `double`, with integer operands
+  converted to the floating type. Compound assignments work.
+  Float-to-integer casts truncate toward zero. `++`/`--`, `%` and bit
+  operations on floating-point values are not implemented. Long double and hexadecimal float forms are deferred.
 * CBLOCK 16-bit `int16_t`/`uint16_t` scalars and pointers, with `LGH`/`LLGH`
   loads, `STH` stores, integer promotion, typed pointer arithmetic, and
   `__lrvh`/`__strvh`.

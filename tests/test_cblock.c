@@ -210,6 +210,19 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "LEDBR %f8,%f8");
+    expect("floating arithmetic and comparison",
+           "#pragma cblock a\n"
+           "#pragma cout double c=%f4, int32_t r=%r3\n"
+           "#pragma cscratch %r2, %r5, %r6, %f8, %f10\n"
+           "#pragma ctemp %r12, 256, down\n"
+           "#pragma cbegin\n"
+           "c = 1.5 + 2.25;\n"
+           "c = c * 2.0;\n"
+           "r = (c < 7.5) + (c >= 7.5) * 2;\n"
+           "if (c != 0.0) r = r + 4;\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "ADBR %f8,%f10");
     expect("float binding needs an FPR",
            "#pragma cblock a\n"
            "#pragma cin double a=%r2\n"
