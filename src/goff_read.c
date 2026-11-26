@@ -404,19 +404,35 @@ static int decode_insn(const GoffText *t, size_t off, const IsaInst **in, int64_
 
 static void dump_text(FILE *w, const GoffModule *m, const GoffText *t, int insn) {
     size_t off = 0;
-    fprintf(w, "    text: offset=%#06x length=%#06x style=%d%s\n",
+    fprintf(w, "    text: offset=%#06x length=%#06x style=%d%s%s\n",
             (unsigned)t->offset, (unsigned)t->len, t->style,
-            t->true_len != t->len ? " (spanned)" : "");
+            t->true_len != t->len ? " (spanned)" : "",
+            insn ? "" : "  (right columns: EBCDIC, ASCII)");
     if (!insn) {
-        size_t k;
-        fprintf(w, "      ");
-        for (k = 0; k < t->len; k++) {
-            if (k && k % 16 == 0) fprintf(w, "\n      ");
-            fprintf(w, "%02X", t->data[k]);
+        size_t row;
+        for (row = 0; row < t->len; row += 16) {
+            size_t n = t->len - row > 16 ? 16 : t->len - row;
+            size_t j;
+            fprintf(w, "      %06x  ", (unsigned)(t->offset + row));
+            for (j = 0; j < 16; j++) {
+                if (j < n) fprintf(w, "%02X ", t->data[row + j]);
+                else fprintf(w, "   ");
+            }
+            fputs(" |", w);
+            for (j = 0; j < n; j++) {
+                unsigned char c = ZA_A(t->data[row + j]);
+                fputc(c >= 0x20 && c < 0x7f ? (int)c : '.', w);
+            }
+            fputs("| |", w);
+            for (j = 0; j < n; j++) {
+                unsigned char c = t->data[row + j];
+                fputc(c >= 0x20 && c < 0x7f ? (int)c : '.', w);
+            }
+            fputs("|\n", w);
         }
-        fputc('\n', w);
         return;
     }
+
     while (off < t->len) {
         int64_t v[6] = {0};
         const IsaInst *in = NULL;
