@@ -485,13 +485,14 @@ __vec_store_len(v, p, 16);           /* VSTL */
 v = __vec_sel(a, b, mask);           /* VSEL */
 v = __vec_perm(a, b, mask);          /* VPERM */
 v = __vec_permi(a, b, 1);            /* VPDI */
+cb = __vec_cmpeq(a, b);              /* VCEQ, integer vectors */
 ```
 
 The element types are `char`, `short`, `int`, `long long`, `float` and
 `double`, with `signed`, `unsigned`, `bool` and the `s1/u1/s2/u2/s4/u4/s8/u8/f4/f8`
-builtin suffixes. Vector select, permute and permute-doubleword-immediate are implemented.
-Vector arithmetic and the remaining `__vec_*` builtins are not implemented
-yet. `__vec_load_bndry_*` accepts the boundary argument
+builtin suffixes. Vector select, permute, permute-doubleword-immediate and integer
+compare-equal are implemented. Vector arithmetic and the remaining
+`__vec_*` builtins are not implemented yet. `__vec_load_bndry_*` accepts the boundary argument
 but uses an unaligned `VL`, which is correct and only loses an alignment
 optimization.
 
