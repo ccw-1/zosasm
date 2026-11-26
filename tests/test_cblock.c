@@ -280,6 +280,37 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "THDER %f4,%f4");
+    expect("hexadecimal floating-point builtins",
+           "#pragma cblock a\n"
+           "#pragma cin float f=%f0, double d=%f2, long double x=%f4\n"
+           "#pragma cout int32_t c=%r2, long double q=%f8\n"
+           "#pragma cscratch %r3, %r4, %r5, %f12, %f14\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "float of; double od; long double ox;\n"
+           "int32_t ci; int64_t cl;\n"
+           "c = __lper(&of, f);\n"
+           "c = __lpdr(&od, d);\n"
+           "c = __lner(&of, f);\n"
+           "c = __lndr(&od, d);\n"
+           "of = __sqer(f);\n"
+           "od = __sqdr(d);\n"
+           "ox = __sqxr(x);\n"
+           "of = __fier(f);\n"
+           "od = __fidr(d);\n"
+           "ox = __fixr(x);\n"
+           "c = __cfer(&ci, 0, f);\n"
+           "c = __cfdr(&ci, 0, d);\n"
+           "c = __cfxr(&ci, 0, x);\n"
+           "c = __lpxr(&ox, x);\n"
+           "c = __lnxr(&ox, x);\n"
+           "q = __sqxr(x);\n"
+           "c = __cger(&cl, 0, f);\n"
+           "c = __cgdr(&cl, 0, d);\n"
+           "c = __cgxr(&cl, 0, x);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "FIXR %f12,%f12");
     expect("runtime facility checks",
            "#pragma cblock a\n"
            "#pragma cout int32_t c=%r2\n"

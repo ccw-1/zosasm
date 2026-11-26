@@ -1099,6 +1099,77 @@ static CBExpr *parse_primary(Parser *p) {
             }
             return e;
         }
+        if (!strcmp(name, "__lper") || !strcmp(name, "__lpdr") ||
+            !strcmp(name, "__lner") || !strcmp(name, "__lndr") ||
+            !strcmp(name, "__sqer") || !strcmp(name, "__sqdr") ||
+            !strcmp(name, "__fier") || !strcmp(name, "__fidr") ||
+            !strcmp(name, "__fixr") || !strcmp(name, "__cfer") ||
+            !strcmp(name, "__cfdr") || !strcmp(name, "__cfxr") ||
+            !strcmp(name, "__lpxr") || !strcmp(name, "__lnxr") ||
+            !strcmp(name, "__sqxr") || !strcmp(name, "__cger") ||
+            !strcmp(name, "__cgdr") || !strcmp(name, "__cgxr")) {
+            CBExpr *e;
+            CBExpr *args[3] = {0, 0, 0};
+            CBExpr *bad = NULL;
+            int argc = (!strcmp(name, "__lper") || !strcmp(name, "__lpdr") ||
+                        !strcmp(name, "__lner") || !strcmp(name, "__lndr") ||
+                        !strcmp(name, "__lpxr") || !strcmp(name, "__lnxr")) ? 2 :
+                       (!strcmp(name, "__cfer") || !strcmp(name, "__cfdr") ||
+                        !strcmp(name, "__cfxr") || !strcmp(name, "__cger") ||
+                        !strcmp(name, "__cgdr") || !strcmp(name, "__cgxr")) ? 3 : 1;
+            CType rt = type_of(32, 0);
+            if (!strcmp(name, "__sqer") || !strcmp(name, "__fier")) rt = type_fp(32);
+            else if (!strcmp(name, "__sqdr") || !strcmp(name, "__fidr")) rt = type_fp(64);
+            else if (!strcmp(name, "__sqxr") || !strcmp(name, "__fixr")) rt = type_fp(128);
+            e = mk_expr(E_CALL, rt, line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, argc)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1]; e->c = args[2];
+            if (!strcmp(e->name, "__lper") || !strcmp(e->name, "__lner")) {
+                if (!e->a->type.ptr || !e->b->type.flt || e->b->type.bits != 32 ||
+                    e->b->type.dfp) {
+                    cb_error(p->b, line, col, "ZA5003", "%s needs (float *, float)", e->name);
+                    p->err = 1;
+                }
+            } else if (!strcmp(e->name, "__lpdr") || !strcmp(e->name, "__lndr")) {
+                if (!e->a->type.ptr || !e->b->type.flt || e->b->type.bits != 64 ||
+                    e->b->type.dfp) {
+                    cb_error(p->b, line, col, "ZA5003", "%s needs (double *, double)", e->name);
+                    p->err = 1;
+                }
+            } else if (!strcmp(e->name, "__sqer") || !strcmp(e->name, "__fier")) {
+                if (!e->a->type.flt || e->a->type.bits != 32 || e->a->type.dfp)
+                    bad = e->a;
+            } else if (!strcmp(e->name, "__sqdr") || !strcmp(e->name, "__fidr")) {
+                if (!e->a->type.flt || e->a->type.bits != 64 || e->a->type.dfp)
+                    bad = e->a;
+            } else if (!strcmp(e->name, "__sqxr") || !strcmp(e->name, "__fixr")) {
+                if (!e->a->type.flt || e->a->type.bits != 128 || e->a->type.dfp)
+                    bad = e->a;
+            } else if (!strcmp(e->name, "__lpxr") || !strcmp(e->name, "__lnxr")) {
+                if (!e->a->type.ptr || !e->b->type.flt || e->b->type.bits != 128 ||
+                    e->b->type.dfp) bad = e->a;
+            } else {
+                if (!e->a->type.ptr || e->b->type.ptr || e->b->type.flt ||
+                    e->c->type.ptr || !e->c->type.flt) {
+                    bad = e->c;
+                }
+            }
+            if (bad) {
+                cb_error(p->b, line, col, "ZA5003", "%s has an argument of the wrong type", e->name);
+                p->err = 1;
+            }
+            return e;
+        }
         if (!strcmp(name, "__efpc") || !strcmp(name, "__sfpc") ||
             !strcmp(name, "__fiebr") || !strcmp(name, "__fidbr") ||
             !strcmp(name, "__lpebr") || !strcmp(name, "__lpdbr") ||
@@ -4143,6 +4214,131 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             *slotp = res;
             return 1;
         }
+        if (!strcmp(e->name, "__lper") || !strcmp(e->name, "__lpdr") ||
+            !strcmp(e->name, "__lner") || !strcmp(e->name, "__lndr") ||
+            !strcmp(e->name, "__sqer") || !strcmp(e->name, "__sqdr") ||
+            !strcmp(e->name, "__fier") || !strcmp(e->name, "__fidr") ||
+            !strcmp(e->name, "__fixr") || !strcmp(e->name, "__cfer") ||
+            !strcmp(e->name, "__cfdr") || !strcmp(e->name, "__cfxr") ||
+            !strcmp(e->name, "__lpxr") || !strcmp(e->name, "__lnxr") ||
+            !strcmp(e->name, "__sqxr") || !strcmp(e->name, "__cger") ||
+            !strcmp(e->name, "__cgdr") || !strcmp(e->name, "__cgxr")) {
+            int fa, ra, sb = -1, sc = -1;
+            int64_t m = 0;
+            if (!strcmp(e->name, "__lper") || !strcmp(e->name, "__lpdr") ||
+                !strcmp(e->name, "__lner") || !strcmp(e->name, "__lndr")) {
+                int isd = !strcmp(e->name, "__lpdr") || !strcmp(e->name, "__lndr");
+                if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sb)) return 0;
+                fa = pick_fpr(b, -1, -1);
+                ra = pick_addr(b, 0, 0);
+                if (fa < 0 || ra < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "%s needs one FPR and one address register", e->name);
+                    return 0;
+                }
+                load_slot(b, e->line, sa, type_ptr(), ra);
+                load_fp_slot(b, e->line, sb, e->b->type, fa);
+                asm_line(b, e->line, !strcmp(e->name, "__lper") ? "LPER %%f%d,%%f%d" :
+                                       !strcmp(e->name, "__lpdr") ? "LPDR %%f%d,%%f%d" :
+                                       !strcmp(e->name, "__lner") ? "LNER %%f%d,%%f%d" :
+                                                                    "LNDR %%f%d,%%f%d", fa, fa);
+                asm_line(b, e->line, isd ? "STD %%f%d,0(%%r%d)" : "STE %%f%d,0(%%r%d)", fa, ra);
+                asm_line(b, e->line, "IPM %%r0");
+                asm_line(b, e->line, "SRL %%r0,28");
+                res = alloc_slot(cg);
+                store_slot(b, e->line, res, type_of(32, 0), 0);
+                *slotp = res;
+                return 1;
+            }
+            if (!strcmp(e->name, "__sqer") || !strcmp(e->name, "__sqdr") ||
+                !strcmp(e->name, "__sqxr")) {
+                int isx = !strcmp(e->name, "__sqxr");
+                if (!eval(cg, e->a, &sa)) return 0;
+                fa = isx ? pick_fpr_pair(b, -1, -1) : pick_fpr(b, -1, -1);
+                if (fa < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005", "%s needs an FPR%s", e->name,
+                             isx ? " pair" : "");
+                    return 0;
+                }
+                load_fp_slot(b, e->line, sa, e->a->type, fa);
+                asm_line(b, e->line, isx ? "SQXR %%f%d,%%f%d" :
+                         !strcmp(e->name, "__sqer") ? "SQER %%f%d,%%f%d" : "SQDR %%f%d,%%f%d", fa, fa);
+                res = alloc_slots(cg, isx ? 2 : 1);
+                store_fp_slot(b, e->line, res, e->type, fa);
+                *slotp = res;
+                return 1;
+            }
+            if (!strcmp(e->name, "__fier") || !strcmp(e->name, "__fidr") ||
+                !strcmp(e->name, "__fixr")) {
+                int isx = !strcmp(e->name, "__fixr");
+                if (!eval(cg, e->a, &sa)) return 0;
+                fa = isx ? pick_fpr_pair(b, -1, -1) : pick_fpr(b, -1, -1);
+                if (fa < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005", "%s needs an FPR%s", e->name,
+                             isx ? " pair" : "");
+                    return 0;
+                }
+                load_fp_slot(b, e->line, sa, e->a->type, fa);
+                asm_line(b, e->line, isx ? "FIXR %%f%d,%%f%d" :
+                         !strcmp(e->name, "__fier") ? "FIER %%f%d,%%f%d" : "FIDR %%f%d,%%f%d", fa, fa);
+                res = alloc_slots(cg, isx ? 2 : 1);
+                store_fp_slot(b, e->line, res, e->type, fa);
+                *slotp = res;
+                return 1;
+            }
+            if (!strcmp(e->name, "__lpxr") || !strcmp(e->name, "__lnxr")) {
+                if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sb)) return 0;
+                fa = pick_fpr_pair(b, -1, -1);
+                ra = pick_addr(b, 0, 0);
+                if (fa < 0 || ra < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "%s needs an FPR pair and an address register", e->name);
+                    return 0;
+                }
+                load_slot(b, e->line, sa, type_ptr(), ra);
+                load_fp_slot(b, e->line, sb, e->b->type, fa);
+                asm_line(b, e->line, !strcmp(e->name, "__lpxr") ? "LPXR %%f%d,%%f%d" :
+                                                              "LNXR %%f%d,%%f%d", fa, fa);
+                store_fp_mem(b, e->line, e->b->type, fa, ra);
+                asm_line(b, e->line, "IPM %%r0");
+                asm_line(b, e->line, "SRL %%r0,28");
+                res = alloc_slot(cg);
+                store_slot(b, e->line, res, type_of(32, 0), 0);
+                *slotp = res;
+                return 1;
+            }
+            if (!const_eval(e->b, &m) || m < 0 || m > 15) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs a constant rounding mode 0 to 15", e->name);
+                return 0;
+            }
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->c, &sc)) return 0;
+            fa = (!strcmp(e->name, "__cfxr") || !strcmp(e->name, "__cgxr"))
+                     ? pick_fpr_pair(b, -1, -1) : pick_fpr(b, -1, -1);
+            ra = pick_addr(b, 0, 0);
+            if (fa < 0 || ra < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs one FPR%s and one address register", e->name,
+                         (!strcmp(e->name, "__cfxr") || !strcmp(e->name, "__cgxr")) ? " pair" : "");
+                return 0;
+            }
+            load_slot(b, e->line, sa, type_ptr(), ra);
+            load_fp_slot(b, e->line, sc, e->c->type, fa);
+            if (!strcmp(e->name, "__cfer")) asm_line(b, e->line, "CFER %%r0,%lld,%%f%d", (long long)m, fa);
+            else if (!strcmp(e->name, "__cfdr")) asm_line(b, e->line, "CFDR %%r0,%lld,%%f%d", (long long)m, fa);
+            else if (!strcmp(e->name, "__cfxr")) asm_line(b, e->line, "CFXR %%r0,%lld,%%f%d", (long long)m, fa);
+            else if (!strcmp(e->name, "__cger")) asm_line(b, e->line, "CGER %%r0,%lld,%%f%d", (long long)m, fa);
+            else if (!strcmp(e->name, "__cgdr")) asm_line(b, e->line, "CGDR %%r0,%lld,%%f%d", (long long)m, fa);
+            else asm_line(b, e->line, "CGXR %%r0,%lld,%%f%d", (long long)m, fa);
+            asm_line(b, e->line, (!strcmp(e->name, "__cger") || !strcmp(e->name, "__cgdr") ||
+                                  !strcmp(e->name, "__cgxr")) ? "STG %%r0,0(%%r%d)" : "ST %%r0,0(%%r%d)", ra);
+            asm_line(b, e->line, "IPM %%r0");
+            asm_line(b, e->line, "SRL %%r0,28");
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
         if (!strcmp(e->name, "__efpc") || !strcmp(e->name, "__sfpc") ||
             !strcmp(e->name, "__fiebr") || !strcmp(e->name, "__fidbr") ||
             !strcmp(e->name, "__lpebr") || !strcmp(e->name, "__lpdbr") ||
@@ -5052,7 +5248,7 @@ static int pick_fpr_pair(CBlock *b, int used1, int used2) {
     int i, j;
     for (i = 0; i < b->nfscratch; i++) {
         int r = b->fscratch[i];
-        if (r % 4 || r == used1 || r == used2) continue;
+        if ((r & 2) != 0 || r == used1 || r == used2) continue;
         for (j = 0; j < b->nfscratch; j++)
             if (b->fscratch[j] == r + 2) return r;
     }
@@ -5647,7 +5843,7 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
     }
     for (i = 0; i < b.vars.n; i++) {
         if (!b.vars.v[i]->type.vec && b.vars.v[i]->type.bits == 128 &&
-            (b.vars.v[i]->reg % 4 != 0)) {
+            (b.vars.v[i]->reg & 2) != 0) {
             cb_error(&b, line, 1, "ZA5005",
                      "long double binding %%f%d is not the base of an FPR pair", b.vars.v[i]->reg);
             goto done;

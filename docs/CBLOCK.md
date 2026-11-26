@@ -421,6 +421,38 @@ pointer points to the zoned decimal field. `__czdt` and `__czxt` return the
 instruction condition code. The `-qdfp` option activates these builtins in
 XL C; CBLOCK accepts the names directly.
 
+### Hexadecimal floating-point builtins
+
+The `-qfloat=hex` conversion and arithmetic forms use the same
+`float`, `double` and `long double` CBLOCK types, but the instructions
+operate on hexadecimal floating-point values:
+
+```c
+int cc = __lper(&f, x);       /* LPER; stores through &f */
+int cc = __lpdr(&d, x);       /* LPDR */
+int cc = __lner(&f, x);       /* LNER */
+int cc = __lndr(&d, x);       /* LNDR */
+float  f = __sqer(x);         /* SQER */
+double d = __sqdr(x);         /* SQDR */
+long double x = __sqxr(y);    /* SQXR */
+float  f = __fier(x);         /* FIER */
+double d = __fidr(x);         /* FIDR */
+long double x = __fixr(y);    /* FIXR */
+int cc = __cfer(&i, mode, x); /* CFER */
+int cc = __cfdr(&i, mode, x); /* CFDR */
+int cc = __cfxr(&i, mode, y); /* CFXR */
+int cc = __lpxr(&y, x);       /* LPXR */
+int cc = __lnxr(&y, x);       /* LNXR */
+int cc = __cger(&l, mode, x); /* CGER */
+int cc = __cgdr(&l, mode, x); /* CGDR */
+int cc = __cgxr(&l, mode, y); /* CGXR */
+```
+
+The `mode` values are compile-time constants from 0 to 15. These
+builtins do not convert between the hexadecimal and binary formats. Do
+not mix their results with ordinary BFP arithmetic; use an explicit
+conversion or keep the HFP value as raw data.
+
 ### Runtime facility checks
 
 Three builtins expose the facility list:
