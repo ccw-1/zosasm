@@ -369,6 +369,26 @@ static void test_sub_relocs(void) {
 /* golden GOFF structure test: testdata/golden.za assembles to a stable
  * GOFF layout that we can check structurally (this guards against silent
  * changes to ESD/TXT/RLD/END emission). */
+static void test_renameable(void) {
+    GoffModule *g = emit_src("T        CSECT\n"
+                             "L        DS    0H\n"
+                             "N        DS    0H\n"
+                             "         ENTRY L,N\n"
+                             "         EXTRN EXT\n"
+                             "L        XATTR RENAME(YES)\n"
+                             "N        XATTR RENAME(NO)\n"
+                             "EXT      XATTR RENAME(YES)\n"
+                             "         END\n");
+    const GoffESD *e;
+    if (!g) return;
+    e = find_esd(g, GOFF_LD, "L");
+    CHECK(e && e->renameable);
+    e = find_esd(g, GOFF_LD, "N");
+    CHECK(e && !e->renameable);
+    e = find_esd(g, GOFF_ER, "EXT");
+    CHECK(e && e->renameable);
+}
+
 static void test_blank_name_scope(void) {
     /* a blank-named CSECT is implicitly section-scoped so two such CSECTs
      * in different objects do not collide at bind time */
@@ -448,6 +468,7 @@ int main(void) {
     test_dsect_not_emitted();
     test_entry_external();
     test_quoted_names();
+    test_renameable();
     test_blank_name_scope();
     test_blank_name_explicit_scope();
     test_samples();

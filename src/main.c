@@ -23,6 +23,7 @@
 static void usage(FILE *f) {
     fprintf(f, "usage: zosasm [-o out.o] [-elf] [-ascii|-charset ascii|ebcdic] [-gz0|-gz1|-gz2] [-g [-gside] [-gdwarf FILE] [-gdir DIR] [-gmap FROM=TO] [-gdbgpath PATH]] [-DNAME[=val]] [-Idir] [-Mdir] [-sysparm STR] [-macro-steps N] [-E] [-reproducible] [-strict-registers] [-l FILE [-ldata] [-lpage N] [-lbrief]] [-diag text|json] [-color] [-Werror] [-max-errors N] source.za (or - for standard input)\n"
                "       zosasm -dump file.o\n"
+               "       zosasm -dump-readable file.o [-insn]\n"
                "       zosasm [-o out.za] -disasm file.o\n"
                "       zosasm [-o dir] -unpack file.o\n"
                "  -o FILE         output object file (default: input with .o)\n"
@@ -43,7 +44,9 @@ static void usage(FILE *f) {
                "  -reproducible   fail on anything that changes between runs (__DATE__ and __TIME__\n"
                "                  need SOURCE_DATE_EPOCH)\n"
                "  -version        print the version\n"
-               "  -dump FILE      print the structure of a GOFF object file and exit\n"
+               "  -dump FILE      print the machine-readable structure of a GOFF object and exit\n"
+               "  -dump-readable FILE  print a readable GOFF listing and exit\n"
+               "  -insn           with -dump/-dump-readable: disassemble the text records\n"
                "  -disasm FILE    convert a GOFF object back to source (stdout or -o)\n"
                "  -unpack FILE    write the original sources kept in an object made with -gz2 below\n"
                "                  the directory given with -o (default .)\n"
@@ -163,7 +166,7 @@ static char *dbg_name_for(const char *outname, const char *gdwarf) {
     return xasprintf("%.*s.dbg", (int)k, outname);
 }
 
-static int do_dump(const char *path) {
+static int do_dump(const char *path, int readable, int insn) {
     size_t n;
     const char *err = NULL;
     GoffModule *m;
@@ -177,7 +180,8 @@ static int do_dump(const char *path) {
         fprintf(stderr, "zosasm: %s: %s\n", path, err);
         return 1;
     }
-    goff_dump(m, stdout);
+    if (readable) goff_dump_readable(m, stdout, insn);
+    else goff_dump(m, stdout);
     {
         /* further modules (the debug link module written by -g) */
         size_t at = m->bytes;
@@ -189,7 +193,8 @@ static int do_dump(const char *path) {
     return 1;
             }
             printf("\n=== module %d at byte %lu ===\n", k++, (unsigned long)at);
-            goff_dump(m2, stdout);
+            if (readable) goff_dump_readable(m2, stdout, insn);
+            else goff_dump(m2, stdout);
             at += m2->bytes;
             goff_free(m2);
         }
@@ -374,8 +379,8 @@ static char *default_output(const char *in) {
 }
 
 int main(int argc, char **argv) {
-    const char *out = NULL, *in = NULL, *disasm = NULL, *unpack = NULL, *dump = NULL;
-    int color = 0, json = 0, werror = 0, max_err = 50, i, only_pp = 0, zlevel = 1, generic = 0, elf = 0, gflag = 0;
+    const char *out = NULL, *in = NULL, *disasm = NULL, *unpack = NULL, *dump = NULL, *dump_readable = NULL;
+    int color = 0, json = 0, werror = 0, max_err = 50, i, only_pp = 0, zlevel = 1, generic = 0, elf = 0, gflag = 0, insn = 0;
     const char *gdwarf = NULL, *gdbgpath = NULL;
     int gside = 0;
     DbgOptions dopt;
@@ -401,8 +406,12 @@ int main(int argc, char **argv) {
         if (a[0] == '-' && a[1] == '-') a++; /* accept --flag too */
         if (!strcmp(a, "-o") && i + 1 < argc) {
             out = argv[++i];
-        } else if (!strcmp(a, "-dump") && i + 1 < argc) {
-            dump = argv[++i];
+        } else if (!strcmp(a, "-dump")) {
+            dump = (i + 1 < argc && argv[i + 1][0] != '-') ? argv[++i] : "";
+        } else if (!strcmp(a, "-dump-readable")) {
+            dump_readable = (i + 1 < argc && argv[i + 1][0] != '-') ? argv[++i] : "";
+        } else if (!strcmp(a, "-insn")) {
+            insn = 1;
         } else if (!strcmp(a, "-disasm") && i + 1 < argc) {
             disasm = argv[++i];
         } else if (!strcmp(a, "-unpack") && i + 1 < argc) {
@@ -535,23 +544,34 @@ int main(int argc, char **argv) {
     }
     za_ascii = charset ? !strcmp(charset, "ascii") : elf;
     ppo.elf = elf;
-    if ((dump ? 1 : 0) + (unpack ? 1 : 0) + (disasm ? 1 : 0) + (only_pp ? 1 : 0) > 1) {
-        fprintf(stderr, "zosasm: choose only one of -E, -dump, -disasm or -unpack\n");
+    if ((dump != NULL ? 1 : 0) + (dump_readable != NULL ? 1 : 0) + (unpack ? 1 : 0) +
+        (disasm ? 1 : 0) + (only_pp ? 1 : 0) > 1) {
+        fprintf(stderr, "zosasm: choose only one of -E, -dump, -dump-readable, -disasm or -unpack\n");
         return 2;
     }
-    if (dump) {
-        if (in || out || listfile || gflag || gdwarf || gdbgpath || gside || ppo.defines.n || ppo.include_dirs.n ||
-            ppo.macro_dirs.n || ppo.sysparm) {
-            /* dump reads an object; other source/output options do not apply */
-        }
+    if (dump != NULL || dump_readable != NULL) {
+        const char *path = dump && *dump ? dump : dump_readable && *dump_readable ? dump_readable : in;
         for (i = 1; i < argc; i++) {
             const char *a = argv[i];
             if (a[0] == '-' && a[1] == '-') a++;
-            if (!strcmp(a, "-dump")) { i++; continue; }
-            fprintf(stderr, "zosasm: -dump takes no other options\n");
-    return 2;
+            if (!strcmp(a, "-dump") || !strcmp(a, "-dump-readable")) {
+                if (i + 1 < argc && argv[i + 1][0] != '-') i++;
+                continue;
+            }
+            if (!strcmp(a, "-insn")) continue;
+            if (a[0] != '-') continue;
+            fprintf(stderr, "zosasm: -dump takes only -insn as another option\n");
+            return 2;
         }
-        return do_dump(dump);
+        if (!path) {
+            fprintf(stderr, "zosasm: -dump needs an object file\n");
+            return 2;
+        }
+        return do_dump(path, dump_readable != NULL || insn, insn);
+    }
+    if (insn) {
+        fprintf(stderr, "zosasm: -insn needs -dump or -dump-readable\n");
+        return 2;
     }
     if (unpack) return do_unpack(unpack, out);
     if (disasm) return do_disasm(disasm, out, generic);

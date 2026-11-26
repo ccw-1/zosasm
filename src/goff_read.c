@@ -4,6 +4,7 @@
 
 #include "ebcdic.h"
 #include "goff.h"
+#include "isa.h"
 
 #define CONT_NEXT 0x1
 #define CONT_IS 0x2
@@ -321,6 +322,211 @@ void goff_dump(const GoffModule *m, FILE *w) {
         char *nm = ebcdic_decode(m->end.name, m->end.name_len);
         fprintf(w, "END kind=%d amode=%d esd=%u off=%u name=\"%s\" count=%u\n", (int)m->end.kind, m->end.amode,
                 (unsigned)m->end.esdid, (unsigned)m->end.offset, nm, (unsigned)m->end_count);
+        free(nm);
+    }
+}
+
+
+/* ---- readable dump ------------------------------------------------------ */
+
+static const char *esd_kind(int t) {
+    switch (t) {
+    case 0: return "SD";
+    case 1: return "ED";
+    case 2: return "LD";
+    case 3: return "PR";
+    case 4: return "ER/WX";
+    default: return "?";
+    }
+}
+
+static char reg_name(unsigned flags) {
+    char c = (flags & F_FPR) ? 'f' : (flags & F_AR) ? 'a' : (flags & F_CR) ? 'c' :
+             (flags & F_VR) ? 'v' : 'r';
+    return c;
+}
+
+static char *label_at(const GoffModule *m, uint32_t class_id, int64_t off) {
+    size_t i;
+    for (i = 0; i < m->esds.n; i++) {
+        const GoffESD *e = m->esds.v[i];
+        if (e->type == 2 && e->parent == class_id && (int64_t)e->offset == off)
+            return ebcdic_decode(e->name, e->name_len);
+    }
+    return NULL;
+}
+
+static void dump_operand(FILE *w, const GoffModule *m, uint32_t class_id,
+                         const GoffText *t, size_t insn_off, const IsaInst *in,
+                         const IsaSlots *sl, int i, const int64_t *v) {
+    const IsaSlot *s = &sl->s[i];
+    const IsaOperand *f = isa_op(in, (size_t)s->field);
+    if (i) fputc(',', w);
+    if (s->kind == SK_REG) {
+        fprintf(w, "%%%c%lld", reg_name(f->flags), (long long)v[s->field]);
+    } else if (s->kind == SK_IMM) {
+        fprintf(w, "%lld", (long long)v[s->field]);
+    } else if (s->kind == SK_REL) {
+        int64_t target = (int64_t)t->offset + (int64_t)insn_off + in->length +
+                         (int64_t)v[s->field] * 2;
+        char *lbl = label_at(m, class_id, target);
+        if (lbl) {
+            fputs(lbl, w);
+            free(lbl);
+        } else {
+            fprintf(w, "%+lld", (long long)v[s->field] * 2);
+        }
+    } else {
+        fprintf(w, "%lld", (long long)v[s->field]);
+        if (s->mid >= 0 || s->base >= 0) {
+            fputc('(', w);
+            if (s->mid >= 0) {
+                const IsaOperand *mf = isa_op(in, (size_t)s->mid);
+                if (s->mid_kind == 'L')
+                    fprintf(w, "%lld", (long long)v[s->mid] + 1);
+                else
+                    fprintf(w, "%%%c%lld", reg_name(mf->flags),
+                            (long long)v[s->mid]);
+                if (s->base >= 0) fputc(',', w);
+            }
+            if (s->base >= 0)
+                fprintf(w, "%%r%lld", (long long)v[s->base]);
+            fputc(')', w);
+        }
+    }
+}
+
+static int decode_insn(const GoffText *t, size_t off, const IsaInst **in, int64_t v[6]) {
+    if (off + 2 > t->len) return 0;
+    *in = isa_decode(t->data + off, t->len - off, v);
+    return *in && isa_rules_ok(*in, v);
+}
+
+static void dump_text(FILE *w, const GoffModule *m, const GoffText *t, int insn) {
+    size_t off = 0;
+    fprintf(w, "    text: offset=%#06x length=%#06x style=%d%s%s\n",
+            (unsigned)t->offset, (unsigned)t->len, t->style,
+            t->true_len != t->len ? " (spanned)" : "",
+            insn ? "" : "  (right columns: EBCDIC, ASCII)");
+    if (!insn) {
+        size_t row;
+        for (row = 0; row < t->len; row += 16) {
+            size_t n = t->len - row > 16 ? 16 : t->len - row;
+            size_t j;
+            fprintf(w, "      %06x  ", (unsigned)(t->offset + row));
+            for (j = 0; j < 16; j++) {
+                if (j < n) fprintf(w, "%02X ", t->data[row + j]);
+                else fprintf(w, "   ");
+            }
+            fputs(" |", w);
+            for (j = 0; j < n; j++) {
+                unsigned char c = ZA_A(t->data[row + j]);
+                fputc(c >= 0x20 && c < 0x7f ? (int)c : '.', w);
+            }
+            fputs("| |", w);
+            for (j = 0; j < n; j++) {
+                unsigned char c = t->data[row + j];
+                fputc(c >= 0x20 && c < 0x7f ? (int)c : '.', w);
+            }
+            fputs("|\n", w);
+        }
+        return;
+    }
+
+    while (off < t->len) {
+        int64_t v[6] = {0};
+        const IsaInst *in = NULL;
+        IsaSlots sl;
+        int i;
+        if (decode_insn(t, off, &in, v)) {
+            char mn[16];
+            size_t j;
+            for (j = 0; in->mnemonic[j] && j < sizeof mn - 1; j++)
+                mn[j] = (char)(in->mnemonic[j] >= 'a' && in->mnemonic[j] <= 'z'
+                                   ? in->mnemonic[j] - 'a' + 'A' : in->mnemonic[j]);
+            mn[j] = 0;
+            fprintf(w, "      %06x  ", (unsigned)(t->offset + off));
+            for (i = 0; i < in->length; i++) fprintf(w, "%02X", t->data[off + i]);
+            for (; i < 6; i++) fprintf(w, "  ");
+            fprintf(w, "  %-8s ", mn);
+            isa_slots(in, &sl);
+            for (i = 0; i < sl.n; i++) dump_operand(w, m, t->esdid, t, off, in, &sl, i, v);
+            if (in->facility && *in->facility) fprintf(w, "  [%s]", in->facility);
+            fputc('\n', w);
+            off += in->length;
+        } else {
+            /* data: skip a small gap if it reaches a decodable instruction */
+            size_t skip = 0, cand;
+            for (cand = 2; cand <= 16 && off + cand < t->len; cand += 2) {
+                int64_t vv[6] = {0};
+                const IsaInst *ii = NULL;
+                if (decode_insn(t, off + cand, &ii, vv)) {
+                    skip = cand;
+                    break;
+                }
+            }
+            if (!skip) skip = t->len - off >= 16 ? 16 : t->len - off;
+            fprintf(w, "      %06x  ", (unsigned)(t->offset + off));
+            for (i = 0; i < (int)skip; i++) fprintf(w, "%02X", t->data[off + i]);
+            fprintf(w, "  DC X'");
+            for (i = 0; i < (int)skip; i++) fprintf(w, "%02X", t->data[off + i]);
+            fprintf(w, "'\n");
+            off += skip;
+        }
+    }
+}
+
+void goff_dump_readable(const GoffModule *m, FILE *w, int insn) {
+    size_t i;
+    fprintf(w, "GOFF module\n");
+    fprintf(w, "  header: architecture level %u\n", (unsigned)m->arch_level);
+    fprintf(w, "  ESD items: %lu, text records: %lu, relocations: %lu\n",
+            (unsigned long)m->esds.n, (unsigned long)m->texts.n,
+            (unsigned long)m->relocs.n);
+    fprintf(w, "\nSymbols and sections\n");
+    for (i = 0; i < m->esds.n; i++) {
+        const GoffESD *e = m->esds.v[i];
+        char *nm = ebcdic_decode(e->name, e->name_len);
+        fprintf(w, "  %-5s %4u  parent=%-4u off=0x%08x len=%-8d %s\n",
+                esd_kind(e->type), (unsigned)e->id, (unsigned)e->parent,
+                (unsigned)e->offset, (int)(int32_t)e->length, nm);
+        fprintf(w, "         amode=%d rmode=%d align=%d exec=%d scope=%d ns=%d renameable=%s\n",
+                e->attr.amode, e->attr.rmode, e->attr.alignment, e->attr.executable,
+                e->attr.scope, e->name_space, e->renameable ? "yes" : "no");
+        free(nm);
+    }
+    fprintf(w, "\nText\n");
+    for (i = 0; i < m->texts.n; i++) {
+        const GoffText *t = &m->texts.v[i];
+        const GoffESD *e = goff_module_esd(m, t->esdid);
+        char *nm = e ? ebcdic_decode(e->name, e->name_len) : NULL;
+        fprintf(w, "  ESD %u %s\n", (unsigned)t->esdid, nm ? nm : "?");
+        if (nm && !strncmp(nm, "C_ADATA", 7)) {
+            fprintf(w, "    ADATA: %u bytes (not disassembled)\n", (unsigned)t->len);
+        } else {
+            dump_text(w, m, t, insn);
+        }
+        free(nm);
+    }
+    fprintf(w, "\nRelocations\n");
+    if (!m->relocs.n) fprintf(w, "  none\n");
+    for (i = 0; i < m->relocs.n; i++) {
+        const GoffReloc *r = &m->relocs.v[i];
+        const GoffESD *re = goff_module_esd(m, (uint32_t)r->reference);
+        const GoffESD *pe = goff_module_esd(m, (uint32_t)r->referent);
+        char *rn = re ? ebcdic_decode(re->name, re->name_len) : NULL;
+        char *pn = pe ? ebcdic_decode(pe->name, pe->name_len) : NULL;
+        fprintf(w, "  off=%#08x  R=%s  P=%s  store=%s len=%d\n",
+                (unsigned)r->offset, rn ? rn : "?", pn ? pn : "?",
+                r->store ? "yes" : "no", r->length);
+        free(rn);
+        free(pn);
+    }
+    {
+        char *nm = ebcdic_decode(m->end.name, m->end.name_len);
+        fprintf(w, "\nEnd\n  kind=%d amode=%d esd=%u off=%#x name=\"%s\" records=%u\n",
+                (int)m->end.kind, m->end.amode, (unsigned)m->end.esdid,
+                (unsigned)m->end.offset, nm, (unsigned)m->end_count);
         free(nm);
     }
 }

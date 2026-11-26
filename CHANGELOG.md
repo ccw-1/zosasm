@@ -6,6 +6,13 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 
 ## Unreleased
 
+* `XATTR RENAME(YES|NO)` sets the GOFF ESD renameable flag (bit 41.2).
+  `-disasm` writes it back and `-dump-readable` shows it.
+* `-dump-readable FILE` prints a grouped GOFF listing with section, text and
+  relocation headings. Without `-insn`, text uses an xxd-style layout with
+  EBCDIC and ASCII columns. `-insn` (with `-dump` or `-dump-readable`)
+  disassembles text records using a best-effort even-byte skip over data. The
+  existing machine-readable `-dump` output is unchanged.
 * CBLOCK: initial direct z/Architecture builtins `__popcnt`, `__popcnt4`,
   `__popcnt8`, `__lrv`, `__lrvh`, `__lrvg`, `__strv`, `__strvh`, `__strvg`, `__stck`, `__stcke`,
   `__stckf`, `__lad`/`__ladl`/`__ladg`/`__ladlg`, `__lan`/`__lang`,
@@ -15,6 +22,9 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
   `__cvb`, `__cvd`, `__pack` and `__unpk` are included. PLO/TM/vector/far/float groups are
   deferred. `__lpd*` needs an even-odd pair in `cscratch`; decimal lengths
   must be compile-time constants.
+* CBLOCK 16-bit `int16_t`/`uint16_t` scalars and pointers, with `LGH`/`LLGH`
+  loads, `STH` stores, integer promotion, typed pointer arithmetic, and
+  `__lrvh`/`__strvh`.
 
 ## 0.7.3 - 2026-11-25
 
