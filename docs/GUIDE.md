@@ -1305,10 +1305,12 @@ items (section, class, part, label, external reference), `TXT` (the bytes),
 `RLD` (relocations), `END`. After that, if the object has it, the symbolic
 information (below).
 
-`zosasm -dump-readable file.o` (or `-dump -insn file.o`) prints a human-readable listing grouped by
-symbols, text and relocations. Add `-insn` to decode instructions. The
-disassembler is best-effort: an undecodable byte range is shown as `DC`, and
-the reader tries a small even-byte skip to resume at the next instruction.
+`zosasm -dump-readable file.o` (or `-dump -insn file.o`) prints a
+human-readable listing grouped by symbols, text and relocations. Without
+`-insn`, text bytes use an xxd-style layout with EBCDIC and ASCII columns on
+the right. With `-insn`, instructions are decoded instead. The disassembler is
+best-effort: an undecodable byte range is shown as `DC`, and the reader tries a
+small even-byte skip to resume at the next instruction.
 
 ### 12.2 ZSYM: symbolic information in the object
 

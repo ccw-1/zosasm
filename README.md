@@ -106,7 +106,8 @@ Guide: `docs/GUIDE.md` section 16; `DESIGN.md` section 16.
 
 ```sh
 build/zosasm -o hello.o testdata/hello.za   # assemble
-build/zosasm -dump hello.o                  # print the GOFF structure
+build/zosasm -dump hello.o                  # machine-readable GOFF structure
+build/zosasm -dump-readable -insn hello.o   # readable hex + instructions
 build/zosasm -disasm hello.o -o back.za     # GOFF object -> zosasm source
 build/zosasm -E prog.za                     # show the preprocessed source
 build/zosasm -l prog.lst -o prog.o prog.za  # assemble and write a listing
