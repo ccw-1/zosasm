@@ -91,6 +91,28 @@ CS       DC    C'HELLO'
 CSTART   DS    0H" \
     '#pragma cin char *d=%r2, char *s=%r3' '#pragma cout int32_t c=%r4' \
     'char *r = __strcpy(d,s); c = __strlen(r) + d[0];' 77
+run_case memcmpgt "         LARL  %r2,MA
+         LARL  %r3,MB
+         BRCL  15,MSTART
+         DS    0H
+MA       DC    C'ABD'
+         DS    0H
+MB       DC    C'ABC'
+         DS    0H
+MSTART   DS    0H" \
+    '#pragma cin char *a=%r2, char *b=%r3' '#pragma cout int32_t c=%r4' \
+    'c = 0; if (__memcmp(a,b,3) > 0) c = 1; else c = 2;' 1
+run_case memcmpeqop "         LARL  %r2,MA
+         LARL  %r3,MB
+         BRCL  15,MSTART
+         DS    0H
+MA       DC    C'ABC'
+         DS    0H
+MB       DC    C'ABC'
+         DS    0H
+MSTART   DS    0H" \
+    '#pragma cin char *a=%r2, char *b=%r3' '#pragma cout int32_t c=%r4' \
+    'c = 0; if (__memcmp(a,b,3) == 0) c = 1; else c = 2;' 1
 run_case memcmpeq "         LARL  %r2,MA
          LARL  %r3,MB
          BRCL  15,MSTART

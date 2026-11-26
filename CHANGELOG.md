@@ -4,6 +4,13 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 `vX.Y.Z`. Things not compared with IBM's tools are marked in the User's Guide
 (section 14).
 
+## 0.7.2 - 2026-11-25
+
+* CBLOCK conditions such as `if (__memcmp(a,b,n) > 0)` and
+  `if (__strcmp(a,b) == 0)` also branch directly on the `CLC` condition code,
+  without materializing the -1/0/1 result. Comparisons against nonzero
+  constants still use the general expression path.
+
 ## 0.7.1 - 2026-11-25
 
 * Fix the `__memcmp` loop for an exact match: it now stops when the length

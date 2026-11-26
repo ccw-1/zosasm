@@ -2462,12 +2462,57 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
 static int codegen_stmt(Cg *cg, CBStmt *st);
 static int codegen_block(Cg *cg, CBStmtVec *v);
 
-/* Compare loops used when __memcmp/__strcmp is the condition itself. They
- * branch directly on the condition code and do not materialize -1/0/1. */
-static int emit_memcmp_cond(Cg *cg, CBExpr *e, const char *false_label) {
+/* What a comparison to zero means for one CLC result:
+ * cc is 0 (equal), 1 (first less) or 2 (first greater). */
+static int cmp_cc_false(int op, int cc) {
+    switch (op) {
+    case OP_EQ: return cc != 0;
+    case OP_NE: return cc == 0;
+    case '<': return cc != 1;
+    case OP_LE: return cc == 2;
+    case '>': return cc != 2;
+    case OP_GE: return cc == 1;
+    default: return 1;
+    }
+}
+
+static int cmp_cond_call(CBExpr *e, CBExpr **call, int *op) {
+    if (e->kind == E_CALL && (!strcmp(e->name, "__memcmp") || !strcmp(e->name, "__strcmp"))) {
+        *call = e;
+        *op = OP_NE;
+        return 1;
+    }
+    if (e->kind == E_UN && e->op == '!' && e->a->kind == E_CALL) {
+        *call = e->a;
+        *op = OP_EQ;
+        return 1;
+    }
+    if (e->kind == E_BIN && (e->op == OP_EQ || e->op == OP_NE || e->op == '<' ||
+                             e->op == '>' || e->op == OP_LE || e->op == OP_GE)) {
+        CBExpr *other = NULL;
+        int o = e->op;
+        if (e->a->kind == E_CALL && e->b->kind == E_NUM && e->b->num == 0) {
+            *call = e->a;
+        } else if (e->b->kind == E_CALL && e->a->kind == E_NUM && e->a->num == 0) {
+            *call = e->b;
+            if (o == '<') o = '>';
+            else if (o == '>') o = '<';
+            else if (o == OP_LE) o = OP_GE;
+            else if (o == OP_GE) o = OP_LE;
+        } else {
+            return 0;
+        }
+        (void)other;
+        *op = o;
+        return 1;
+    }
+    return 0;
+}
+
+static int emit_memcmp_cond(Cg *cg, CBExpr *e, int op, const char *false_label) {
     CBlock *b = cg->b;
     int sa, sp, sl, ra, rb;
-    char *top, *true_label;
+    char *top, *less, *greater, *equal, *truth;
     if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp) || !eval(cg, e->c, &sl))
         return 0;
     ra = pick_addr(b, 0, 0);
@@ -2479,30 +2524,35 @@ static int emit_memcmp_cond(Cg *cg, CBExpr *e, const char *false_label) {
     load_slot(b, e->line, sa, type_ptr(), ra);
     load_slot(b, e->line, sp, type_ptr(), rb);
     load_slot(b, e->line, sl, e->c->type, 0);
-    top = new_label(b);
-    true_label = new_label(b);
-    asm_line(b, e->line, "LTGR %%r0,%%r0");
-    asm_line(b, e->line, "BRCL 8,%s", false_label);
+    top = new_label(b); less = new_label(b); greater = new_label(b);
+    equal = new_label(b); truth = new_label(b);
     emit_label(b, e->line, top);
     asm_line(b, e->line, "LTGR %%r0,%%r0");
-    asm_line(b, e->line, "BRCL 8,%s", false_label);
+    asm_line(b, e->line, "BRCL 8,%s", equal);
     asm_line(b, e->line, "CLC 0(1,%%r%d),0(%%r%d)", ra, rb);
-    asm_line(b, e->line, "BRCL 4,%s", true_label);
-    asm_line(b, e->line, "BRCL 2,%s", true_label);
+    asm_line(b, e->line, "BRCL 4,%s", less);
+    asm_line(b, e->line, "BRCL 2,%s", greater);
     asm_line(b, e->line, "AGHI %%r%d,1", ra);
     asm_line(b, e->line, "AGHI %%r%d,1", rb);
     asm_line(b, e->line, "AGHI %%r0,-1");
     asm_line(b, e->line, "BRCL 15,%s", top);
-    emit_label(b, e->line, true_label);
-    free(top);
-    free(true_label);
+    emit_label(b, e->line, less);
+    if (cmp_cc_false(op, 1)) asm_line(b, e->line, "BRCL 15,%s", false_label);
+    asm_line(b, e->line, "BRCL 15,%s", truth);
+    emit_label(b, e->line, greater);
+    if (cmp_cc_false(op, 2)) asm_line(b, e->line, "BRCL 15,%s", false_label);
+    asm_line(b, e->line, "BRCL 15,%s", truth);
+    emit_label(b, e->line, equal);
+    if (cmp_cc_false(op, 0)) asm_line(b, e->line, "BRCL 15,%s", false_label);
+    emit_label(b, e->line, truth);
+    free(top); free(less); free(greater); free(equal); free(truth);
     return 1;
 }
 
-static int emit_strcmp_cond(Cg *cg, CBExpr *e, const char *false_label) {
+static int emit_strcmp_cond(Cg *cg, CBExpr *e, int op, const char *false_label) {
     CBlock *b = cg->b;
     int sa, sp, ra, rb;
-    char *top, *true_label;
+    char *top, *less, *greater, *equal, *truth;
     if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
     ra = pick_addr(b, 0, 0);
     rb = pick_addr(b, ra, 0);
@@ -2512,30 +2562,38 @@ static int emit_strcmp_cond(Cg *cg, CBExpr *e, const char *false_label) {
     }
     load_slot(b, e->line, sa, type_ptr(), ra);
     load_slot(b, e->line, sp, type_ptr(), rb);
-    top = new_label(b);
-    true_label = new_label(b);
+    top = new_label(b); less = new_label(b); greater = new_label(b);
+    equal = new_label(b); truth = new_label(b);
     emit_label(b, e->line, top);
     asm_line(b, e->line, "CLC 0(1,%%r%d),0(%%r%d)", ra, rb);
-    asm_line(b, e->line, "BRCL 4,%s", true_label);
-    asm_line(b, e->line, "BRCL 2,%s", true_label);
+    asm_line(b, e->line, "BRCL 4,%s", less);
+    asm_line(b, e->line, "BRCL 2,%s", greater);
     asm_line(b, e->line, "LLGC %%r0,0(%%r%d)", ra);
     asm_line(b, e->line, "LTR %%r0,%%r0");
-    asm_line(b, e->line, "BRCL 8,%s", false_label);
+    asm_line(b, e->line, "BRCL 8,%s", equal);
     asm_line(b, e->line, "AGHI %%r%d,1", ra);
     asm_line(b, e->line, "AGHI %%r%d,1", rb);
     asm_line(b, e->line, "BRCL 15,%s", top);
-    emit_label(b, e->line, true_label);
-    free(top);
-    free(true_label);
+    emit_label(b, e->line, less);
+    if (cmp_cc_false(op, 1)) asm_line(b, e->line, "BRCL 15,%s", false_label);
+    asm_line(b, e->line, "BRCL 15,%s", truth);
+    emit_label(b, e->line, greater);
+    if (cmp_cc_false(op, 2)) asm_line(b, e->line, "BRCL 15,%s", false_label);
+    asm_line(b, e->line, "BRCL 15,%s", truth);
+    emit_label(b, e->line, equal);
+    if (cmp_cc_false(op, 0)) asm_line(b, e->line, "BRCL 15,%s", false_label);
+    emit_label(b, e->line, truth);
+    free(top); free(less); free(greater); free(equal); free(truth);
     return 1;
 }
 
 static int emit_cond_zero(Cg *cg, CBExpr *e, const char *label) {
     CBlock *b = cg->b;
-    int s;
-    if (e->kind == E_CALL) {
-        if (!strcmp(e->name, "__memcmp")) return emit_memcmp_cond(cg, e, label);
-        if (!strcmp(e->name, "__strcmp")) return emit_strcmp_cond(cg, e, label);
+    int s, op;
+    CBExpr *call = NULL;
+    if (cmp_cond_call(e, &call, &op)) {
+        if (!strcmp(call->name, "__memcmp")) return emit_memcmp_cond(cg, call, op, label);
+        if (!strcmp(call->name, "__strcmp")) return emit_strcmp_cond(cg, call, op, label);
     }
     if (!eval(cg, e, &s)) return 0;
     load_slot(b, e->line, s, e->type, 0);
