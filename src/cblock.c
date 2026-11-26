@@ -934,6 +934,27 @@ static CBExpr *parse_primary(Parser *p) {
                 return e;
             }
         }
+        if (!strcmp(name, "__cdsg")) {
+            CBExpr *e = mk_expr(E_CALL, type_of(32, 0), line, col);
+            CBExpr *args[3] = {0, 0, 0};
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, 3) || !args[0]->type.ptr ||
+                !args[1]->type.ptr || !args[2]->type.ptr) {
+                if (!p->err)
+                    cb_error(p->b, line, col, "ZA5003", "__cdsg needs three pointers");
+                p->err = 1;
+                return e;
+            }
+            e->a = args[0]; e->b = args[1]; e->c = args[2];
+            return e;
+        }
         CBVar *v = strmap_get(&p->b->byname, name);
         CType t;
         if (type_parse(name, &t)) {
@@ -2220,6 +2241,7 @@ static void emit_test(CBlock *b, int line, CType t) {
 
 static int pick_addr(CBlock *b, int used1, int used2);
 static int pick_addr3(CBlock *b, int used1, int used2, int used3);
+static int pick_addr4(CBlock *b, int used1, int used2, int used3, int used4);
 static int pick_pair(CBlock *b, int used1, int used2, int *second);
 static int eval(Cg *cg, CBExpr *e, int *slotp);
 
@@ -2830,6 +2852,35 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             *slotp = res;
             return 1;
         }
+        if (!strcmp(e->name, "__cdsg")) {
+            int p1, p2, s1, s2, ra;
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp) || !eval(cg, e->c, &sl))
+                return 0;
+            p1 = pick_pair(b, 0, 0, &s1);
+            p2 = pick_pair(b, p1, s1, &s2);
+            ra = pick_addr4(b, p1, s1, p2, s2);
+            if (p1 < 0 || p2 < 0 || ra < 0) {
+                cb_error(b, e->line, e->col, "ZA5005", "__cdsg needs two even-odd pairs and an address register");
+                return 0;
+            }
+            load_slot(b, e->line, sa, type_ptr(), ra);
+            asm_line(b, e->line, "LG %%r%d,0(%%r%d)", p1, ra);
+            asm_line(b, e->line, "LG %%r%d,8(%%r%d)", s1, ra);
+            load_slot(b, e->line, sl, type_ptr(), ra);
+            asm_line(b, e->line, "LG %%r%d,0(%%r%d)", p2, ra);
+            asm_line(b, e->line, "LG %%r%d,8(%%r%d)", s2, ra);
+            load_slot(b, e->line, sp, type_ptr(), ra);
+            asm_line(b, e->line, "CDSG %%r%d,%%r%d,0(%%r%d)", p1, p2, ra);
+            load_slot(b, e->line, sa, type_ptr(), ra);
+            asm_line(b, e->line, "STG %%r%d,0(%%r%d)", p1, ra);
+            asm_line(b, e->line, "STG %%r%d,8(%%r%d)", s1, ra);
+            asm_line(b, e->line, "IPM %%r0");
+            asm_line(b, e->line, "SRL %%r0,%%r0,28");
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
         if (!strcmp(e->name, "__strcpy")) {
             int ra, rb, saved;
             char *top, *end;
@@ -3186,6 +3237,16 @@ static int pick_addr3(CBlock *b, int used1, int used2, int used3) {
             b->scratch[i] != used2 && b->scratch[i] != used3)
             return b->scratch[i];
     if (used1 != 1 && used2 != 1 && used3 != 1) return 1;
+    return -1;
+}
+
+static int pick_addr4(CBlock *b, int used1, int used2, int used3, int used4) {
+    int i;
+    for (i = 0; i < b->nscratch; i++)
+        if (b->scratch[i] != 0 && b->scratch[i] != used1 && b->scratch[i] != used2 &&
+            b->scratch[i] != used3 && b->scratch[i] != used4)
+            return b->scratch[i];
+    if (used1 != 1 && used2 != 1 && used3 != 1 && used4 != 1) return 1;
     return -1;
 }
 

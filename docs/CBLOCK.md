@@ -265,15 +265,17 @@ int cc = __lan(old, value, mem);   /* LAN */
 int cc = __lax(old, value, mem);   /* LAX */
 int cc = __lao(old, value, mem);   /* LAO */
 int cc = __csg(compare, mem, new); /* CSG; compare receives the old value */
+int cc = __cdsg(compare, mem, new);/* CDSG; 16-byte compare/new pairs */
 int cc = __lpd(a, b, c, d);        /* LPD; load pair from c,d into a,b */
 ```
 
 `__ladg`, `__ladlg`, `__lang`, `__laxg`, `__laog` and `__lpdg` are the
 64-bit forms. `__lpd`/`__lpdg` require an even-odd register pair in
-`cscratch`; both registers of the pair must be listed. `__csg` needs three
-nonzero address registers. The current allocator does not yet implement
-pair-aware allocation for `CDSG`, `CLCL`, `MVCLE`, or vector/FPR overlaps;
-those builtins are not exposed yet.
+`cscratch`; both registers of the pair must be listed. `__cdsg` requires two
+even-odd pairs plus one address register. `__csg` needs three nonzero address
+registers. The current allocator does not yet implement pair-aware allocation
+for `CLCL`, `MVCLE`, or vector/FPR overlaps; those builtins are not exposed
+yet.
 
 Constant-length decimal and character builtins are also available:
 

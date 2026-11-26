@@ -2983,7 +2983,7 @@ rules apply to `__strcmp`.
 
 Initial direct z/Architecture builtins: `__popcnt`, `__popcnt4`,
 `__popcnt8`, `__lrv`, `__lrvg`, `__strv`, `__strvg`, `__stck`, `__stcke`,
-`__stckf`, the `__lad*` family, `__csg`, `__lpd`/`__lpdg`, and the
+`__stckf`, the `__lad*` family, `__csg`, `__cdsg`, `__lpd`/`__lpdg`, and the
 constant-length decimal and character builtins `__ap`, `__cp`, `__sp`, `__mp`,
 `__dp`, `__zap`, `__nc`, `__oc`, `__xc`, `__tr`, `__ed`, `__tp`, `__srp`,
 `__cvb`, `__cvd`, `__pack` and `__unpk`. The PLO, transactional-memory, vector, far-pointer and

@@ -101,6 +101,17 @@ static void test_atomic_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "LPD %r8,0(");
+    expect("cdsg builtin",
+           "#pragma cblock a\n"
+           "#pragma cin void *a=%r2, void *b=%r3, void *c=%r4\n"
+           "#pragma cout int32_t cc=%r5\n"
+           "#pragma cscratch %r0, %r1, %r6, %r7, %r8, %r9\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "cc = __cdsg(a, b, c);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "CDSG %r6,%r8,0(");
     expect("csg builtin",
            "#pragma cblock a\n"
            "#pragma cin void *a=%r2, void *b=%r3, void *c=%r4\n"
