@@ -3518,7 +3518,7 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             return 1;
         }
         if (!strcmp(e->name, "__facility")) {
-            int base, count, bitr;
+            int base, count, bitr, shift;
             int tmp;
             char *loop = new_label(b), *done = new_label(b);
             char *zero = new_label(b), *store = new_label(b);
@@ -3526,7 +3526,8 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             base = pick_addr(b, 0, 0);
             count = pick_addr(b, base, 0);
             bitr = pick_addr3(b, base, count, 0);
-            if (base < 0 || count < 0 || bitr < 0) {
+            shift = pick_addr4(b, base, count, bitr, 0);
+            if (base < 0 || count < 0 || bitr < 0 || shift < 0) {
                 cb_error(b, e->line, e->col, "ZA5005",
                          "__facility needs three scratch registers");
                 free(loop); free(done); free(zero); free(store);
@@ -3556,10 +3557,10 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             asm_line(b, e->line, "BRCL 15,%s", store);
             emit_label(b, e->line, done);
             asm_line(b, e->line, "NILF %%r%d,63", bitr);
-            asm_line(b, e->line, "LGHI %%r0,63");
-            asm_line(b, e->line, "SGR %%r0,%%r%d", bitr);
+            asm_line(b, e->line, "LGHI %%r%d,63", shift);
+            asm_line(b, e->line, "SGR %%r%d,%%r%d", shift, bitr);
             asm_line(b, e->line, "LGHI %%r%d,1", bitr);
-            asm_line(b, e->line, "SLLG %%r%d,%%r%d,0(%%r0)", bitr, bitr);
+            asm_line(b, e->line, "SLLG %%r%d,%%r%d,0(%%r%d)", bitr, bitr, shift);
             asm_line(b, e->line, "LG %%r0,0(%%r%d)", base);
             asm_line(b, e->line, "NGR %%r0,%%r%d", bitr);
             asm_line(b, e->line, "LGHI %%r0,0");
@@ -3573,13 +3574,14 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             return 1;
         }
         if (!strcmp(e->name, "__facility_test")) {
-            int pa, bitr;
+            int pa, bitr, shift;
             if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
             pa = pick_addr(b, 0, 0);
             bitr = pick_addr(b, pa, 0);
-            if (pa < 0 || bitr < 0) {
+            shift = pick_addr3(b, pa, bitr, 0);
+            if (pa < 0 || bitr < 0 || shift < 0) {
                 cb_error(b, e->line, e->col, "ZA5005",
-                         "__facility_test needs two scratch registers");
+                         "__facility_test needs three scratch registers");
                 return 0;
             }
             load_slot(b, e->line, sa, type_ptr(), pa);
@@ -3589,10 +3591,10 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             asm_line(b, e->line, "SLLG %%r0,%%r0,3");
             asm_line(b, e->line, "AGR %%r%d,%%r0", pa);
             asm_line(b, e->line, "NILF %%r%d,63", bitr);
-            asm_line(b, e->line, "LGHI %%r0,63");
-            asm_line(b, e->line, "SGR %%r0,%%r%d", bitr);
+            asm_line(b, e->line, "LGHI %%r%d,63", shift);
+            asm_line(b, e->line, "SGR %%r%d,%%r%d", shift, bitr);
             asm_line(b, e->line, "LGHI %%r%d,1", bitr);
-            asm_line(b, e->line, "SLLG %%r%d,%%r%d,0(%%r0)", bitr, bitr);
+            asm_line(b, e->line, "SLLG %%r%d,%%r%d,0(%%r%d)", bitr, bitr, shift);
             asm_line(b, e->line, "LG %%r0,0(%%r%d)", pa);
             asm_line(b, e->line, "NGR %%r0,%%r%d", bitr);
             asm_line(b, e->line, "LGHI %%r0,0");
@@ -4867,15 +4869,16 @@ static int emit_strcmp_cond(Cg *cg, CBExpr *e, int op, const char *false_label) 
 
 static int emit_facility_cond(Cg *cg, CBExpr *e, const char *zero) {
     CBlock *b = cg->b;
-    int sa, sp, base, count, bitr, tmp;
+    int sa, sp, base, count, bitr, shift, tmp;
     if (!strcmp(e->name, "__facility")) {
         char *loop = new_label(b), *done = new_label(b), *no = new_label(b);
         if (!eval(cg, e->a, &sa)) { free(loop); free(done); free(no); return 0; }
         base = pick_addr(b, 0, 0);
         count = pick_addr(b, base, 0);
         bitr = pick_addr3(b, base, count, 0);
-        if (base < 0 || count < 0 || bitr < 0) {
-            cb_error(b, e->line, e->col, "ZA5005", "__facility needs three scratch registers");
+        shift = pick_addr4(b, base, count, bitr, 0);
+        if (base < 0 || count < 0 || bitr < 0 || shift < 0) {
+            cb_error(b, e->line, e->col, "ZA5005", "__facility needs four scratch registers");
             free(loop); free(done); free(no);
             return 0;
         }
@@ -4902,10 +4905,10 @@ static int emit_facility_cond(Cg *cg, CBExpr *e, const char *zero) {
         asm_line(b, e->line, "BRCL 15,%s", zero);
         emit_label(b, e->line, done);
         asm_line(b, e->line, "NILF %%r%d,63", bitr);
-        asm_line(b, e->line, "LGHI %%r0,63");
-        asm_line(b, e->line, "SGR %%r0,%%r%d", bitr);
+        asm_line(b, e->line, "LGHI %%r%d,63", shift);
+        asm_line(b, e->line, "SGR %%r%d,%%r%d", shift, bitr);
         asm_line(b, e->line, "LGHI %%r%d,1", bitr);
-        asm_line(b, e->line, "SLLG %%r%d,%%r%d,0(%%r0)", bitr, bitr);
+        asm_line(b, e->line, "SLLG %%r%d,%%r%d,0(%%r%d)", bitr, bitr, shift);
         asm_line(b, e->line, "LG %%r0,0(%%r%d)", base);
         asm_line(b, e->line, "NGR %%r0,%%r%d", bitr);
         asm_line(b, e->line, "BRCL 8,%s", zero);
@@ -4916,9 +4919,10 @@ static int emit_facility_cond(Cg *cg, CBExpr *e, const char *zero) {
         if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
         base = pick_addr(b, 0, 0);
         bitr = pick_addr(b, base, 0);
-        if (base < 0 || bitr < 0) {
+        shift = pick_addr3(b, base, bitr, 0);
+        if (base < 0 || bitr < 0 || shift < 0) {
             cb_error(b, e->line, e->col, "ZA5005",
-                     "__facility_test needs two scratch registers");
+                     "__facility_test needs three scratch registers");
             return 0;
         }
         load_slot(b, e->line, sa, type_ptr(), base);
@@ -4928,10 +4932,10 @@ static int emit_facility_cond(Cg *cg, CBExpr *e, const char *zero) {
         asm_line(b, e->line, "SLLG %%r0,%%r0,3");
         asm_line(b, e->line, "AGR %%r%d,%%r0", base);
         asm_line(b, e->line, "NILF %%r%d,63", bitr);
-        asm_line(b, e->line, "LGHI %%r0,63");
-        asm_line(b, e->line, "SGR %%r0,%%r%d", bitr);
+        asm_line(b, e->line, "LGHI %%r%d,63", shift);
+        asm_line(b, e->line, "SGR %%r%d,%%r%d", shift, bitr);
         asm_line(b, e->line, "LGHI %%r%d,1", bitr);
-        asm_line(b, e->line, "SLLG %%r%d,%%r%d,0(%%r0)", bitr, bitr);
+        asm_line(b, e->line, "SLLG %%r%d,%%r%d,0(%%r%d)", bitr, bitr, shift);
         asm_line(b, e->line, "LG %%r0,0(%%r%d)", base);
         asm_line(b, e->line, "NGR %%r0,%%r%d", bitr);
         asm_line(b, e->line, "BRCL 8,%s", zero);
