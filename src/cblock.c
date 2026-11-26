@@ -2476,25 +2476,53 @@ static int cmp_cc_false(int op, int cc) {
     }
 }
 
-static int cmp_cond_call(CBExpr *e, CBExpr **call, int *op) {
+static int cmp_eval(int op, int64_t a, int64_t b) {
+    switch (op) {
+    case OP_EQ: return a == b;
+    case OP_NE: return a != b;
+    case '<': return a < b;
+    case OP_LE: return a <= b;
+    case '>': return a > b;
+    case OP_GE: return a >= b;
+    default: return 0;
+    }
+}
+
+/* The result of __memcmp/__strcmp is always -1, 0 or 1. Return -1 when the
+ * comparison is always false, 1 when it is always true, 0 when either is
+ * possible. */
+static int cmp_range_truth(int op, int64_t value) {
+    int any = 0, all = 1, v;
+    for (v = -1; v <= 1; v++) {
+        if (cmp_eval(op, v, value)) any = 1;
+        else all = 0;
+    }
+    return !any ? -1 : all ? 1 : 0;
+}
+
+static int cmp_cond_call(CBExpr *e, CBExpr **call, int *op, int64_t *value) {
     if (e->kind == E_CALL && (!strcmp(e->name, "__memcmp") || !strcmp(e->name, "__strcmp"))) {
         *call = e;
         *op = OP_NE;
+        *value = 0;
         return 1;
     }
     if (e->kind == E_UN && e->op == '!' && e->a->kind == E_CALL) {
         *call = e->a;
         *op = OP_EQ;
+        *value = 0;
         return 1;
     }
     if (e->kind == E_BIN && (e->op == OP_EQ || e->op == OP_NE || e->op == '<' ||
                              e->op == '>' || e->op == OP_LE || e->op == OP_GE)) {
-        CBExpr *other = NULL;
         int o = e->op;
-        if (e->a->kind == E_CALL && e->b->kind == E_NUM && e->b->num == 0) {
+        int64_t v = 0;
+        if (e->a->kind == E_CALL && e->b->kind == E_NUM) {
             *call = e->a;
-        } else if (e->b->kind == E_CALL && e->a->kind == E_NUM && e->a->num == 0) {
+            v = e->b->num;
+        } else if (e->b->kind == E_CALL && e->a->kind == E_NUM) {
             *call = e->b;
+            v = e->a->num;
             if (o == '<') o = '>';
             else if (o == '>') o = '<';
             else if (o == OP_LE) o = OP_GE;
@@ -2502,8 +2530,8 @@ static int cmp_cond_call(CBExpr *e, CBExpr **call, int *op) {
         } else {
             return 0;
         }
-        (void)other;
         *op = o;
+        *value = v;
         return 1;
     }
     return 0;
@@ -2589,11 +2617,20 @@ static int emit_strcmp_cond(Cg *cg, CBExpr *e, int op, const char *false_label) 
 
 static int emit_cond_zero(Cg *cg, CBExpr *e, const char *label) {
     CBlock *b = cg->b;
-    int s, op;
+    int s, op, truth;
+    int64_t value = 0;
     CBExpr *call = NULL;
-    if (cmp_cond_call(e, &call, &op)) {
-        if (!strcmp(call->name, "__memcmp")) return emit_memcmp_cond(cg, call, op, label);
-        if (!strcmp(call->name, "__strcmp")) return emit_strcmp_cond(cg, call, op, label);
+    if (cmp_cond_call(e, &call, &op, &value)) {
+        truth = cmp_range_truth(op, value);
+        if (truth < 0) {
+            asm_line(b, e->line, "BRCL 15,%s", label);
+            return 1;
+        }
+        if (truth > 0) return 1;
+        if (value == 0) {
+            if (!strcmp(call->name, "__memcmp")) return emit_memcmp_cond(cg, call, op, label);
+            if (!strcmp(call->name, "__strcmp")) return emit_strcmp_cond(cg, call, op, label);
+        }
     }
     if (!eval(cg, e, &s)) return 0;
     load_slot(b, e->line, s, e->type, 0);

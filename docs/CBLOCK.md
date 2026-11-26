@@ -229,7 +229,9 @@ including the terminating zero, and returns the original destination pointer.
 It does not check the destination size or overlap. When one is the condition of an `if`,
 `while` or `for`, or is compared to zero with `!`, `==`, `!=`, `<`, `<=`, `>`
 or `>=`, the generated code branches directly on the `CLC` condition code and
-does not create the -1/0/1 result. The byte value is truncated to eight
+does not create the -1/0/1 result. Comparisons that are impossible for the
+-1/0/1 range are folded: `if (__memcmp(a,b,n) > 2)` emits only the false path,
+and `if (__memcmp(a,b,n) != 2)` emits only the true path. The byte value is truncated to eight
 bits. Both use a byte loop with `LLGC`, so the loaded byte does not inherit the
 upper bits of the scratch register. `LLGC` zero-extends the byte; an `IC`
 would leave the previous high bits in place and break the zero test.
