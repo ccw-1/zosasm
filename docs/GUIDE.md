@@ -1305,7 +1305,7 @@ items (section, class, part, label, external reference), `TXT` (the bytes),
 `RLD` (relocations), `END`. After that, if the object has it, the symbolic
 information (below).
 
-`zosasm -dump-readable file.o` prints a human-readable listing grouped by
+`zosasm -dump-readable file.o` (or `-dump -insn file.o`) prints a human-readable listing grouped by
 symbols, text and relocations. Add `-insn` to decode instructions. The
 disassembler is best-effort: an undecodable byte range is shown as `DC`, and
 the reader tries a small even-byte skip to resume at the next instruction.
@@ -1407,7 +1407,8 @@ two runs (today: `__DATE__` and `__TIME__` without `SOURCE_DATE_EPOCH`).
 ```
 zosasm [options] source.za
 zosasm -dump file.o
-zosasm -dump-readable file.o [-insn]
+zosasm -dump [-insn] file.o
+zosasm -dump-readable [-insn] file.o
 zosasm [-generic] [-o out.za] -disasm file.o
 zosasm [-o dir] -unpack file.o
 hlasm2za [options] input.asm        (section 16)

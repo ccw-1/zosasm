@@ -406,10 +406,10 @@ int main(int argc, char **argv) {
         if (a[0] == '-' && a[1] == '-') a++; /* accept --flag too */
         if (!strcmp(a, "-o") && i + 1 < argc) {
             out = argv[++i];
-        } else if (!strcmp(a, "-dump") && i + 1 < argc) {
-            dump = argv[++i];
-        } else if (!strcmp(a, "-dump-readable") && i + 1 < argc) {
-            dump_readable = argv[++i];
+        } else if (!strcmp(a, "-dump")) {
+            dump = (i + 1 < argc && argv[i + 1][0] != '-') ? argv[++i] : "";
+        } else if (!strcmp(a, "-dump-readable")) {
+            dump_readable = (i + 1 < argc && argv[i + 1][0] != '-') ? argv[++i] : "";
         } else if (!strcmp(a, "-insn")) {
             insn = 1;
         } else if (!strcmp(a, "-disasm") && i + 1 < argc) {
@@ -544,21 +544,30 @@ int main(int argc, char **argv) {
     }
     za_ascii = charset ? !strcmp(charset, "ascii") : elf;
     ppo.elf = elf;
-    if ((dump ? 1 : 0) + (dump_readable ? 1 : 0) + (unpack ? 1 : 0) +
+    if ((dump != NULL ? 1 : 0) + (dump_readable != NULL ? 1 : 0) + (unpack ? 1 : 0) +
         (disasm ? 1 : 0) + (only_pp ? 1 : 0) > 1) {
         fprintf(stderr, "zosasm: choose only one of -E, -dump, -dump-readable, -disasm or -unpack\n");
         return 2;
     }
-    if (dump || dump_readable) {
+    if (dump != NULL || dump_readable != NULL) {
+        const char *path = dump && *dump ? dump : dump_readable && *dump_readable ? dump_readable : in;
         for (i = 1; i < argc; i++) {
             const char *a = argv[i];
             if (a[0] == '-' && a[1] == '-') a++;
-            if (!strcmp(a, "-dump") || !strcmp(a, "-dump-readable")) { i++; continue; }
+            if (!strcmp(a, "-dump") || !strcmp(a, "-dump-readable")) {
+                if (i + 1 < argc && argv[i + 1][0] != '-') i++;
+                continue;
+            }
             if (!strcmp(a, "-insn")) continue;
+            if (a[0] != '-') continue;
             fprintf(stderr, "zosasm: -dump takes only -insn as another option\n");
             return 2;
         }
-        return do_dump(dump ? dump : dump_readable, dump_readable != NULL || insn, insn);
+        if (!path) {
+            fprintf(stderr, "zosasm: -dump needs an object file\n");
+            return 2;
+        }
+        return do_dump(path, dump_readable != NULL || insn, insn);
     }
     if (insn) {
         fprintf(stderr, "zosasm: -insn needs -dump or -dump-readable\n");

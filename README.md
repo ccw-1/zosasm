@@ -115,7 +115,7 @@ build/zafmt -i prog.za                      # format the source (guide chapter 2
 build/zosasm -g -gdir /u/me -o prog.o prog.za  # debug info for LLDB inside prog.o (chapter 21); -gside adds prog.dbg for dbx
 ```
 
-Options: `-o FILE`, `-DNAME[=VAL]`, `-Idir`, `-Mdir`, `-sysparm STR`, `-macro-steps N`, `-E`, `-dump FILE`, `-dump-readable FILE`, `-insn`,
+Options: `-o FILE`, `-DNAME[=VAL]`, `-Idir`, `-Mdir`, `-sysparm STR`, `-macro-steps N`, `-E`, `-dump [-insn] FILE`, `-dump-readable [-insn] FILE`,
 `-disasm FILE`, `-unpack FILE`, `-generic`, `-elf`, `-ascii`, `-charset NAME`, `-gz0`, `-gz1`, `-gz2`, `-g`, `-gside`, `-gdwarf`, `-gdir`, `-gmap`, `-gdbgpath`, `-reproducible`, `-strict-registers`, `-diag text|json`,
 `-l FILE`, `-ldata`, `-lpage N`, `-lbrief`, `-version`, `-color`, `-max-errors N`, `-Werror`. Source files use the extension `.za`. `ZOSASM_MACLIB` is a colon separated list of extra macro directories (`-M` and `#pragma macro_path` take precedence).
 

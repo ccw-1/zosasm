@@ -14,7 +14,8 @@ $X -dump $T/hello.o | grep -q "ESD" ; check "dump" $? 0
 $X -dump-readable $T/hello.o > $T/readable.txt; check "-dump-readable" $? 0
 grep -q "GOFF module" $T/readable.txt; check "readable dump heading" $? 0
 $X -dump-readable $T/hello.o -insn | grep -q "STM" ; check "-dump-readable -insn" $? 0
-$X -dump $T/hello.o -insn | grep -q "STM" ; check "-dump -insn" $? 0
+$X -dump -insn $T/hello.o | grep -q "STM" ; check "-dump -insn (before file)" $? 0
+$X -dump $T/hello.o -insn | grep -q "STM" ; check "-dump -insn (after file)" $? 0
 
 printf 'T CSECT\n LA 1,UNDEF\n' > $T/bad.za
 $X -o $T/bad.o $T/bad.za 2>$T/err; check "error exit" $? 1
