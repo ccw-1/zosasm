@@ -158,6 +158,25 @@ static void test_decimal_builtins(void) {
            "ZA5005", NULL);
 }
 
+static void test_16bit_types(void) {
+    expect("16-bit scalars and pointers",
+           "#pragma cblock a\n"
+           "#pragma cin uint16_t *p=%r2\n"
+           "#pragma cout int32_t r=%r3\n"
+           "#pragma cscratch %r0, %r1, %r4\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "int16_t x;\n"
+           "uint16_t y;\n"
+           "x = -1; y = 65535; x = x + 1; y = y + 1;\n"
+           "r = x + y;\n"
+           "r = r + (int32_t)__lrvh(p);\n"
+           "__strvh(y, p);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "LRVH %r0,0(");
+}
+
 static void test_debug_metadata(void) {
     const char *src =
         "#pragma cblock dbg\n"
@@ -434,6 +453,7 @@ int main(void) {
     test_arch_builtins();
     test_atomic_builtins();
     test_decimal_builtins();
+    test_16bit_types();
     test_debug_metadata();
     test_compiled_assembly();
     TEST_MAIN_END();

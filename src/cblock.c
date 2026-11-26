@@ -178,13 +178,19 @@ static int type_parse(const char *s, CType *t) {
     if (n > 0 && q[n - 1] == '*') {
         q[--n] = 0;
         while (n > 0 && (q[n - 1] == ' ' || q[n - 1] == '\t')) q[--n] = 0;
-        if (za_streqi(q, "uint8_t") || za_streqi(q, "void") || za_streqi(q, "char")) {
-            *t = type_ptr();
+        if (za_streqi(q, "uint8_t") || za_streqi(q, "int8_t") ||
+            za_streqi(q, "uint16_t") || za_streqi(q, "int16_t") ||
+            za_streqi(q, "void") || za_streqi(q, "char")) {
+            *t = (za_streqi(q, "uint16_t") || za_streqi(q, "int16_t"))
+                     ? type_ptr_scalar(16, za_streqi(q, "uint16_t"))
+                     : type_ptr();
             free(p);
             return 1;
         }
     }
-    if (za_streqi(q, "int32_t")) { *t = type_of(32, 0); r = 1; }
+    if (za_streqi(q, "int16_t")) { *t = type_of(16, 0); r = 1; }
+    else if (za_streqi(q, "uint16_t")) { *t = type_of(16, 1); r = 1; }
+    else if (za_streqi(q, "int32_t")) { *t = type_of(32, 0); r = 1; }
     else if (za_streqi(q, "uint32_t")) { *t = type_of(32, 1); r = 1; }
     else if (za_streqi(q, "int64_t")) { *t = type_of(64, 0); r = 1; }
     else if (za_streqi(q, "uint64_t")) { *t = type_of(64, 1); r = 1; }
@@ -203,8 +209,12 @@ static int type_text_parse(CBlock *b, const char *text, CType *t) {
     if (n > 0 && q[n - 1] == '*') {
         q[--n] = 0;
         while (n > 0 && (q[n - 1] == ' ' || q[n - 1] == '\t')) q[--n] = 0;
-        if (za_streqi(q, "uint8_t") || za_streqi(q, "void") || za_streqi(q, "char")) {
-            *t = type_ptr();
+        if (za_streqi(q, "uint8_t") || za_streqi(q, "int8_t") ||
+            za_streqi(q, "uint16_t") || za_streqi(q, "int16_t") ||
+            za_streqi(q, "void") || za_streqi(q, "char")) {
+            *t = (za_streqi(q, "uint16_t") || za_streqi(q, "int16_t"))
+                     ? type_ptr_scalar(16, za_streqi(q, "uint16_t"))
+                     : type_ptr();
             r = 1;
         } else {
             CType base;
@@ -236,9 +246,11 @@ static int type_parse_old(const char *s, CType *t) {
 #endif
 
 static CType type_usual(CType a, CType b) {
-    if (a.bits == b.bits) return type_of(a.bits, a.unsig || b.unsig);
-    if (a.bits > b.bits) return type_of(a.bits, a.unsig);
-    return type_of(b.bits, b.unsig);
+    if (a.bits < 32 && b.bits < 32) return type_of(32, 0); /* integer promotion */
+    if (a.bits == 64 || b.bits == 64)
+        return type_of(64, (a.bits == 64 ? a.unsig : b.unsig));
+    if (a.bits == 32 && b.bits == 32) return type_of(32, a.unsig || b.unsig);
+    return a.bits == 32 ? a : b;
 }
 
 static char *trim(const char *s) { return str_trim(s); }
@@ -761,12 +773,14 @@ static CBExpr *parse_primary(Parser *p) {
         }
         if (!strcmp(name, "__popcnt") || !strcmp(name, "__popcnt4") ||
             !strcmp(name, "__popcnt8") || !strcmp(name, "__lrv") ||
-            !strcmp(name, "__lrvg") || !strcmp(name, "__strv") ||
+            !strcmp(name, "__lrvh") || !strcmp(name, "__lrvg") ||
+            !strcmp(name, "__strv") || !strcmp(name, "__strvh") ||
             !strcmp(name, "__strvg") || !strcmp(name, "__stck") ||
             !strcmp(name, "__stcke") || !strcmp(name, "__stckf")) {
             CBExpr *e = mk_expr(E_CALL, type_of(64, 1), line, col);
             CBExpr *args[2] = {0, 0};
-            int argc = (!strcmp(name, "__strv") || !strcmp(name, "__strvg")) ? 2 : 1;
+            int argc = (!strcmp(name, "__strv") || !strcmp(name, "__strvg") ||
+                        !strcmp(name, "__strvh")) ? 2 : 1;
             CBExpr *bad = NULL;
             e->name = xstrdup(name);
             free(name);
@@ -785,18 +799,21 @@ static CBExpr *parse_primary(Parser *p) {
                 e->type = type_of(64, 1);
             else if (!strcmp(e->name, "__popcnt4") || !strcmp(e->name, "__lrv"))
                 e->type = type_of(32, 0);
+            else if (!strcmp(e->name, "__lrvh"))
+                e->type = type_of(16, 1);
             else if (!strcmp(e->name, "__strv") || !strcmp(e->name, "__strvg") ||
                      !strcmp(e->name, "__stck") || !strcmp(e->name, "__stcke") ||
                      !strcmp(e->name, "__stckf"))
                 e->type = type_of(32, 0);
             else
                 e->type = type_of(64, 1);
-            if (!strcmp(e->name, "__lrv") || !strcmp(e->name, "__lrvg") ||
-                !strcmp(e->name, "__stck") || !strcmp(e->name, "__stcke") ||
-                !strcmp(e->name, "__stckf")) {
+            if (!strcmp(e->name, "__lrv") || !strcmp(e->name, "__lrvh") ||
+                !strcmp(e->name, "__lrvg") || !strcmp(e->name, "__stck") ||
+                !strcmp(e->name, "__stcke") || !strcmp(e->name, "__stckf")) {
                 if (!e->a->type.ptr) bad = e->a;
             }
-            if (!strcmp(e->name, "__strv") || !strcmp(e->name, "__strvg")) {
+            if (!strcmp(e->name, "__strv") || !strcmp(e->name, "__strvg") ||
+                !strcmp(e->name, "__strvh")) {
                 if (e->a->type.ptr) bad = e->a;
                 if (!e->b || !e->b->type.ptr) bad = e->b;
             }
@@ -2127,6 +2144,9 @@ static void emit_label(CBlock *b, int line, const char *label) {
 static void load_slot(CBlock *b, int line, int slot, CType t, int reg) {
     long off = slot_off(b, slot);
     if (t.bits == 64) asm_line(b, line, "LG %%r%d,%ld(%%r%d)", reg, off, b->temp_reg);
+    else if (t.bits == 16)
+        asm_line(b, line, t.unsig ? "LLGH %%r%d,%ld(%%r%d)" : "LGH %%r%d,%ld(%%r%d)",
+                 reg, off, b->temp_reg);
     else if (t.unsig) asm_line(b, line, "LLGF %%r%d,%ld(%%r%d)", reg, off, b->temp_reg);
     else asm_line(b, line, "LGF %%r%d,%ld(%%r%d)", reg, off, b->temp_reg);
 }
@@ -2134,6 +2154,7 @@ static void load_slot(CBlock *b, int line, int slot, CType t, int reg) {
 static void store_slot(CBlock *b, int line, int slot, CType t, int reg) {
     long off = slot_off(b, slot);
     if (t.bits == 64) asm_line(b, line, "STG %%r%d,%ld(%%r%d)", reg, off, b->temp_reg);
+    else if (t.bits == 16) asm_line(b, line, "STH %%r%d,%ld(%%r%d)", reg, off, b->temp_reg);
     else asm_line(b, line, "ST %%r%d,%ld(%%r%d)", reg, off, b->temp_reg);
 }
 
@@ -2283,7 +2304,7 @@ static int eval_bin(Cg *cg, CBExpr *e, int *slotp) {
     }
     if (e->a->type.ptr || e->b->type.ptr) {
         CType pt = e->a->type.ptr ? e->a->type : e->b->type;
-        int shift = pt.elem_bits == 64 ? 3 : pt.elem_bits == 32 ? 2 : 0;
+        int shift = pt.elem_bits == 64 ? 3 : pt.elem_bits == 32 ? 2 : pt.elem_bits == 16 ? 1 : 0;
         load_slot(b, e->line, s0, e->a->type, 0);
         load_slot(b, e->line, s1, e->b->type, 1);
         if (e->a->type.ptr && e->b->type.ptr) {
@@ -2381,6 +2402,8 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
         load_slot(b, e->line, sa, type_ptr(), addr);
         if (e->type.bits == 64) asm_line(b, e->line, "LG %%r0,0(%%r%d)", addr);
         else if (e->type.bits == 32) asm_line(b, e->line, "L %%r0,0(%%r%d)", addr);
+        else if (e->type.bits == 16)
+            asm_line(b, e->line, e->type.unsig ? "LLGH %%r0,0(%%r%d)" : "LGH %%r0,0(%%r%d)", addr);
         else asm_line(b, e->line, "LLGC %%r0,0(%%r%d)", addr);
         res = alloc_slot(cg);
         store_slot(b, e->line, res, e->type, 0);
@@ -2540,7 +2563,8 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             *slotp = res;
             return 1;
         }
-        if (!strcmp(e->name, "__lrv") || !strcmp(e->name, "__lrvg")) {
+        if (!strcmp(e->name, "__lrv") || !strcmp(e->name, "__lrvh") ||
+            !strcmp(e->name, "__lrvg")) {
             int addr;
             if (!eval(cg, e->a, &sa)) return 0;
             addr = pick_addr(b, 0, 0);
@@ -2549,13 +2573,16 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
                 return 0;
             }
             load_slot(b, e->line, sa, type_ptr(), addr);
-            asm_line(b, e->line, !strcmp(e->name, "__lrv") ? "LRV %%r0,0(%%r%d)" : "LRVG %%r0,0(%%r%d)", addr);
+            asm_line(b, e->line, !strcmp(e->name, "__lrv") ? "LRV %%r0,0(%%r%d)" :
+                               !strcmp(e->name, "__lrvh") ? "LRVH %%r0,0(%%r%d)" :
+                                                              "LRVG %%r0,0(%%r%d)", addr);
             res = alloc_slot(cg);
             store_slot(b, e->line, res, e->type, 0);
             *slotp = res;
             return 1;
         }
-        if (!strcmp(e->name, "__strv") || !strcmp(e->name, "__strvg")) {
+        if (!strcmp(e->name, "__strv") || !strcmp(e->name, "__strvg") ||
+            !strcmp(e->name, "__strvh")) {
             int addr;
             if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
             addr = pick_addr(b, 0, 0);
@@ -2565,7 +2592,9 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             }
             load_slot(b, e->line, sa, e->a->type, 0);
             load_slot(b, e->line, sp, type_ptr(), addr);
-            asm_line(b, e->line, !strcmp(e->name, "__strv") ? "STRV %%r0,0(%%r%d)" : "STRVG %%r0,0(%%r%d)", addr);
+            asm_line(b, e->line, !strcmp(e->name, "__strv") ? "STRV %%r0,0(%%r%d)" :
+                               !strcmp(e->name, "__strvh") ? "STRVH %%r0,0(%%r%d)" :
+                                                              "STRVG %%r0,0(%%r%d)", addr);
             res = alloc_slot(cg);
             asm_line(b, e->line, "LGHI %%r0,0");
             store_slot(b, e->line, res, type_of(32, 0), 0);
@@ -3626,6 +3655,7 @@ for_fail:
             load_slot(b, st->line, sa, type_ptr(), addr);
             if (st->lval->type.bits == 64) asm_line(b, st->line, "STG %%r0,0(%%r%d)", addr);
             else if (st->lval->type.bits == 32) asm_line(b, st->line, "ST %%r0,0(%%r%d)", addr);
+            else if (st->lval->type.bits == 16) asm_line(b, st->line, "STH %%r0,0(%%r%d)", addr);
             else asm_line(b, st->line, "STC %%r0,0(%%r%d)", addr);
             return 1;
         }

@@ -7,7 +7,7 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 ## Unreleased
 
 * CBLOCK: initial direct z/Architecture builtins `__popcnt`, `__popcnt4`,
-  `__popcnt8`, `__lrv`, `__lrvg`, `__strv`, `__strvg`, `__stck`, `__stcke`,
+  `__popcnt8`, `__lrv`, `__lrvh`, `__lrvg`, `__strv`, `__strvh`, `__strvg`, `__stck`, `__stcke`,
   `__stckf`, `__lad`/`__ladl`/`__ladg`/`__ladlg`, `__lan`/`__lang`,
   `__lax`/`__laxg`, `__lao`/`__laog`, `__csg`, `__cdsg`, `__lpd` and `__lpdg`.
   Constant-length decimal/character builtins `__ap`, `__cp`, `__sp`, `__mp`,

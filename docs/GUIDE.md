@@ -2982,7 +2982,7 @@ against constants outside the -1/0/1 result range are folded. The same
 rules apply to `__strcmp`.
 
 Initial direct z/Architecture builtins: `__popcnt`, `__popcnt4`,
-`__popcnt8`, `__lrv`, `__lrvg`, `__strv`, `__strvg`, `__stck`, `__stcke`,
+`__popcnt8`, `__lrv`, `__lrvh`, `__lrvg`, `__strv`, `__strvh`, `__strvg`, `__stck`, `__stcke`,
 `__stckf`, the `__lad*` family, `__csg`, `__cdsg`, `__lpd`/`__lpdg`, and the
 constant-length decimal and character builtins `__ap`, `__cp`, `__sp`, `__mp`,
 `__dp`, `__zap`, `__nc`, `__oc`, `__xc`, `__tr`, `__ed`, `__tp`, `__srp`,

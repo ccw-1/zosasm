@@ -75,6 +75,8 @@ Types:
 * `int32_t`, `uint32_t`, `int64_t`, `uint64_t`
 * `int` and `unsigned` as 32-bit aliases
 * `uint8_t *`, `void *` and `char *` byte pointers
+* 16-bit scalars promote to 32 bits in expressions; loads use `LGH`/`LLGH`
+  and stores use `STH`
 * string literals as pointer initializers and intrinsic arguments
   (`char *p = "text";`); adjacent literals concatenate, C escapes work
 * typed scalar pointers: `int32_t *`, `uint32_t *`, `int64_t *` and
@@ -244,15 +246,18 @@ The first group of direct-instruction builtins is implemented:
 ```c
 uint64_t n = __popcnt(x);       // POPCNT
 uint32_t v = __lrv(p);          // LRV
+uint16_t v = __lrvh(p);         // LRVH
 uint64_t v = __lrvg(p);         // LRVG
 __strv(v, p);                   // STRV, result value 0
+__strvh(v, p);                  // STRVH, result value 0
 __strvg(v, p);                  // STRVG, result value 0
 int cc = __stck(p);             // STCK, returns CC
 int cc = __stcke(p);            // STCKE, returns CC
 int cc = __stckf(p);            // STCKF, returns CC
 ```
 
-`__lrv*` and `__strv*` take a byte/typed pointer. `__stck*` take a
+`__lrv*` and `__strv*` take a byte/typed pointer; `__lrvh`/`__strvh`
+use `uint16_t *` and halfword loads/stores. `__stck*` take a
 16-byte (STCK/STCKE) or 8-byte (STCKF) output area. The clock builtins return
 the instruction condition code. `__strv*` return 0.
 
@@ -389,7 +394,7 @@ expanded assembly.
 ## Tests
 
 * `make test` runs `tests/test_cblock.c`.
-* `make test-cblock-runtime` runs 47 generated ELF cases under `qemu-s390x`
+* `make test-cblock-runtime` runs 48 generated ELF cases under `qemu-s390x`
   when `s390x-linux-gnu-ld` and `qemu-s390x` are installed. The suite covers
   arithmetic, control flow, pointer arithmetic, `*p`, `p[i]`, `&local`,
   `__memcpy`, `__memmove`, `__memset`, `__strlen`, `__memchr`, `__memcmp`,

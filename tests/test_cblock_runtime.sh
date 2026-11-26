@@ -59,6 +59,14 @@ EOS
 run_case popcnt '         LHI   %r2,255' \
     '#pragma cin uint32_t a=%r2' '#pragma cout int32_t c=%r4' \
     'c = (int32_t)__popcnt(a);' 8
+run_case lrvh "         LARL  %r2,HDATA
+         BRCL  15,HSTART
+         DS    0H
+HDATA    DC    X'0102'
+         DS    0H
+HSTART   DS    0H" \
+    '#pragma cin uint16_t *p=%r2' '#pragma cout int32_t c=%r4' \
+    'c = (int32_t)__lrvh(p) & 255;' 1
 run_case lrv "         LARL  %r2,LDATA
          BRCL  15,LSTART
          DS    0H
