@@ -2355,6 +2355,8 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             asm_line(b, e->line, "LTGR %%r0,%%r0");
             asm_line(b, e->line, "BRCL 8,%s", eq);
             emit_label(b, e->line, top);
+            asm_line(b, e->line, "LTGR %%r0,%%r0");
+            asm_line(b, e->line, "BRCL 8,%s", eq);
             asm_line(b, e->line, "CLC 0(1,%%r%d),0(%%r%d)", ra, rb);
             asm_line(b, e->line, "BRCL 4,%s", less);
             asm_line(b, e->line, "BRCL 2,%s", greater);
@@ -2482,6 +2484,8 @@ static int emit_memcmp_cond(Cg *cg, CBExpr *e, const char *false_label) {
     asm_line(b, e->line, "LTGR %%r0,%%r0");
     asm_line(b, e->line, "BRCL 8,%s", false_label);
     emit_label(b, e->line, top);
+    asm_line(b, e->line, "LTGR %%r0,%%r0");
+    asm_line(b, e->line, "BRCL 8,%s", false_label);
     asm_line(b, e->line, "CLC 0(1,%%r%d),0(%%r%d)", ra, rb);
     asm_line(b, e->line, "BRCL 4,%s", true_label);
     asm_line(b, e->line, "BRCL 2,%s", true_label);

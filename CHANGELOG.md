@@ -4,6 +4,12 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 `vX.Y.Z`. Things not compared with IBM's tools are marked in the User's Guide
 (section 14).
 
+## 0.7.1 - 2026-11-25
+
+* Fix the `__memcmp` loop for an exact match: it now stops when the length
+  reaches zero instead of comparing past the requested range. This affected
+  both the -1/0/1 result and the direct `if (__memcmp(...))` condition.
+
 ## 0.7.0 - 2026-11-25
 
 * CBLOCK `__strcpy(dst, src)` copies through the zero byte and returns the

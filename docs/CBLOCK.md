@@ -222,7 +222,9 @@ reassigned, the length is a compile-time constant and no scan loop is emitted.
 `__memchr` takes a pointer, an integer byte, and a length, and returns a byte
 pointer to the first matching byte, or 0. `__memcmp` compares exactly `len`
 bytes and `__strcmp` compares through the first zero byte; both compare
-unsigned bytes and return -1, 0 or 1. `__strcpy` copies one byte at a time,
+unsigned bytes and return -1, 0 or 1. In a boolean condition,
+`if (__memcmp(a,b,n))` is true when the ranges differ and false when they are
+equal. `__strcpy` copies one byte at a time,
 including the terminating zero, and returns the original destination pointer.
 It does not check the destination size or overlap. When one is the condition of an `if`,
 `while` or `for`, the generated code branches directly on the `CLC`
