@@ -106,7 +106,8 @@ Guide: `docs/GUIDE.md` section 16; `DESIGN.md` section 16.
 
 ```sh
 build/zosasm -o hello.o testdata/hello.za   # assemble
-build/zosasm -dump hello.o                  # print the GOFF structure
+build/zosasm -dump hello.o                  # machine-readable GOFF structure
+build/zosasm -dump-readable -insn hello.o   # readable hex + instructions
 build/zosasm -disasm hello.o -o back.za     # GOFF object -> zosasm source
 build/zosasm -E prog.za                     # show the preprocessed source
 build/zosasm -l prog.lst -o prog.o prog.za  # assemble and write a listing
@@ -115,7 +116,7 @@ build/zafmt -i prog.za                      # format the source (guide chapter 2
 build/zosasm -g -gdir /u/me -o prog.o prog.za  # debug info for LLDB inside prog.o (chapter 21); -gside adds prog.dbg for dbx
 ```
 
-Options: `-o FILE`, `-DNAME[=VAL]`, `-Idir`, `-Mdir`, `-sysparm STR`, `-macro-steps N`, `-E`, `-dump FILE`,
+Options: `-o FILE`, `-DNAME[=VAL]`, `-Idir`, `-Mdir`, `-sysparm STR`, `-macro-steps N`, `-E`, `-dump [-insn] FILE`, `-dump-readable [-insn] FILE`,
 `-disasm FILE`, `-unpack FILE`, `-generic`, `-elf`, `-ascii`, `-charset NAME`, `-gz0`, `-gz1`, `-gz2`, `-g`, `-gside`, `-gdwarf`, `-gdir`, `-gmap`, `-gdbgpath`, `-reproducible`, `-strict-registers`, `-diag text|json`,
 `-l FILE`, `-ldata`, `-lpage N`, `-lbrief`, `-version`, `-color`, `-max-errors N`, `-Werror`. Source files use the extension `.za`. `ZOSASM_MACLIB` is a colon separated list of extra macro directories (`-M` and `#pragma macro_path` take precedence).
 

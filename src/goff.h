@@ -170,6 +170,7 @@ const GoffESD *goff_module_esd(const GoffModule *m, uint32_t id);
 int goff_equal(const GoffModule *a, uint32_t skip_a, uint32_t nskip, const GoffModule *b);
 /* readable listing */
 void goff_dump(const GoffModule *m, FILE *w);
+void goff_dump_readable(const GoffModule *m, FILE *w, int insn);
 /* release a parsed module */
 void goff_free(GoffModule *m);
 

@@ -1300,9 +1300,17 @@ no relocation dictionary), and no program should read it.
 
 ### 12.1 `-dump`
 
-`zosasm -dump file.o` prints the GOFF records: `ESD` items (section, class,
-part, label, external reference), `TXT` (the bytes), `RLD` (relocations),
-`END`. After that, if the object has it, the symbolic information (below).
+`zosasm -dump file.o` prints the machine-readable GOFF records: `ESD`
+items (section, class, part, label, external reference), `TXT` (the bytes),
+`RLD` (relocations), `END`. After that, if the object has it, the symbolic
+information (below).
+
+`zosasm -dump-readable file.o` (or `-dump -insn file.o`) prints a
+human-readable listing grouped by symbols, text and relocations. Without
+`-insn`, text bytes use an xxd-style layout with EBCDIC and ASCII columns on
+the right. With `-insn`, instructions are decoded instead. The disassembler is
+best-effort: an undecodable byte range is shown as `DC`, and the reader tries a
+small even-byte skip to resume at the next instruction.
 
 ### 12.2 ZSYM: symbolic information in the object
 
@@ -1401,6 +1409,8 @@ two runs (today: `__DATE__` and `__TIME__` without `SOURCE_DATE_EPOCH`).
 ```
 zosasm [options] source.za
 zosasm -dump file.o
+zosasm -dump [-insn] file.o
+zosasm -dump-readable [-insn] file.o
 zosasm [-generic] [-o out.za] -disasm file.o
 zosasm [-o dir] -unpack file.o
 hlasm2za [options] input.asm        (section 16)
@@ -1415,6 +1425,9 @@ zafmt [options] [file ...]          (chapter 20)
 | `-Mdir` | add a directory of library macros (`name.zmac`, `name.mac`, also `NAME.zmac`; chapter 19) |
 | `-macro-steps N` | stop a macro expansion after N statements (default 1000000) |
 | `-sysparm STR` | the text of `sys.parm` in macros (HLASM `&SYSPARM`) |
+| `-dump FILE` | print the machine-readable GOFF structure and stop |
+| `-dump-readable FILE` | print a readable GOFF listing and stop |
+| `-insn` | with `-dump` or `-dump-readable`: disassemble the text records |
 | `-E` | print the preprocessed source and stop; `-o FILE` writes it to FILE, `-l` is rejected |
 | `-elf` | write a relocatable ELF64 object for Linux on Z instead of GOFF; implies `-ascii`, ignores `-gz` (section 17) |
 | `-ascii`, `-charset ascii\|ebcdic` | character set of `C'..'` constants and of the type attribute (default `ebcdic`; `ascii` with `-elf`) |

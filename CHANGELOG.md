@@ -4,6 +4,14 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 `vX.Y.Z`. Things not compared with IBM's tools are marked in the User's Guide
 (section 14).
 
+## Unreleased
+
+* `-dump-readable FILE` prints a grouped GOFF listing with section, text and
+  relocation headings. Without `-insn`, text uses an xxd-style layout with
+  EBCDIC and ASCII columns. `-insn` (with `-dump` or `-dump-readable`)
+  disassembles text records using a best-effort even-byte skip over data. The
+  existing machine-readable `-dump` output is unchanged.
+
 ## 0.7.3 - 2026-11-25
 
 * CBLOCK folds comparisons of `__memcmp`/`__strcmp` that are fixed by their
