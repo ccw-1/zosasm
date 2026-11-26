@@ -56,6 +56,17 @@ EOS
     fi
 }
 
+run_case popcnt '         LHI   %r2,255' \
+    '#pragma cin uint32_t a=%r2' '#pragma cout int32_t c=%r4' \
+    'c = (int32_t)__popcnt(a);' 8
+run_case lrv "         LARL  %r2,LDATA
+         BRCL  15,LSTART
+         DS    0H
+LDATA    DC    X'01020304'
+         DS    0H
+LSTART   DS    0H" \
+    '#pragma cin uint32_t *p=%r2' '#pragma cout int32_t c=%r4' \
+    'c = (int32_t)__lrv(p) & 255;' 1
 run_case strings '' '' \
     '#pragma cout int32_t c=%r4' \
     'const char *p = __align(8) "ABC"; c = p[0] + __strlen(p);' 68

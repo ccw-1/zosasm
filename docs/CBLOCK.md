@@ -237,6 +237,29 @@ bits. Both use a byte loop with `LLGC`, so the loaded byte does not inherit the
 upper bits of the scratch register. `LLGC` zero-extends the byte; an `IC`
 would leave the previous high bits in place and break the zero test.
 
+### Initial z/Architecture builtins
+
+The first group of direct-instruction builtins is implemented:
+
+```c
+uint64_t n = __popcnt(x);       // POPCNT
+uint32_t v = __lrv(p);          // LRV
+uint64_t v = __lrvg(p);         // LRVG
+__strv(v, p);                   // STRV, result value 0
+__strvg(v, p);                  // STRVG, result value 0
+int cc = __stck(p);             // STCK, returns CC
+int cc = __stcke(p);            // STCKE, returns CC
+int cc = __stckf(p);            // STCKF, returns CC
+```
+
+`__lrv*` and `__strv*` take a byte/typed pointer. `__stck*` take a
+16-byte (STCK/STCKE) or 8-byte (STCKF) output area. The clock builtins return
+the instruction condition code. `__strv*` return 0.
+
+Register pairs and vector/FPR overlap are not relevant to this first group.
+Later builtins that require an even-odd pair or a vector register will need
+explicit pair-aware scratch allocation; they are not implemented yet.
+
 ### String literal tables
 
 A string literal used as a pointer initializer emits a byte table after the
@@ -323,11 +346,12 @@ expanded assembly.
 ## Tests
 
 * `make test` runs `tests/test_cblock.c`.
-* `make test-cblock-runtime` runs 45 generated ELF cases under `qemu-s390x`
+* `make test-cblock-runtime` runs 47 generated ELF cases under `qemu-s390x`
   when `s390x-linux-gnu-ld` and `qemu-s390x` are installed. The suite covers
   arithmetic, control flow, pointer arithmetic, `*p`, `p[i]`, `&local`,
   `__memcpy`, `__memmove`, `__memset`, `__strlen`, `__memchr`, `__memcmp`,
-  `__strcmp`, `__strcpy`, direct conditions, and the runnable example.
+  `__strcmp`, `__strcpy`, direct conditions, `__popcnt`, `__lrv`, and the
+  runnable example.
 * `tools/cblock_oracle.sh SRC.za pok56` expands a CBLOCK with `zosasm -E`,
   converts it to HLASM source and compares the GOFF structure with HLASM
   through `tryhlasm.sh`.

@@ -48,6 +48,33 @@ static void expect(const char *name, const char *src, const char *want_codes, co
 }
 
 
+static void test_arch_builtins(void) {
+    const char *src =
+        "#pragma cblock arch\n"
+        "#pragma cin uint32_t a=%r2\n"
+        "#pragma cin uint32_t *p=%r3\n"
+        "#pragma cout uint32_t r=%r4\n"
+        "#pragma cscratch %r0, %r1, %r5\n"
+        "#pragma ctemp %r12, 128, down\n"
+        "#pragma cbegin\n"
+        "r = __popcnt(a);\n"
+        "r = r + (int32_t)__lrv(p);\n"
+        "__strv(r, p);\n"
+        "r = r + (int32_t)__stck(p);\n"
+        "#pragma cend\n"
+        " END\n";
+    Out o = run_pp(src);
+    CHECK_STR(o.codes, "");
+    CHECK_MSG(strstr(o.text, "POPCNT %r1,%r0") != NULL, "missing POPCNT: %s", o.text);
+    CHECK_MSG(strstr(o.text, "LRV %r0,0(") != NULL, "missing LRV: %s", o.text);
+    CHECK_MSG(strstr(o.text, "STRV %r0,0(") != NULL, "missing STRV: %s", o.text);
+    CHECK_MSG(strstr(o.text, "STCK 0(") != NULL, "missing STCK: %s", o.text);
+    CHECK_MSG(strstr(o.text, "IPM %r0") != NULL, "missing IPM: %s", o.text);
+    free(o.text);
+    free(o.codes);
+    rep_free(o.rep);
+}
+
 static void test_debug_metadata(void) {
     const char *src =
         "#pragma cblock dbg\n"
@@ -321,6 +348,7 @@ int main(void) {
            "#pragma cbegin\n"
            " END\n",
            "ZA5001", NULL);
+    test_arch_builtins();
     test_debug_metadata();
     test_compiled_assembly();
     TEST_MAIN_END();

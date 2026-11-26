@@ -4,6 +4,12 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 `vX.Y.Z`. Things not compared with IBM's tools are marked in the User's Guide
 (section 14).
 
+## Unreleased
+
+* CBLOCK: initial direct z/Architecture builtins `__popcnt`, `__popcnt4`,
+  `__popcnt8`, `__lrv`, `__lrvg`, `__strv`, `__strvg`, `__stck`, `__stcke`
+  and `__stckf`. PLO/TM/vector/far/float groups are deferred.
+
 ## 0.7.3 - 2026-11-25
 
 * CBLOCK folds comparisons of `__memcmp`/`__strcmp` that are fixed by their
