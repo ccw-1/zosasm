@@ -255,6 +255,31 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "SQXBR %f4,%f4");
+    expect("HFP conversions and divide-to-integer",
+           "#pragma cblock a\n"
+           "#pragma cin float a=%f0, double b=%f2\n"
+           "#pragma cout int32_t c=%r2\n"
+           "#pragma cscratch %r3, %r4, %r5, %f4, %f6, %f8, %f10\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "double d;\n"
+           "float e;\n"
+           "double q;\n"
+           "float qf;\n"
+           "int32_t m;\n"
+           "c = __thder(&d, a);\n"
+           "c = __thdr(&d, b);\n"
+           "c = __tbedr(&e, 0, b);\n"
+           "c = __tbdr(&d, 0, b);\n"
+           "c = __diebr(&qf, &e, a, a, 0);\n"
+           "c = __didbr(&q, &d, b, b, 0);\n"
+           "c = __tceb(a, m);\n"
+           "c = __tcdb(b, m);\n"
+           "c = __tcxb((long double)b, m);\n"
+           "__srnm(m);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "THDER %f4,%f4");
     expect("long double binding needs an FPR pair",
            "#pragma cblock a\n"
            "#pragma cin long double a=%f2\n"

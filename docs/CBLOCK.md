@@ -366,6 +366,16 @@ int cc = __lpxbr(&x, y);      /* LPXBR */
 int cc = __lnxbr(&x, y);      /* LNXBR */
 int cc = __cfxbr(&i, mode, y);/* CFXBR, mode is 0 to 15 */
 int cc = __cgxbr(&l, mode, y);/* CGXBR */
+int cc = __tceb(x, m);        /* TCEB; m is the mask address */
+int cc = __tcdb(x, m);        /* TCDB */
+int cc = __tcxb(x, m);        /* TCXB */
+int cc = __thder(&d, x);      /* THDER: BFP short to HFP */
+int cc = __thdr(&d, x);       /* THDR: BFP long to HFP */
+int cc = __tbedr(&f, mode, x);/* TBEDR: HFP to BFP short */
+int cc = __tbdr(&d, mode, x); /* TBDR: HFP to BFP long */
+int cc = __diebr(&q, &r, a, b, mode); /* DIEBR: 7.0 / 2.0, mode is 0 to 15 */
+int cc = __didbr(&q, &r, a, b, mode); /* DIDBR */
+void __srnm(m);               /* SRNM; m is the mask address */
 ```
 
 `long double` uses 16 bytes and an FPR pair. Store it in a local, pass it
@@ -388,8 +398,9 @@ type. `float` and `double` values can be compared with `<`, `>`, `<=`, `>=`,
 and floating-point values can be used in `if`, `while`, `for`, `&&` and
 `||`. Compound assignments such as `f += 2` work. A conversion to an integer
 truncates toward zero. `++`/`--`, `%` and bit operations on floating-point
-values are not implemented. Hexadecimal floating point, test-data-class,
-divide-to-integer and the `-qfloat=hex` forms are not implemented.
+values are not implemented. The test-data-class forms take the mask
+address as their integer argument, matching XL C. Hexadecimal floating
+point and the `-qfloat=hex` forms are not implemented.
 
 The length arguments must currently be compile-time constants in the
 architectural 0..15 length-field range. Runtime lengths need the same

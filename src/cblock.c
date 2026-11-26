@@ -49,7 +49,7 @@ struct CBExpr {
     int64_t num;
     double fnum;
     CBVar *var;
-    CBExpr *a, *b, *c, *d;
+    CBExpr *a, *b, *c, *d, *arg5;
     char *name; /* E_CALL intrinsic */
     char *str;  /* E_STR bytes, not necessarily NUL terminated */
     size_t slen; /* E_STR length */
@@ -870,7 +870,12 @@ static CBExpr *parse_primary(Parser *p) {
             !strcmp(name, "__fmsub") || !strcmp(name, "__fmsubs") ||
             !strcmp(name, "__sqxbr") || !strcmp(name, "__fixbr") ||
             !strcmp(name, "__lpxbr") || !strcmp(name, "__lnxbr") ||
-            !strcmp(name, "__cfxbr") || !strcmp(name, "__cgxbr")) {
+            !strcmp(name, "__cfxbr") || !strcmp(name, "__cgxbr") ||
+            !strcmp(name, "__tceb") || !strcmp(name, "__tcdb") ||
+            !strcmp(name, "__tcxb") || !strcmp(name, "__srnm") ||
+            !strcmp(name, "__thder") || !strcmp(name, "__thdr") ||
+            !strcmp(name, "__tbedr") || !strcmp(name, "__tbdr") ||
+            !strcmp(name, "__diebr") || !strcmp(name, "__didbr")) {
             CBExpr *e = mk_expr(E_CALL, type_of(32, 0), line, col);
             CBExpr *args[5] = {0, 0, 0, 0, 0};
             int argc = (!strcmp(name, "__efpc")) ? 0 :
@@ -887,7 +892,11 @@ static CBExpr *parse_primary(Parser *p) {
                         !strcmp(name, "__fmadd") || !strcmp(name, "__fmadds") ||
                         !strcmp(name, "__fmsub") || !strcmp(name, "__fmsubs")) ? 3 :
                        (!strcmp(name, "__fixbr") || !strcmp(name, "__lpxbr") ||
-                        !strcmp(name, "__lnxbr")) ? 2 : 1;
+                        !strcmp(name, "__lnxbr") || !strcmp(name, "__tceb") ||
+                        !strcmp(name, "__tcdb") || !strcmp(name, "__tcxb") ||
+                        !strcmp(name, "__thder") || !strcmp(name, "__thdr")) ? 2 :
+                       (!strcmp(name, "__tbedr") || !strcmp(name, "__tbdr")) ? 3 :
+                       (!strcmp(name, "__diebr") || !strcmp(name, "__didbr")) ? 5 : 1;
             CBExpr *bad = NULL;
             e->name = xstrdup(name);
             free(name);
@@ -901,6 +910,7 @@ static CBExpr *parse_primary(Parser *p) {
                 cblock_expr_free(e); p->err = 1; return NULL;
             }
             e->a = args[0]; e->b = args[1]; e->c = args[2];
+            e->d = args[3]; e->arg5 = args[4];
             if (!strcmp(e->name, "__efpc")) e->type = type_of(32, 0);
             else if (!strcmp(e->name, "__sqebr") || !strcmp(e->name, "__fiebr"))
                 e->type = type_fp(32);
@@ -933,6 +943,30 @@ static CBExpr *parse_primary(Parser *p) {
             } else if (!strcmp(e->name, "__cfdbr") || !strcmp(e->name, "__cgdbr")) {
                 if (!e->a->type.ptr || e->b->type.flt || !e->c->type.flt ||
                     e->c->type.bits != 64) bad = e->c;
+            } else if (!strcmp(e->name, "__thder")) {
+                if (!e->a->type.ptr || !e->b->type.flt || e->b->type.bits != 32) bad = e->b;
+            } else if (!strcmp(e->name, "__thdr")) {
+                if (!e->a->type.ptr || !e->b->type.flt || e->b->type.bits != 64) bad = e->b;
+            } else if (!strcmp(e->name, "__tbedr") || !strcmp(e->name, "__tbdr")) {
+                if (!e->a->type.ptr || e->b->type.ptr || e->b->type.flt ||
+                    !e->c->type.flt || e->c->type.bits != 64) bad = e->c;
+            } else if (!strcmp(e->name, "__diebr") || !strcmp(e->name, "__didbr")) {
+                if (!e->a->type.ptr || !e->b->type.ptr || !e->c->type.flt ||
+                    !e->d->type.flt || !e->arg5 || e->arg5->type.ptr ||
+                    e->arg5->type.flt || e->c->type.bits != e->d->type.bits ||
+                    (e->c->type.bits != 32 && e->c->type.bits != 64))
+                    bad = e->c;
+            } else if (!strcmp(e->name, "__tceb")) {
+                if (!e->a->type.flt || e->a->type.bits != 32 || e->b->type.ptr ||
+                    e->b->type.flt) bad = e->a;
+            } else if (!strcmp(e->name, "__tcdb")) {
+                if (!e->a->type.flt || e->a->type.bits != 64 || e->b->type.ptr ||
+                    e->b->type.flt) bad = e->a;
+            } else if (!strcmp(e->name, "__tcxb")) {
+                if (!e->a->type.flt || e->a->type.bits != 128 || e->b->type.ptr ||
+                    e->b->type.flt) bad = e->a;
+            } else if (!strcmp(e->name, "__srnm")) {
+                if (e->a->type.ptr || e->a->type.flt) bad = e->a;
             } else if (!strcmp(e->name, "__sqxbr")) {
                 if (!e->a->type.flt || e->a->type.bits != 128) bad = e->a;
             } else if (!strcmp(e->name, "__fixbr")) {
@@ -2353,6 +2387,7 @@ static void cblock_expr_free(CBExpr *e) {
     cblock_expr_free(e->b);
     cblock_expr_free(e->c);
     cblock_expr_free(e->d);
+    cblock_expr_free(e->arg5);
     free(e->name);
     free(e->str);
     free(e->sym);
@@ -3590,8 +3625,13 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             !strcmp(e->name, "__fmsub") || !strcmp(e->name, "__fmsubs") ||
             !strcmp(e->name, "__sqxbr") || !strcmp(e->name, "__fixbr") ||
             !strcmp(e->name, "__lpxbr") || !strcmp(e->name, "__lnxbr") ||
-            !strcmp(e->name, "__cfxbr") || !strcmp(e->name, "__cgxbr")) {
-            int fa, fb, fc, ra, sb = -1, sc = -1;
+            !strcmp(e->name, "__cfxbr") || !strcmp(e->name, "__cgxbr") ||
+            !strcmp(e->name, "__tceb") || !strcmp(e->name, "__tcdb") ||
+            !strcmp(e->name, "__tcxb") || !strcmp(e->name, "__srnm") ||
+            !strcmp(e->name, "__thder") || !strcmp(e->name, "__thdr") ||
+            !strcmp(e->name, "__tbedr") || !strcmp(e->name, "__tbdr") ||
+            !strcmp(e->name, "__diebr") || !strcmp(e->name, "__didbr")) {
+            int fa, fb, fc, ra, rb, sb = -1, sc = -1, sd = -1;
             int64_t m = 0;
             if (!strcmp(e->name, "__efpc")) {
                 asm_line(b, e->line, "EFPC %%r0");
@@ -3649,6 +3689,129 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
                                                                      "LNDBR %%f%d,%%f%d", fa, fb);
                 asm_line(b, e->line, !strcmp(e->name, "__lpebr") || !strcmp(e->name, "__lnebr")
                                        ? "STE %%f%d,0(%%r%d)" : "STD %%f%d,0(%%r%d)", fa, ra);
+                asm_line(b, e->line, "IPM %%r0");
+                asm_line(b, e->line, "SRL %%r0,28");
+                res = alloc_slot(cg);
+                store_slot(b, e->line, res, type_of(32, 0), 0);
+                *slotp = res;
+                return 1;
+            }
+            if (!strcmp(e->name, "__thder") || !strcmp(e->name, "__thdr")) {
+                int isl = !strcmp(e->name, "__thdr");
+                if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sb)) return 0;
+                fa = pick_fpr(b, -1, -1);
+                ra = pick_addr(b, 0, 0);
+                if (fa < 0 || ra < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "%s needs one FPR and one address register", e->name);
+                    return 0;
+                }
+                load_slot(b, e->line, sa, type_ptr(), ra);
+                load_fp_slot(b, e->line, sb, e->b->type, fa);
+                asm_line(b, e->line, isl ? "THDR %%f%d,%%f%d" : "THDER %%f%d,%%f%d", fa, fa);
+                asm_line(b, e->line, isl ? "STD %%f%d,0(%%r%d)" : "STE %%f%d,0(%%r%d)", fa, ra);
+                asm_line(b, e->line, "IPM %%r0");
+                asm_line(b, e->line, "SRL %%r0,28");
+                res = alloc_slot(cg);
+                store_slot(b, e->line, res, type_of(32, 0), 0);
+                *slotp = res;
+                return 1;
+            }
+            if (!strcmp(e->name, "__tbedr") || !strcmp(e->name, "__tbdr")) {
+                int isl = !strcmp(e->name, "__tbdr");
+                if (!const_eval(e->b, &m) || m < 0 || m > 15) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "%s needs a constant rounding mode 0 to 15", e->name);
+                    return 0;
+                }
+                if (!eval(cg, e->a, &sa) || !eval(cg, e->c, &sc)) return 0;
+                fa = pick_fpr(b, -1, -1);
+                ra = pick_addr(b, 0, 0);
+                if (fa < 0 || ra < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "%s needs one FPR and one address register", e->name);
+                    return 0;
+                }
+                load_slot(b, e->line, sa, type_ptr(), ra);
+                load_fp_slot(b, e->line, sc, e->c->type, fa);
+                asm_line(b, e->line, isl ? "TBDR %%f%d,%lld,%%f%d" : "TBEDR %%f%d,%lld,%%f%d",
+                         fa, (long long)m, fa);
+                asm_line(b, e->line, isl ? "STD %%f%d,0(%%r%d)" : "STE %%f%d,0(%%r%d)", fa, ra);
+                asm_line(b, e->line, "IPM %%r0");
+                asm_line(b, e->line, "SRL %%r0,28");
+                res = alloc_slot(cg);
+                store_slot(b, e->line, res, type_of(32, 0), 0);
+                *slotp = res;
+                return 1;
+            }
+            if (!strcmp(e->name, "__diebr") || !strcmp(e->name, "__didbr")) {
+                int isl = !strcmp(e->name, "__didbr");
+                if (!const_eval(e->arg5, &m) || m < 0 || m > 15) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "%s needs a constant rounding mode 0 to 15", e->name);
+                    return 0;
+                }
+                if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp) ||
+                    !eval(cg, e->c, &sc) || !eval(cg, e->d, &sd))
+                    return 0;
+                fa = pick_fpr(b, -1, -1);
+                fb = pick_fpr(b, fa, -1);
+                fc = pick_fpr(b, fa, fb);
+                ra = pick_addr(b, 0, 0);
+                rb = pick_addr(b, ra, 0);
+                if (fa < 0 || fb < 0 || fc < 0 || ra < 0 || rb < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "%s needs three FPRs and two address registers", e->name);
+                    return 0;
+                }
+                load_slot(b, e->line, sa, type_ptr(), ra);
+                load_slot(b, e->line, sp, type_ptr(), rb);
+                load_fp_slot(b, e->line, sc, e->c->type, fa);
+                load_fp_slot(b, e->line, sd, e->d->type, fb);
+                asm_line(b, e->line, isl ? "DIDBR %%f%d,%%f%d,%%f%d,%lld" :
+                                            "DIEBR %%f%d,%%f%d,%%f%d,%lld",
+                         fa, fc, fb, (long long)m);
+                asm_line(b, e->line, isl ? "STD %%f%d,0(%%r%d)" : "STE %%f%d,0(%%r%d)", fa, ra);
+                asm_line(b, e->line, isl ? "STD %%f%d,0(%%r%d)" : "STE %%f%d,0(%%r%d)", fc, rb);
+                asm_line(b, e->line, "IPM %%r0");
+                asm_line(b, e->line, "SRL %%r0,28");
+                res = alloc_slot(cg);
+                store_slot(b, e->line, res, type_of(32, 0), 0);
+                *slotp = res;
+                return 1;
+            }
+            if (!strcmp(e->name, "__srnm")) {
+                if (!eval(cg, e->a, &sa)) return 0;
+                ra = pick_addr(b, 0, 0);
+                if (ra < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005", "__srnm needs a nonzero address register");
+                    return 0;
+                }
+                load_slot(b, e->line, sa, e->a->type, ra);
+                asm_line(b, e->line, "SRNM 0(%%r%d)", ra);
+                res = alloc_slot(cg);
+                asm_line(b, e->line, "LGHI %%r0,0");
+                store_slot(b, e->line, res, type_of(32, 0), 0);
+                *slotp = res;
+                return 1;
+            }
+            if (!strcmp(e->name, "__tceb") || !strcmp(e->name, "__tcdb") ||
+                !strcmp(e->name, "__tcxb")) {
+                int isx = !strcmp(e->name, "__tcxb");
+                if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sb)) return 0;
+                fa = isx ? pick_fpr_pair(b, -1, -1) : pick_fpr(b, -1, -1);
+                ra = pick_addr(b, 0, 0);
+                if (fa < 0 || ra < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "%s needs one FPR%s and one address register", e->name,
+                             isx ? " pair" : "");
+                    return 0;
+                }
+                load_fp_slot(b, e->line, sa, e->a->type, fa);
+                load_slot(b, e->line, sb, e->b->type, ra);
+                asm_line(b, e->line, isx ? "TCXB %%f%d,0(%%r%d)" :
+                         !strcmp(e->name, "__tceb") ? "TCEB %%f%d,0(%%r%d)" :
+                                                       "TCDB %%f%d,0(%%r%d)", fa, ra);
                 asm_line(b, e->line, "IPM %%r0");
                 asm_line(b, e->line, "SRL %%r0,28");
                 res = alloc_slot(cg);
