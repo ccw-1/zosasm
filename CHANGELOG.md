@@ -4,6 +4,11 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 `vX.Y.Z`. Things not compared with IBM's tools are marked in the User's Guide
 (section 14).
 
+## 0.6.0 - 2026-11-25
+
+* CBLOCK `__memcmp(a, b, len)` and `__strcmp(a, b)` return -1, 0 or 1,
+  compare unsigned bytes, and use `CLC` loops without extra scratch registers.
+
 ## 0.5.0 - 2026-11-25
 
 * CBLOCK string literal tables: `char *p = "..."` and

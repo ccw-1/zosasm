@@ -205,6 +205,18 @@ int main(void) {
            "#pragma cend\n"
            " END\n",
            "", "LGFI %r0,5");
+    expect("memcmp and strcmp compile",
+           "#pragma cblock cmp\n"
+           "#pragma cin char *a=%r2, char *b=%r3\n"
+           "#pragma cout int32_t n=%r4\n"
+           "#pragma cscratch %r0, %r1, %r5\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "n = __memcmp(a, b, 4);\n"
+           "n = n + __strcmp(a, b);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "CLC 0(1,%r1),0(%r5)");
     expect("bad string alignment",
            "#pragma cblock lit\n"
            "#pragma ctemp %r12, 128, down\n"

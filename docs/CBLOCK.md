@@ -2,7 +2,7 @@
 
 Status: experimental. Capture, integer expressions, control flow including
 `switch`, labels and `goto`, byte and typed scalar pointers, opaque named
-pointers, string literal tables, the memory intrinsics, the `__strlen`/`__memchr` scan intrinsics,
+pointers, string literal tables, the memory intrinsics, the `__strlen`/`__memchr`/`__memcmp`/`__strcmp` intrinsics,
 and DWARF locals with `-g` are implemented. The original design is in
 `CBLOCK-DESIGN.md`.
 
@@ -152,8 +152,8 @@ There are no arrays, structures, floating point, user-defined function calls,
 global variables or recursion. String literals are data tables, not values:
 they can initialize a `char *` and are not otherwise assignable or indexable as
 objects. The `__strlen`,
-`__memchr`, `__sizeof` and `__offsetof` forms are the only call-like
-expressions. There is no pointer-to-pointer type and no array type. `return`
+`__memchr`, `__memcmp`, `__strcmp`, `__sizeof` and `__offsetof` forms are the
+only call-like expressions. There is no pointer-to-pointer type and no array type. `return`
 is not allowed; the block ends at `#pragma cend`.
 
 Signed overflow wraps two's complement. Division by a constant zero is a
@@ -206,18 +206,24 @@ They emit the assembler's `sizeof` and `offsetof` expressions as `LGFI`
 immediates. The section or DSECT must be visible to the assembler. They do not
 give CBLOCK a layout: `__offsetof` returns an integer, not a typed field.
 
-Two expression intrinsics scan bytes:
+Byte scan and compare intrinsics:
 
 ```c
-uint64_t n = __strlen(str);          // length up to the first zero byte
+uint64_t n = __strlen(str);            // length up to the first zero byte
 uint8_t *p = __memchr(str, byte, len); // pointer to byte, or 0
+int32_t c = __memcmp(a, b, len);       // <0, 0, >0
+int32_t c = __strcmp(a, b);            // <0, 0, >0
 ```
 
 `__strlen` takes a pointer and returns an unsigned 64-bit length. When the
 argument is a string literal, or a pointer initialized with one and never
 reassigned, the length is a compile-time constant and no scan loop is emitted.
 `__memchr` takes a pointer, an integer byte, and a length, and returns a byte
-pointer to the first matching byte, or 0. The byte value is truncated to eight
+pointer to the first matching byte, or 0. `__memcmp` compares exactly `len`
+bytes and `__strcmp` compares through the first zero byte; both compare
+unsigned bytes and return -1, 0 or 1. When one is the condition of an `if`,
+`while` or `for`, the generated code branches directly on the `CLC`
+condition code and does not create the -1/0/1 result. The byte value is truncated to eight
 bits. Both use a byte loop with `LLGC`, so the loaded byte does not inherit the
 upper bits of the scratch register. `LLGC` zero-extends the byte; an `IC`
 would leave the previous high bits in place and break the zero test.

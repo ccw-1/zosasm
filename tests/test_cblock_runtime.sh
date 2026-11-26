@@ -59,6 +59,50 @@ EOS
 run_case strings '' '' \
     '#pragma cout int32_t c=%r4' \
     'const char *p = __align(8) "ABC"; c = p[0] + __strlen(p);' 68
+run_case memcmp "         LARL  %r2,MA
+         LARL  %r3,MB
+         BRCL  15,MSTART
+         DS    0H
+MA       DC    C'ABC'
+         DS    0H
+MB       DC    C'ABD'
+         DS    0H
+MSTART   DS    0H" \
+    '#pragma cin char *a=%r2, char *b=%r3' '#pragma cout int32_t c=%r4' \
+    'c = __memcmp(a,b,3);' 255
+run_case strcmp "         LARL  %r2,SA
+         LARL  %r3,SB
+         BRCL  15,SSTART
+         DS    0H
+SA       DC    C'ABC'
+         DS    0H
+SB       DC    C'ABC'
+         DS    0H
+SSTART   DS    0H" \
+    '#pragma cin char *a=%r2, char *b=%r3' '#pragma cout int32_t c=%r4' \
+    'c = __strcmp(a,b);' 0
+run_case memcmpcond "         LARL  %r2,MA
+         LARL  %r3,MB
+         BRCL  15,MSTART
+         DS    0H
+MA       DC    C'ABC'
+         DS    0H
+MB       DC    C'ABD'
+         DS    0H
+MSTART   DS    0H" \
+    '#pragma cin char *a=%r2, char *b=%r3' '#pragma cout int32_t c=%r4' \
+    'c = 0; if (__memcmp(a,b,3)) c = 1;' 1
+run_case strcmpcond "         LARL  %r2,SA
+         LARL  %r3,SB
+         BRCL  15,SSTART
+         DS    0H
+SA       DC    C'ABC'
+         DS    0H
+SB       DC    C'ABC'
+         DS    0H
+SSTART   DS    0H" \
+    '#pragma cin char *a=%r2, char *b=%r3' '#pragma cout int32_t c=%r4' \
+    'c = 0; if (__strcmp(a,b)) c = 1;' 0
 run_case add '         LHI   %r2,20
          LHI   %r3,22' \
     '#pragma cin int32_t a=%r2, int32_t b=%r3' '#pragma cout int32_t c=%r4' \

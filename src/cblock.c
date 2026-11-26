@@ -673,9 +673,11 @@ static CBExpr *parse_primary(Parser *p) {
                 return e;
             }
         }
-        if (!strcmp(name, "__strlen") || !strcmp(name, "__memchr")) {
+        if (!strcmp(name, "__strlen") || !strcmp(name, "__memchr") ||
+            !strcmp(name, "__memcmp") || !strcmp(name, "__strcmp")) {
             CBExpr *e = mk_expr(E_CALL, type_of(64, 1), line, col);
-            int want = name[2] == 's' ? 1 : 3;
+            int want = !strcmp(name, "__strlen") ? 1 : !strcmp(name, "__strcmp") ? 2 : 3;
+            int is_memchr = !strcmp(name, "__memchr");
             e->name = xstrdup(name);
             free(name);
             lex_next(l);
@@ -685,13 +687,15 @@ static CBExpr *parse_primary(Parser *p) {
             }
             lex_next(l);
             e->a = parse_assignment(p);
-            if (want == 3) {
+            if (want >= 2) {
                 if (!tok_is(l, ',')) {
                     cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected ',' in intrinsic");
                     free(e->name); free(e); p->err = 1; return NULL;
                 }
                 lex_next(l);
                 e->b = parse_assignment(p);
+            }
+            if (want == 3) {
                 if (!tok_is(l, ',')) {
                     cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected ',' in intrinsic");
                     free(e->name); free(e); p->err = 1; return NULL;
@@ -704,7 +708,7 @@ static CBExpr *parse_primary(Parser *p) {
                 free(e->name); free(e); p->err = 1; return NULL;
             }
             lex_next(l);
-            if (!e->a || (want == 3 && (!e->b || !e->c))) {
+            if (!e->a || (want >= 2 && !e->b) || (want == 3 && !e->c)) {
                 cblock_expr_free(e);
                 p->err = 1;
                 return NULL;
@@ -713,12 +717,17 @@ static CBExpr *parse_primary(Parser *p) {
                 cb_error(p->b, line, col, "ZA5003", "%s needs a pointer", e->name);
                 p->err = 1;
             }
-            if (want == 3 && (e->b->type.ptr || e->c->type.ptr)) {
-                cb_error(p->b, line, col, "ZA5003", "__memchr takes an integer byte and length");
+            if (!is_memchr && want >= 2 && e->b && !e->b->type.ptr) {
+                cb_error(p->b, line, col, "ZA5003", "%s needs pointer arguments", e->name);
                 p->err = 1;
             }
-            if (want == 1) e->type = type_of(64, 1);
-            else e->type = type_ptr();
+            if (want == 3 && e->c && e->c->type.ptr) {
+                cb_error(p->b, line, col, "ZA5003", "%s needs an integer length", e->name);
+                p->err = 1;
+            }
+            if (!strcmp(e->name, "__strlen")) e->type = type_of(64, 1);
+            else if (is_memchr) e->type = type_ptr();
+            else e->type = type_of(32, 0);
             return e;
         }
         CBVar *v = strmap_get(&p->b->byname, name);
@@ -2292,6 +2301,86 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             *slotp = res;
             return 1;
         }
+        if (!strcmp(e->name, "__memcmp")) {
+            int ra, rb;
+            char *top, *eq, *less, *greater, *end;
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp) || !eval(cg, e->c, &sl))
+                return 0;
+            ra = pick_addr(b, 0, 0);
+            rb = pick_addr(b, ra, 0);
+            if (ra < 0 || rb < 0) {
+                cb_error(b, e->line, e->col, "ZA5005", "__memcmp needs two nonzero scratch registers");
+                return 0;
+            }
+            load_slot(b, e->line, sa, type_ptr(), ra);
+            load_slot(b, e->line, sp, type_ptr(), rb);
+            load_slot(b, e->line, sl, e->c->type, 0);
+            top = new_label(b); eq = new_label(b); less = new_label(b);
+            greater = new_label(b); end = new_label(b);
+            asm_line(b, e->line, "LTGR %%r0,%%r0");
+            asm_line(b, e->line, "BRCL 8,%s", eq);
+            emit_label(b, e->line, top);
+            asm_line(b, e->line, "CLC 0(1,%%r%d),0(%%r%d)", ra, rb);
+            asm_line(b, e->line, "BRCL 4,%s", less);
+            asm_line(b, e->line, "BRCL 2,%s", greater);
+            asm_line(b, e->line, "AGHI %%r%d,1", ra);
+            asm_line(b, e->line, "AGHI %%r%d,1", rb);
+            asm_line(b, e->line, "AGHI %%r0,-1");
+            asm_line(b, e->line, "BRCL 15,%s", top);
+            emit_label(b, e->line, eq);
+            asm_line(b, e->line, "LGHI %%r0,0");
+            asm_line(b, e->line, "BRCL 15,%s", end);
+            emit_label(b, e->line, less);
+            asm_line(b, e->line, "LGHI %%r0,-1");
+            asm_line(b, e->line, "BRCL 15,%s", end);
+            emit_label(b, e->line, greater);
+            asm_line(b, e->line, "LGHI %%r0,1");
+            emit_label(b, e->line, end);
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            free(top); free(eq); free(less); free(greater); free(end);
+            return 1;
+        }
+        if (!strcmp(e->name, "__strcmp")) {
+            int ra, rb;
+            char *top, *eq, *less, *greater, *end;
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+            ra = pick_addr(b, 0, 0);
+            rb = pick_addr(b, ra, 0);
+            if (ra < 0 || rb < 0) {
+                cb_error(b, e->line, e->col, "ZA5005", "__strcmp needs two nonzero scratch registers");
+                return 0;
+            }
+            load_slot(b, e->line, sa, type_ptr(), ra);
+            load_slot(b, e->line, sp, type_ptr(), rb);
+            top = new_label(b); eq = new_label(b); less = new_label(b);
+            greater = new_label(b); end = new_label(b);
+            emit_label(b, e->line, top);
+            asm_line(b, e->line, "CLC 0(1,%%r%d),0(%%r%d)", ra, rb);
+            asm_line(b, e->line, "BRCL 4,%s", less);
+            asm_line(b, e->line, "BRCL 2,%s", greater);
+            asm_line(b, e->line, "LLGC %%r0,0(%%r%d)", ra);
+            asm_line(b, e->line, "LTR %%r0,%%r0");
+            asm_line(b, e->line, "BRCL 8,%s", eq);
+            asm_line(b, e->line, "AGHI %%r%d,1", ra);
+            asm_line(b, e->line, "AGHI %%r%d,1", rb);
+            asm_line(b, e->line, "BRCL 15,%s", top);
+            emit_label(b, e->line, eq);
+            asm_line(b, e->line, "LGHI %%r0,0");
+            asm_line(b, e->line, "BRCL 15,%s", end);
+            emit_label(b, e->line, less);
+            asm_line(b, e->line, "LGHI %%r0,-1");
+            asm_line(b, e->line, "BRCL 15,%s", end);
+            emit_label(b, e->line, greater);
+            asm_line(b, e->line, "LGHI %%r0,1");
+            emit_label(b, e->line, end);
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            free(top); free(eq); free(less); free(greater); free(end);
+            return 1;
+        }
         if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp) || !eval(cg, e->c, &sl)) return 0;
         {
             int addr = pick_addr(b, 0, 0), pat = pick_addr(b, addr, 0), chr = pick_addr(b, addr, pat);
@@ -2336,9 +2425,79 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
 static int codegen_stmt(Cg *cg, CBStmt *st);
 static int codegen_block(Cg *cg, CBStmtVec *v);
 
+/* Compare loops used when __memcmp/__strcmp is the condition itself. They
+ * branch directly on the condition code and do not materialize -1/0/1. */
+static int emit_memcmp_cond(Cg *cg, CBExpr *e, const char *false_label) {
+    CBlock *b = cg->b;
+    int sa, sp, sl, ra, rb;
+    char *top, *true_label;
+    if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp) || !eval(cg, e->c, &sl))
+        return 0;
+    ra = pick_addr(b, 0, 0);
+    rb = pick_addr(b, ra, 0);
+    if (ra < 0 || rb < 0) {
+        cb_error(b, e->line, e->col, "ZA5005", "__memcmp needs two nonzero scratch registers");
+        return 0;
+    }
+    load_slot(b, e->line, sa, type_ptr(), ra);
+    load_slot(b, e->line, sp, type_ptr(), rb);
+    load_slot(b, e->line, sl, e->c->type, 0);
+    top = new_label(b);
+    true_label = new_label(b);
+    asm_line(b, e->line, "LTGR %%r0,%%r0");
+    asm_line(b, e->line, "BRCL 8,%s", false_label);
+    emit_label(b, e->line, top);
+    asm_line(b, e->line, "CLC 0(1,%%r%d),0(%%r%d)", ra, rb);
+    asm_line(b, e->line, "BRCL 4,%s", true_label);
+    asm_line(b, e->line, "BRCL 2,%s", true_label);
+    asm_line(b, e->line, "AGHI %%r%d,1", ra);
+    asm_line(b, e->line, "AGHI %%r%d,1", rb);
+    asm_line(b, e->line, "AGHI %%r0,-1");
+    asm_line(b, e->line, "BRCL 15,%s", top);
+    emit_label(b, e->line, true_label);
+    free(top);
+    free(true_label);
+    return 1;
+}
+
+static int emit_strcmp_cond(Cg *cg, CBExpr *e, const char *false_label) {
+    CBlock *b = cg->b;
+    int sa, sp, ra, rb;
+    char *top, *true_label;
+    if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+    ra = pick_addr(b, 0, 0);
+    rb = pick_addr(b, ra, 0);
+    if (ra < 0 || rb < 0) {
+        cb_error(b, e->line, e->col, "ZA5005", "__strcmp needs two nonzero scratch registers");
+        return 0;
+    }
+    load_slot(b, e->line, sa, type_ptr(), ra);
+    load_slot(b, e->line, sp, type_ptr(), rb);
+    top = new_label(b);
+    true_label = new_label(b);
+    emit_label(b, e->line, top);
+    asm_line(b, e->line, "CLC 0(1,%%r%d),0(%%r%d)", ra, rb);
+    asm_line(b, e->line, "BRCL 4,%s", true_label);
+    asm_line(b, e->line, "BRCL 2,%s", true_label);
+    asm_line(b, e->line, "LLGC %%r0,0(%%r%d)", ra);
+    asm_line(b, e->line, "LTR %%r0,%%r0");
+    asm_line(b, e->line, "BRCL 8,%s", false_label);
+    asm_line(b, e->line, "AGHI %%r%d,1", ra);
+    asm_line(b, e->line, "AGHI %%r%d,1", rb);
+    asm_line(b, e->line, "BRCL 15,%s", top);
+    emit_label(b, e->line, true_label);
+    free(top);
+    free(true_label);
+    return 1;
+}
+
 static int emit_cond_zero(Cg *cg, CBExpr *e, const char *label) {
     CBlock *b = cg->b;
     int s;
+    if (e->kind == E_CALL) {
+        if (!strcmp(e->name, "__memcmp")) return emit_memcmp_cond(cg, e, label);
+        if (!strcmp(e->name, "__strcmp")) return emit_strcmp_cond(cg, e, label);
+    }
     if (!eval(cg, e, &s)) return 0;
     load_slot(b, e->line, s, e->type, 0);
     emit_test(b, e->line, e->type);
