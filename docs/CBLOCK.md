@@ -35,8 +35,9 @@ It creates no symbol and does not touch `%r14` or the stack pointer.
 
 * `docs/examples/cblock.za` assembles only. It shows a loop, `switch`, byte
   and typed scalar pointers, an opaque DSECT pointer, `__sizeof`,
-  `__offsetof`, `__memcpy`, `__memmove`, `__memset`, `__strlen` and
-  `__memchr`. Comments give the expected values.
+  `__offsetof`, `__memcpy`, `__memmove`, `__memset`, `__strlen`,
+  `__memchr`, `__memcmp`, `__strcmp` and `__strcpy`. Comments give the
+expected values.
 * `docs/examples/cblock-linux.za` is a runnable Linux on Z program. It builds
   `strlen=5 pos=2` and writes it with `SVC 4`.
 * `docs/GUIDE.md` section 22 prints both examples.
@@ -74,7 +75,7 @@ Types:
 * `int32_t`, `uint32_t`, `int64_t`, `uint64_t`
 * `int` and `unsigned` as 32-bit aliases
 * `uint8_t *`, `void *` and `char *` byte pointers
-* string literals, only as pointer initializers or `__strlen` arguments
+* string literals as pointer initializers and intrinsic arguments
   (`char *p = "text";`); adjacent literals concatenate, C escapes work
 * typed scalar pointers: `int32_t *`, `uint32_t *`, `int64_t *` and
   `uint64_t *`
@@ -322,11 +323,11 @@ expanded assembly.
 ## Tests
 
 * `make test` runs `tests/test_cblock.c`.
-* `make test-cblock-runtime` runs 35 generated ELF cases under `qemu-s390x`
+* `make test-cblock-runtime` runs 45 generated ELF cases under `qemu-s390x`
   when `s390x-linux-gnu-ld` and `qemu-s390x` are installed. The suite covers
   arithmetic, control flow, pointer arithmetic, `*p`, `p[i]`, `&local`,
-  `__memcpy`, `__memmove`, `__memset`, `__strlen`, `__memchr`, and the
-  runnable example.
+  `__memcpy`, `__memmove`, `__memset`, `__strlen`, `__memchr`, `__memcmp`,
+  `__strcmp`, `__strcpy`, direct conditions, and the runnable example.
 * `tools/cblock_oracle.sh SRC.za pok56` expands a CBLOCK with `zosasm -E`,
   converts it to HLASM source and compares the GOFF structure with HLASM
   through `tryhlasm.sh`.

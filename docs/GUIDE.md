@@ -2960,6 +2960,27 @@ A CBLOCK is inline code, not a function. It reads registers named in
 `#pragma ctemp`. The body is a closed integer C subset. It creates no symbol
 and does not touch the stack pointer.
 
+The builtins are:
+
+| builtin | kind | meaning |
+|---|---|---|
+| `__memcpy(dst, src, len)` | statement | copy `len` bytes, non-overlapping |
+| `__memmove(dst, src, len)` | statement | copy `len` bytes, overlap allowed |
+| `__memset(dst, byte, len)` | statement | fill `len` bytes |
+| `__strcpy(dst, src)` | expression | copy through NUL, return `dst` |
+| `__strlen(p)` | expression | length through NUL |
+| `__memchr(p, byte, len)` | expression | first matching byte, or 0 |
+| `__memcmp(a, b, len)` | expression | compare `len` bytes: -1, 0, 1 |
+| `__strcmp(a, b)` | expression | compare through NUL: -1, 0, 1 |
+| `__sizeof(section)` | expression | assembler `sizeof` |
+| `__offsetof(section, field)` | expression | assembler `offsetof` |
+| `__align(N) "text"` | qualifier | align a generated string table |
+
+`if (__memcmp(...))` is true when the bytes differ; `if (!__memcmp(...))`
+and `if (__memcmp(...) == 0)` are true when they are equal. Comparisons
+against constants outside the -1/0/1 result range are folded. The same
+rules apply to `__strcmp`.
+
 The first example uses a loop, `switch`, byte pointers, and every memory and
 scan intrinsic. It only assembles; the comments give the expected values.
 
