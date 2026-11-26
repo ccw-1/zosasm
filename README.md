@@ -277,3 +277,8 @@ The version is in `src/version.h` (`zosasm -version`, the listing header, the
 versioning: 0.x until the output has been checked against IBM's tools for
 the whole language. Releases are git tags `vX.Y.Z`; `CHANGELOG.md` lists the
 changes.
+
+## License
+
+MIT. See `LICENSE`.
+
