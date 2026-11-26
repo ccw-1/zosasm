@@ -421,6 +421,24 @@ pointer points to the zoned decimal field. `__czdt` and `__czxt` return the
 instruction condition code. The `-qdfp` option activates these builtins in
 XL C; CBLOCK accepts the names directly.
 
+### Runtime facility checks
+
+Three builtins expose the facility list:
+
+```c
+int cc = __stfle(area);              /* one STFLE, stores 8 bytes, returns CC */
+int has = __facility(129);           /* issues STFLE internally and tests bit 129 */
+int has = __facility_test(list, 129);/* tests bit 129 in a caller-supplied list */
+```
+
+Facility bits are numbered from 0 at the most significant bit of the first
+8-byte word. `__facility` uses a 32-byte temporary block and supports bits
+0 through 255. `__stfle` and `__facility_test` let the caller supply the
+storage, for example a local variable or a z/OS absolute address. Prefer an
+explicit storage area over the z/OS location-200 convention: writing a
+fixed system location is platform-specific and can clash with the caller.
+The result is `1` when the bit is set and `0` otherwise.
+
 ### Vector builtins
 
 The first vector group supports `__vector` types, `%vN` bindings and

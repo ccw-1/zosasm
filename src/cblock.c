@@ -936,6 +936,43 @@ static CBExpr *parse_primary(Parser *p) {
                 return e;
             }
         }
+        if (!strcmp(name, "__stfle") || !strcmp(name, "__facility") ||
+            !strcmp(name, "__facility_test")) {
+            CBExpr *e;
+            CBExpr *args[2] = {0, 0};
+            int argc = !strcmp(name, "__facility_test") ? 2 : 1;
+            e = mk_expr(E_CALL, type_of(32, 0), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, argc)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1];
+            if (!strcmp(e->name, "__stfle")) {
+                if (!e->a->type.ptr) {
+                    cb_error(p->b, line, col, "ZA5003", "__stfle needs a storage pointer");
+                    p->err = 1;
+                }
+            } else if (!strcmp(e->name, "__facility_test")) {
+                if (!e->a->type.ptr || e->b->type.ptr || e->b->type.flt) {
+                    cb_error(p->b, line, col, "ZA5003",
+                             "__facility_test needs a list pointer and an integer bit number");
+                    p->err = 1;
+                }
+            } else {
+                if (e->a->type.ptr || e->a->type.flt) {
+                    cb_error(p->b, line, col, "ZA5003", "%s needs an integer bit number", e->name);
+                    p->err = 1;
+                }
+            }
+            return e;
+        }
         if (!strcmp(name, "__strlen") || !strcmp(name, "__memchr") ||
             !strcmp(name, "__memcmp") || !strcmp(name, "__strcmp") ||
             !strcmp(name, "__strcpy")) {
@@ -3460,6 +3497,114 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
                 asm_line(b, e->line, "LGFI %%r0,sizeof(%s)", e->sym);
             res = alloc_slot(cg);
             store_slot(b, e->line, res, type_of(64, 1), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__stfle")) {
+            int addr;
+            if (!eval(cg, e->a, &sa)) return 0;
+            addr = pick_addr(b, 0, 0);
+            if (addr < 0) {
+                cb_error(b, e->line, e->col, "ZA5005", "__stfle needs a nonzero address register");
+                return 0;
+            }
+            load_slot(b, e->line, sa, type_ptr(), addr);
+            asm_line(b, e->line, "STFLE 0(%%r%d)", addr);
+            asm_line(b, e->line, "IPM %%r0");
+            asm_line(b, e->line, "SRL %%r0,28");
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__facility")) {
+            int base, count, bitr;
+            int tmp;
+            char *loop = new_label(b), *done = new_label(b);
+            char *zero = new_label(b), *store = new_label(b);
+            if (!eval(cg, e->a, &sa)) { free(loop); free(done); free(zero); free(store); return 0; }
+            base = pick_addr(b, 0, 0);
+            count = pick_addr(b, base, 0);
+            bitr = pick_addr3(b, base, count, 0);
+            if (base < 0 || count < 0 || bitr < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "__facility needs three scratch registers");
+                free(loop); free(done); free(zero); free(store);
+                return 0;
+            }
+            tmp = alloc_slots(cg, 4);
+            load_slot(b, e->line, sa, e->a->type, bitr);
+            asm_line(b, e->line, "CGHI %%r%d,255", bitr);
+            asm_line(b, e->line, "BRCL 2,%s", zero);
+            asm_line(b, e->line, "LGR %%r0,%%r%d", bitr);
+            asm_line(b, e->line, "SRL %%r0,6");
+            asm_line(b, e->line, "AHI %%r0,1");
+            asm_line(b, e->line, "LGR %%r%d,%%r0", count);
+            asm_line(b, e->line, "LA %%r%d,%ld(%%r%d)", base, slot_off(b, tmp), b->temp_reg);
+            emit_label(b, e->line, loop);
+            asm_line(b, e->line, "STFLE 0(%%r%d)", base);
+            asm_line(b, e->line, "IPM %%r0");
+            asm_line(b, e->line, "SRL %%r0,28");
+            asm_line(b, e->line, "AHI %%r%d,-1", count);
+            asm_line(b, e->line, "BRCL 8,%s", done);
+            asm_line(b, e->line, "LTR %%r0,%%r0");
+            asm_line(b, e->line, "BRCL 8,%s", zero);
+            asm_line(b, e->line, "AHI %%r%d,8", base);
+            asm_line(b, e->line, "BRCL 15,%s", loop);
+            emit_label(b, e->line, zero);
+            asm_line(b, e->line, "LGHI %%r0,0");
+            asm_line(b, e->line, "BRCL 15,%s", store);
+            emit_label(b, e->line, done);
+            asm_line(b, e->line, "NILF %%r%d,63", bitr);
+            asm_line(b, e->line, "LGHI %%r0,63");
+            asm_line(b, e->line, "SGR %%r0,%%r%d", bitr);
+            asm_line(b, e->line, "LGHI %%r%d,1", bitr);
+            asm_line(b, e->line, "SLLG %%r%d,%%r%d,0(%%r0)", bitr, bitr);
+            asm_line(b, e->line, "LG %%r0,0(%%r%d)", base);
+            asm_line(b, e->line, "NGR %%r0,%%r%d", bitr);
+            asm_line(b, e->line, "LGHI %%r0,0");
+            asm_line(b, e->line, "BRCL 8,%s", store);
+            asm_line(b, e->line, "LGHI %%r0,1");
+            emit_label(b, e->line, store);
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            free(loop); free(done); free(zero); free(store);
+            return 1;
+        }
+        if (!strcmp(e->name, "__facility_test")) {
+            int pa, bitr;
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+            pa = pick_addr(b, 0, 0);
+            bitr = pick_addr(b, pa, 0);
+            if (pa < 0 || bitr < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "__facility_test needs two scratch registers");
+                return 0;
+            }
+            load_slot(b, e->line, sa, type_ptr(), pa);
+            load_slot(b, e->line, sp, e->b->type, bitr);
+            asm_line(b, e->line, "LGR %%r0,%%r%d", bitr);
+            asm_line(b, e->line, "SRL %%r0,6");
+            asm_line(b, e->line, "SLLG %%r0,%%r0,3");
+            asm_line(b, e->line, "AGR %%r%d,%%r0", pa);
+            asm_line(b, e->line, "NILF %%r%d,63", bitr);
+            asm_line(b, e->line, "LGHI %%r0,63");
+            asm_line(b, e->line, "SGR %%r0,%%r%d", bitr);
+            asm_line(b, e->line, "LGHI %%r%d,1", bitr);
+            asm_line(b, e->line, "SLLG %%r%d,%%r%d,0(%%r0)", bitr, bitr);
+            asm_line(b, e->line, "LG %%r0,0(%%r%d)", pa);
+            asm_line(b, e->line, "NGR %%r0,%%r%d", bitr);
+            asm_line(b, e->line, "LGHI %%r0,0");
+            {
+                char *lab = new_label(b);
+                asm_line(b, e->line, "BRCL 8,%s", lab);
+                asm_line(b, e->line, "LGHI %%r0,1");
+                emit_label(b, e->line, lab);
+                free(lab);
+            }
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(32, 0), 0);
             *slotp = res;
             return 1;
         }

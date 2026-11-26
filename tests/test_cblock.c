@@ -280,6 +280,20 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "THDER %f4,%f4");
+    expect("runtime facility checks",
+           "#pragma cblock a\n"
+           "#pragma cout int32_t c=%r2\n"
+           "#pragma cscratch %r3, %r4, %r5, %r6, %r7\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "uint64_t area;\n"
+           "c = __stfle(&area);\n"
+           "c = __facility(0);\n"
+           "c = __facility(129);\n"
+           "c = __facility_test(&area, 0);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "STFLE 0(");
     expect("vector load and splat",
            "#pragma cblock a\n"
            "#pragma cin __vector unsigned int v=%v0\n"
