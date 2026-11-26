@@ -11,8 +11,8 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
   `__stckf`, `__lad`/`__ladl`/`__ladg`/`__ladlg`, `__lan`/`__lang`,
   `__lax`/`__laxg`, `__lao`/`__laog`, `__csg`, `__lpd` and `__lpdg`.
   Constant-length decimal/character builtins `__ap`, `__cp`, `__sp`, `__mp`,
-  `__dp`, `__zap`, `__nc`, `__oc`, `__xc`, `__tr`, `__cvb`, `__cvd`,
-  `__pack` and `__unpk` are included. PLO/TM/vector/far/float groups are
+  `__dp`, `__zap`, `__nc`, `__oc`, `__xc`, `__tr`, `__ed`, `__tp`, `__srp`,
+  `__cvb`, `__cvd`, `__pack` and `__unpk` are included. PLO/TM/vector/far/float groups are
   deferred. `__lpd*` needs an even-odd pair in `cscratch`; decimal lengths
   must be compile-time constants.
 

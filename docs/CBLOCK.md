@@ -292,6 +292,9 @@ int cc = __cvb(p);             /* CVB */
 void  __cvd(v, p);             /* CVD */
 int cc = __pack(a, l1, b, l2); /* PACK */
 int cc = __unpk(a, l1, b, l2); /* UNPK */
+int cc = __ed(a, b, len);      /* ED */
+int cc = __tp(a, len);         /* TP */
+int cc = __srp(a, len, shift, pattern); /* SRP */
 ```
 
 The length arguments must currently be compile-time constants in the

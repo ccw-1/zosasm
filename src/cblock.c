@@ -884,8 +884,13 @@ static CBExpr *parse_primary(Parser *p) {
                 !strcmp(name, "__pack") || !strcmp(name, "__unpk"))
                 argn = 4, dec4 = 1;
             else if (!strcmp(name, "__nc") || !strcmp(name, "__oc") ||
-                     !strcmp(name, "__xc") || !strcmp(name, "__tr"))
+                     !strcmp(name, "__xc") || !strcmp(name, "__tr") ||
+                     !strcmp(name, "__ed"))
                 argn = 3;
+            else if (!strcmp(name, "__tp"))
+                argn = 2;
+            else if (!strcmp(name, "__srp"))
+                argn = 4;
             else if (!strcmp(name, "__cvd"))
                 argn = 2;
             else if (!strcmp(name, "__cvb"))
@@ -906,7 +911,12 @@ static CBExpr *parse_primary(Parser *p) {
                     cblock_expr_free(e); p->err = 1; return NULL;
                 }
                 e->a = args[0]; e->b = args[1]; e->c = args[2]; e->d = args[3];
-                if (dec4) {
+                if (!strcmp(e->name, "__srp")) {
+                    if (!e->a->type.ptr || e->b->type.ptr || e->c->type.ptr || e->d->type.ptr)
+                        bad = 1;
+                } else if (!strcmp(e->name, "__tp")) {
+                    if (!e->a->type.ptr || e->b->type.ptr) bad = 1;
+                } else if (dec4) {
                     if (!e->a->type.ptr || e->b->type.ptr || !e->c->type.ptr || e->d->type.ptr)
                         bad = 1;
                 } else if (argn == 3) {
@@ -2667,7 +2677,9 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             !strcmp(e->name, "__pack") || !strcmp(e->name, "__unpk") ||
             !strcmp(e->name, "__nc") || !strcmp(e->name, "__oc") ||
             !strcmp(e->name, "__xc") || !strcmp(e->name, "__tr") ||
-            !strcmp(e->name, "__cvb") || !strcmp(e->name, "__cvd")) {
+            !strcmp(e->name, "__ed") || !strcmp(e->name, "__tp") ||
+            !strcmp(e->name, "__srp") || !strcmp(e->name, "__cvb") ||
+            !strcmp(e->name, "__cvd")) {
             int64_t l1, l2 = 0;
             int ra, rb;
             const char *op = NULL;
@@ -2701,8 +2713,53 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
                 *slotp = res;
                 return 1;
             }
+            if (!strcmp(e->name, "__tp")) {
+                if (!const_eval(e->b, &l1) || l1 < 0 || l1 > 15) {
+                    cb_error(b, e->line, e->col, "ZA5005", "__tp length must be a constant 0 to 15");
+                    return 0;
+                }
+                if (!eval(cg, e->a, &sa)) return 0;
+                ra = pick_addr(b, 0, 0);
+                if (ra < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005", "__tp needs a nonzero scratch register");
+                    return 0;
+                }
+                load_slot(b, e->line, sa, type_ptr(), ra);
+                asm_line(b, e->line, "TP 0(%lld,%%r%d)", (long long)l1, ra);
+                asm_line(b, e->line, "IPM %%r0");
+                asm_line(b, e->line, "SRL %%r0,%%r0,28");
+                res = alloc_slot(cg);
+                store_slot(b, e->line, res, type_of(32, 0), 0);
+                *slotp = res;
+                return 1;
+            }
+            if (!strcmp(e->name, "__srp")) {
+                int64_t sh, pat;
+                if (!const_eval(e->b, &l1) || l1 < 0 || l1 > 15 ||
+                    !const_eval(e->c, &sh) || sh < -128 || sh > 127 ||
+                    !const_eval(e->d, &pat) || pat < 0 || pat > 255) {
+                    cb_error(b, e->line, e->col, "ZA5005", "__srp needs constant length, shift and pattern");
+                    return 0;
+                }
+                if (!eval(cg, e->a, &sa)) return 0;
+                ra = pick_addr(b, 0, 0);
+                if (ra < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005", "__srp needs a nonzero scratch register");
+                    return 0;
+                }
+                load_slot(b, e->line, sa, type_ptr(), ra);
+                asm_line(b, e->line, "SRP 0(%lld,%%r%d),%lld,%lld", (long long)l1, ra,
+                         (long long)sh, (long long)pat);
+                asm_line(b, e->line, "IPM %%r0");
+                asm_line(b, e->line, "SRL %%r0,%%r0,28");
+                res = alloc_slot(cg);
+                store_slot(b, e->line, res, type_of(32, 0), 0);
+                *slotp = res;
+                return 1;
+            }
             if (!strcmp(e->name, "__nc") || !strcmp(e->name, "__oc") ||
-                !strcmp(e->name, "__xc") || !strcmp(e->name, "__tr")) {
+                !strcmp(e->name, "__xc") || !strcmp(e->name, "__tr") ||
+                !strcmp(e->name, "__ed")) {
                 if (!const_eval(e->c, &l1) || l1 < 0 || l1 > 15) {
                     cb_error(b, e->line, e->col, "ZA5005", "%s length must be a constant 0 to 15", e->name);
                     return 0;
@@ -2716,6 +2773,15 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
                 }
                 load_slot(b, e->line, sa, type_ptr(), ra);
                 load_slot(b, e->line, sp, type_ptr(), rb);
+                if (!strcmp(e->name, "__ed")) {
+                    asm_line(b, e->line, "ED 0(%lld,%%r%d),0(%%r%d)", (long long)l1, ra, rb);
+                    asm_line(b, e->line, "IPM %%r0");
+                    asm_line(b, e->line, "SRL %%r0,%%r0,28");
+                    res = alloc_slot(cg);
+                    store_slot(b, e->line, res, type_of(32, 0), 0);
+                    *slotp = res;
+                    return 1;
+                }
                 if (!strcmp(e->name, "__tr")) {
                     asm_line(b, e->line, "TR 0(%lld,%%r%d),0(%%r%d)", (long long)l1, ra, rb);
                     res = alloc_slot(cg);

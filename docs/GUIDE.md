@@ -2985,8 +2985,8 @@ Initial direct z/Architecture builtins: `__popcnt`, `__popcnt4`,
 `__popcnt8`, `__lrv`, `__lrvg`, `__strv`, `__strvg`, `__stck`, `__stcke`,
 `__stckf`, the `__lad*` family, `__csg`, `__lpd`/`__lpdg`, and the
 constant-length decimal and character builtins `__ap`, `__cp`, `__sp`, `__mp`,
-`__dp`, `__zap`, `__nc`, `__oc`, `__xc`, `__tr`, `__cvb`, `__cvd`, `__pack`
-and `__unpk`. The PLO, transactional-memory, vector, far-pointer and
+`__dp`, `__zap`, `__nc`, `__oc`, `__xc`, `__tr`, `__ed`, `__tp`, `__srp`,
+`__cvb`, `__cvd`, `__pack` and `__unpk`. The PLO, transactional-memory, vector, far-pointer and
 floating-point groups are not implemented in CBLOCK yet. `__lpd*` requires
 both registers of an even-odd pair in `cscratch`; decimal lengths must be
 compile-time constants.

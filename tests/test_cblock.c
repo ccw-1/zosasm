@@ -127,6 +127,9 @@ static void test_decimal_builtins(void) {
            "__tr(a, b, 3);\n"
            "cc = __cvb(a);\n"
            "__cvd(cc, a);\n"
+           "cc = __ed(a, b, 5);\n"
+           "cc = __tp(a, 5);\n"
+           "cc = __srp(a, 5, 2, 15);\n"
            "__pack(a, 2, b, 3);\n"
            "#pragma cend\n"
            " END\n",
