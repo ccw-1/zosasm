@@ -6,6 +6,9 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 
 ## Unreleased
 
+* `XATTR RENAME(YES|NO)` sets the GOFF ESD renameable flag (bit 41.2).
+  `-disasm` writes it back and `-dump-readable` shows it.
+
 * `-dump-readable FILE` prints a grouped GOFF listing with section, text and
   relocation headings. Without `-insn`, text uses an xxd-style layout with
   EBCDIC and ASCII columns. `-insn` (with `-dump` or `-dump-readable`)

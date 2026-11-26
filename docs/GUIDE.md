@@ -454,7 +454,8 @@ of other tools (the disassembler writes them): `RMODE(NONE)` and
 `TASKING(NONE)`.
 
 `XATTR` attributes: `LINKAGE(OS|XPLINK)`, `SCOPE(SECTION|MODULE|LIBRARY|EXPORT|IMPORT)`,
-`REFERENCE(CODE|DATA[,DIRECT|INDIRECT])`, `PSECT(name)`, `ATTRIBUTES(label)`.  `PSECT` names a
+`REFERENCE(CODE|DATA[,DIRECT|INDIRECT])`, `PSECT(name)`, `ATTRIBUTES(label)`,
+`RENAME(YES|NO)` (the GOFF ESD renameable bit 41.2).  `PSECT` names a
 label in another class of the same section, a section or a DXD; zosasm writes
 its ESD id in the LD/PR ADA field (`ZA3038` for a bad name).  A class name is
 also accepted as a zosasm extension (generic `-disasm` uses it).  On an

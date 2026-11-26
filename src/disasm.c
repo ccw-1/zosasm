@@ -991,7 +991,7 @@ static const GoffESD *ada_esd(const Ctx *x, uint32_t id) {
 
 /* the XATTR operands that differ from the defaults the assembler assumes */
 static void xattr_stmt(Ctx *x, const char *name, const GoffBehavior *b, int def_scope, int def_exec,
-                       uint32_t ada) {
+                       uint32_t ada, int renameable) {
     Buf ops = {0};
     if (b->scope != def_scope) {
         const char *sc = scope_name(b->scope);
@@ -1023,6 +1023,7 @@ static void xattr_stmt(Ctx *x, const char *name, const GoffBehavior *b, int def_
             warnf(x, "the PSECT/ADA target %u of %s cannot be written", ada, name);
         }
     }
+    if (renameable) buf_printf(&ops, "%sRENAME(YES)", ops.len ? "," : "");
     if (ops.len) stmt(&x->out, name, "XATTR", buf_cstr(&ops));
 }
 
@@ -1358,21 +1359,23 @@ static void emit_section(Ctx *x, DSect *s, size_t sect_idx) {
         }
         if (folded) continue;
         stmt(&x->out, NULL, er->weak ? "WXTRN" : "EXTRN", er->name);
-        xattr_stmt(x, er->name, &er->esd->attr, GOFF_SCOPE_UNSPEC, 0, er->esd->ada_id);
+        xattr_stmt(x, er->name, &er->esd->attr, GOFF_SCOPE_UNSPEC, 0, er->esd->ada_id,
+                   er->esd->renameable);
     }
     if (s->ld && s->name)
         xattr_stmt(x, s->name, &s->ld->attr, GOFF_SCOPE_UNSPEC,
-                   first->ed->attr.executable, s->ld->ada_id);
+                   first->ed->attr.executable, s->ld->ada_id, s->ld->renameable);
     for (i = 0; i < s->classes.n; i++) {
         DClass *c = s->classes.v[i];
         size_t k;
         for (k = 0; k < c->names.n; k++)
             if (!c->names.v[k].sect && !c->names.v[k].zs)
                 xattr_stmt(x, c->names.v[k].name, &c->names.v[k].esd->attr, GOFF_SCOPE_UNSPEC,
-                           c->ed->attr.executable, c->names.v[k].esd->ada_id);
+                           c->ed->attr.executable, c->names.v[k].esd->ada_id,
+                           c->names.v[k].esd->renameable);
         if (c->pr)
             xattr_stmt(x, c->part, &c->pr->attr, GOFF_SCOPE_UNSPEC,
-                       c->ed->attr.executable, c->pr->ada_id);
+                       c->ed->attr.executable, c->pr->ada_id, c->pr->renameable);
     }
     for (i = 0; i < s->classes.n; i++) {
         DClass *c = s->classes.v[i];

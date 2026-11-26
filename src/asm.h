@@ -163,6 +163,7 @@ typedef struct {
     Class *psect_cls;   /* resolved PSECT class (ED), or NULL */
     Symbol *psect_sym;  /* resolved PSECT DXD (PR), or NULL */
     char *attributes;   /* XATTR ATTRIBUTES(label) */
+    int renameable;     /* XATTR RENAME(YES|NO), -1 = unset */
     Class *attr_cls;    /* the class of that label */
     int64_t attr_off;   /* its offset in the class */
     Span def;

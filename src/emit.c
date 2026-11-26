@@ -111,6 +111,10 @@ static void apply_attributes(GoffESD *e, const XAttr *x) {
     }
 }
 
+static void apply_renameable(GoffESD *e, const XAttr *x) {
+    if (x && x->renameable >= 0) e->renameable = x->renameable;
+}
+
 static const char *put_esd(GoffWriter *w, GoffESD *e) {
     const char *r = goff_write_esd(w, e);
     free(e->name);
@@ -151,6 +155,12 @@ static const char *emit_class(GoffWriter *w, const Module *m, Section *s, Class 
         ed.has_fill = 1;
         ed.fill = (uint8_t)c->attr.fill;
     }
+    {
+        XAttr *cx = xattr_of(m, c->name);
+        apply_xattr(&ed.attr, cx);
+        apply_attributes(&ed, cx);
+        apply_renameable(&ed, cx);
+    }
     if (c->part) {
         ed.length = 0;
         ed.name_space = GOFF_NS_PARTS3;
@@ -176,6 +186,7 @@ static const char *emit_class(GoffWriter *w, const Module *m, Section *s, Class 
     pr.attr.alignment = align;
     if (c->attr.priority >= 0) pr.priority = (uint32_t)c->attr.priority;
     apply_xattr(&pr.attr, xattr_of(m, c->part));
+    apply_renameable(&pr, xattr_of(m, c->part));
     if ((e = put_esd(w, &pr)) != NULL) return e;
     c->pr = pr.id;
     return NULL;
@@ -217,6 +228,7 @@ static const char *emit_prv(GoffWriter *w, const Module *m, Section *s) {
         if (sym->xattr) {
             pr.ada_id = psect_esd(sym->xattr);
             apply_attributes(&pr, sym->xattr);
+            apply_renameable(&pr, sym->xattr);
         }
         if ((e = put_esd(w, &pr)) != NULL) return e;
         sym->esd = pr.id;
@@ -478,6 +490,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
         set_name(&sd, sect_name(s));
         sd.attr.common = s->kind == K_COM;
         apply_xattr(&sd.attr, xattr_of(m, s->name));
+        apply_renameable(&sd, xattr_of(m, s->name));
         /* a blank CSECT name cannot be referenced by name; scope it to the
          * section so two blank-named CSECTs in different objects do not
          * collide at bind time (XL C does this for dir1/a.c and dir2/a.c) */
@@ -495,6 +508,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
             init_ld(&ld, s, s->name, s->classes.v[0], 1);
             sym = module_symbol(m, s->name);
             apply_xattr(&ld.attr, xattr_of(m, s->name));
+            apply_renameable(&ld, xattr_of(m, s->name));
             if (sym && sym->xattr) {
                 ld.ada_id = psect_esd(sym->xattr);
                 apply_attributes(&ld, sym->xattr);
@@ -534,6 +548,7 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
                 if (sym->xattr) {
                     ld.ada_id = psect_esd(sym->xattr);
                     apply_attributes(&ld, sym->xattr);
+                    apply_renameable(&ld, sym->xattr);
                 }
                 TRY(put_esd(w, &ld));
                 sym->ld_esd = ld.id;
@@ -551,7 +566,10 @@ uint8_t *module_emit(Module *m, size_t *len, char *err, size_t errsz) {
             er.name_space = GOFF_NS_NORMAL;
             if (sym->weak) er.attr.bind_strength = GOFF_STRENGTH_WEAK;
             apply_xattr(&er.attr, sym->xattr);
-            if (sym->xattr) apply_attributes(&er, sym->xattr);
+            if (sym->xattr) {
+                apply_attributes(&er, sym->xattr);
+                apply_renameable(&er, sym->xattr);
+            }
             TRY(put_esd(w, &er));
             if (sym->kind == SYM_EXT)
                 sym->esd = er.id;
