@@ -19,6 +19,8 @@ typedef struct {
     int target; /* named opaque pointer target: 0 byte/void, else CBlock->ptypenames index + 1 */
     int elem_bits;  /* typed pointer element width: 0 byte/void/named, else 32 or 64 */
     int elem_unsig;
+    int flt;        /* scalar is float (bits 32) or double (bits 64) */
+    int elem_flt;   /* pointer element is float/double */
 } CType;
 
 typedef enum { V_CIN, V_COUT, V_CINOUT, V_LOCAL } VKind;
@@ -45,6 +47,7 @@ struct CBExpr {
     CType type;
     int op; /* operator character or OP_* */
     int64_t num;
+    double fnum;
     CBVar *var;
     CBExpr *a, *b, *c, *d;
     char *name; /* E_CALL intrinsic */
@@ -92,6 +95,8 @@ typedef struct {
     StrMap byname;
     int scratch[16];
     int nscratch;
+    int fscratch[16];
+    int nfscratch;
     Vec(char *) ptypenames; /* opaque pointer target names, index + 1 in CType.target */
     struct CBString *lits; /* string literal tables, emitted after the block */
     size_t nlits, lits_cap;
@@ -128,6 +133,8 @@ static CType type_of(int bits, int unsig) {
     t.target = 0;
     t.elem_bits = 0;
     t.elem_unsig = 0;
+    t.flt = 0;
+    t.elem_flt = 0;
     return t;
 }
 static CType type_ptr(void) {
@@ -138,12 +145,27 @@ static CType type_ptr(void) {
     t.target = 0;
     t.elem_bits = 8; /* byte pointer: pointer arithmetic in bytes, *p is one byte */
     t.elem_unsig = 1;
+    t.flt = 0;
+    t.elem_flt = 0;
     return t;
 }
 static CType type_ptr_scalar(int bits, int unsig) {
     CType t = type_ptr();
     t.elem_bits = bits;
     t.elem_unsig = unsig;
+    t.elem_flt = 0;
+    return t;
+}
+static CType type_fp(int bits) {
+    CType t = type_of(bits, 1);
+    t.flt = 1;
+    return t;
+}
+static CType type_ptr_fp(int bits) {
+    CType t = type_ptr();
+    t.elem_bits = bits;
+    t.elem_unsig = 1;
+    t.elem_flt = 1;
     return t;
 }
 
@@ -152,6 +174,8 @@ static CType type_ptr_named(CBlock *b, const char *name) {
     size_t i;
     t.elem_bits = 0;
     t.elem_unsig = 0;
+    t.flt = 0;
+    t.elem_flt = 0;
     for (i = 0; i < b->ptypenames.n; i++)
         if (!strcmp(b->ptypenames.v[i], name)) {
             t.target = (int)i + 1;
@@ -164,7 +188,8 @@ static CType type_ptr_named(CBlock *b, const char *name) {
 
 static int type_same(CType a, CType b) {
     return a.bits == b.bits && a.unsig == b.unsig && a.ptr == b.ptr && a.target == b.target &&
-           a.elem_bits == b.elem_bits && a.elem_unsig == b.elem_unsig;
+           a.elem_bits == b.elem_bits && a.elem_unsig == b.elem_unsig &&
+           a.flt == b.flt && a.elem_flt == b.elem_flt;
 }
 
 static int type_parse(const char *s, CType *t) {
@@ -180,15 +205,21 @@ static int type_parse(const char *s, CType *t) {
         while (n > 0 && (q[n - 1] == ' ' || q[n - 1] == '\t')) q[--n] = 0;
         if (za_streqi(q, "uint8_t") || za_streqi(q, "int8_t") ||
             za_streqi(q, "uint16_t") || za_streqi(q, "int16_t") ||
+            za_streqi(q, "float") || za_streqi(q, "double") ||
             za_streqi(q, "void") || za_streqi(q, "char")) {
-            *t = (za_streqi(q, "uint16_t") || za_streqi(q, "int16_t"))
-                     ? type_ptr_scalar(16, za_streqi(q, "uint16_t"))
-                     : type_ptr();
+            if (za_streqi(q, "float") || za_streqi(q, "double"))
+                *t = type_ptr_fp(za_streqi(q, "float") ? 32 : 64);
+            else
+                *t = (za_streqi(q, "uint16_t") || za_streqi(q, "int16_t"))
+                         ? type_ptr_scalar(16, za_streqi(q, "uint16_t"))
+                         : type_ptr();
             free(p);
             return 1;
         }
     }
-    if (za_streqi(q, "int16_t")) { *t = type_of(16, 0); r = 1; }
+    if (za_streqi(q, "float")) { *t = type_fp(32); r = 1; }
+    else if (za_streqi(q, "double")) { *t = type_fp(64); r = 1; }
+    else if (za_streqi(q, "int16_t")) { *t = type_of(16, 0); r = 1; }
     else if (za_streqi(q, "uint16_t")) { *t = type_of(16, 1); r = 1; }
     else if (za_streqi(q, "int32_t")) { *t = type_of(32, 0); r = 1; }
     else if (za_streqi(q, "uint32_t")) { *t = type_of(32, 1); r = 1; }
@@ -211,10 +242,14 @@ static int type_text_parse(CBlock *b, const char *text, CType *t) {
         while (n > 0 && (q[n - 1] == ' ' || q[n - 1] == '\t')) q[--n] = 0;
         if (za_streqi(q, "uint8_t") || za_streqi(q, "int8_t") ||
             za_streqi(q, "uint16_t") || za_streqi(q, "int16_t") ||
+            za_streqi(q, "float") || za_streqi(q, "double") ||
             za_streqi(q, "void") || za_streqi(q, "char")) {
-            *t = (za_streqi(q, "uint16_t") || za_streqi(q, "int16_t"))
-                     ? type_ptr_scalar(16, za_streqi(q, "uint16_t"))
-                     : type_ptr();
+            if (za_streqi(q, "float") || za_streqi(q, "double"))
+                *t = type_ptr_fp(za_streqi(q, "float") ? 32 : 64);
+            else
+                *t = (za_streqi(q, "uint16_t") || za_streqi(q, "int16_t"))
+                         ? type_ptr_scalar(16, za_streqi(q, "uint16_t"))
+                         : type_ptr();
             r = 1;
         } else {
             CType base;
@@ -246,6 +281,8 @@ static int type_parse_old(const char *s, CType *t) {
 #endif
 
 static CType type_usual(CType a, CType b) {
+    if (a.flt || b.flt) return type_fp(a.flt && b.flt ? (a.bits > b.bits ? a.bits : b.bits) :
+                                       (a.flt ? a.bits : b.bits));
     if (a.bits < 32 && b.bits < 32) return type_of(32, 0); /* integer promotion */
     if (a.bits == 64 || b.bits == 64)
         return type_of(64, (a.bits == 64 ? a.unsig : b.unsig));
@@ -254,6 +291,25 @@ static CType type_usual(CType a, CType b) {
 }
 
 static char *trim(const char *s) { return str_trim(s); }
+
+static int freg_parse(const char *s, int *out) {
+    const char *p = s;
+    char kind;
+    int n;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p++ != '%') return 0;
+    kind = (char)za_tolower((unsigned char)*p++);
+    if (kind != 'f' || !za_isdigit((unsigned char)*p)) return 0;
+    n = 0;
+    while (za_isdigit((unsigned char)*p)) {
+        n = n * 10 + (*p - '0');
+        p++;
+    }
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p || n > 15) return 0;
+    *out = n;
+    return 1;
+}
 
 static int reg_parse(const char *s, int *out) {
     const char *p = s;
@@ -288,12 +344,13 @@ static void cb_error(CBlock *b, int line, int col, const char *code, const char 
 
 /* ---- captured lines and the C lexer ------------------------------------ */
 
-typedef enum { TK_EOF, TK_ID, TK_NUM, TK_STR, TK_OP } TokKind;
+typedef enum { TK_EOF, TK_ID, TK_NUM, TK_FP, TK_STR, TK_OP } TokKind;
 typedef struct {
     TokKind kind;
     char *s; /* TK_ID, TK_STR */
     size_t slen; /* TK_STR */
     int64_t num;
+    double fnum;
     int op;
     int line, col;
 } Tok;
@@ -451,6 +508,23 @@ static void lex_next(Lex *l) {
             digits++;
         }
         if (!digits) cb_error(l->b, line, col, "ZA5001", "invalid integer literal");
+        if (base == 10 && j < l->n && (l->src[j] == '.' || l->src[j] == 'e' || l->src[j] == 'E')) {
+            char *end = NULL;
+            double d = strtod(l->src + l->pos, &end);
+            size_t fend = (size_t)(end - l->src);
+            if (fend > j) {
+                j = fend;
+                if (j < l->n && (l->src[j] == 'f' || l->src[j] == 'F')) { suffix = 1; j++; }
+                else if (j < l->n && (l->src[j] == 'l' || l->src[j] == 'L')) { suffix = 0; j++; }
+                l->tok.kind = TK_FP;
+                l->tok.fnum = d;
+                l->tok.op = suffix;
+                l->tok.line = line;
+                l->tok.col = col;
+                l->pos = j;
+                return;
+            }
+        }
         while (j < l->n && (l->src[j] == 'u' || l->src[j] == 'U' || l->src[j] == 'l' || l->src[j] == 'L')) {
             suffix |= (l->src[j] == 'u' || l->src[j] == 'U') ? 1 : 2;
             j++;
@@ -640,6 +714,12 @@ static CBExpr *parse_primary(Parser *p) {
         lex_next(l);
         return e;
     }
+    if (l->tok.kind == TK_FP) {
+        e = mk_expr(E_NUM, type_fp(l->tok.op ? 32 : 64), line, col);
+        e->fnum = l->tok.fnum;
+        lex_next(l);
+        return e;
+    }
     if (l->tok.kind == TK_NUM) {
         uint64_t v = (uint64_t)l->tok.num;
         CType t;
@@ -769,6 +849,90 @@ static CBExpr *parse_primary(Parser *p) {
             if (!strcmp(e->name, "__strlen")) e->type = type_of(64, 1);
             else if (is_memchr || is_strcpy) e->type = type_ptr();
             else e->type = type_of(32, 0);
+            return e;
+        }
+        if (!strcmp(name, "__efpc") || !strcmp(name, "__sfpc") ||
+            !strcmp(name, "__fiebr") || !strcmp(name, "__fidbr") ||
+            !strcmp(name, "__lpebr") || !strcmp(name, "__lpdbr") ||
+            !strcmp(name, "__lnebr") || !strcmp(name, "__lndbr") ||
+            !strcmp(name, "__sqebr") || !strcmp(name, "__sqdbr") ||
+            !strcmp(name, "__cfebr") || !strcmp(name, "__cfdbr") ||
+            !strcmp(name, "__cgebr") || !strcmp(name, "__cgdbr") ||
+            !strcmp(name, "__maebr") || !strcmp(name, "__madbr") ||
+            !strcmp(name, "__msebr") || !strcmp(name, "__msdbr") ||
+            !strcmp(name, "__fmadd") || !strcmp(name, "__fmadds") ||
+            !strcmp(name, "__fmsub") || !strcmp(name, "__fmsubs")) {
+            CBExpr *e = mk_expr(E_CALL, type_of(32, 0), line, col);
+            CBExpr *args[5] = {0, 0, 0, 0, 0};
+            int argc = (!strcmp(name, "__efpc")) ? 0 :
+                       (!strcmp(name, "__sfpc") || !strcmp(name, "__sqebr") ||
+                        !strcmp(name, "__sqdbr")) ? 1 :
+                       (!strcmp(name, "__fiebr") || !strcmp(name, "__fidbr") ||
+                        !strcmp(name, "__lpebr") || !strcmp(name, "__lpdbr") ||
+                        !strcmp(name, "__lnebr") || !strcmp(name, "__lndbr")) ? 2 :
+                       (!strcmp(name, "__cfebr") || !strcmp(name, "__cfdbr") ||
+                        !strcmp(name, "__cgebr") || !strcmp(name, "__cgdbr")) ? 3 : 3;
+            CBExpr *bad = NULL;
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, argc)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1]; e->c = args[2];
+            if (!strcmp(e->name, "__efpc")) e->type = type_of(32, 0);
+            else if (!strcmp(e->name, "__sqebr") || !strcmp(e->name, "__fiebr"))
+                e->type = type_fp(32);
+            else if (!strcmp(e->name, "__sqdbr") || !strcmp(e->name, "__fidbr"))
+                e->type = type_fp(64);
+            else if (!strcmp(e->name, "__maebr") || !strcmp(e->name, "__msebr") ||
+                     !strcmp(e->name, "__fmadds") || !strcmp(e->name, "__fmsubs"))
+                e->type = type_fp(32);
+            else if (!strcmp(e->name, "__madbr") || !strcmp(e->name, "__msdbr") ||
+                     !strcmp(e->name, "__fmadd") || !strcmp(e->name, "__fmsub"))
+                e->type = type_fp(64);
+            else e->type = type_of(32, 0);
+            if (!strcmp(e->name, "__fiebr")) {
+                if (e->a->type.flt || !e->b->type.flt || e->b->type.bits != 32) bad = e->b;
+            } else if (!strcmp(e->name, "__fidbr")) {
+                if (e->a->type.flt || !e->b->type.flt || e->b->type.bits != 64) bad = e->b;
+            } else if (!strcmp(e->name, "__sqebr")) {
+                if (!e->a->type.flt || e->a->type.bits != 32) bad = e->a;
+            } else if (!strcmp(e->name, "__sqdbr")) {
+                if (!e->a->type.flt || e->a->type.bits != 64) bad = e->a;
+            } else if (!strcmp(e->name, "__lpebr") || !strcmp(e->name, "__lnebr")) {
+                if (!e->a->type.ptr || !e->b->type.flt || e->b->type.bits != 32) bad = e->a;
+            } else if (!strcmp(e->name, "__lpdbr") || !strcmp(e->name, "__lndbr")) {
+                if (!e->a->type.ptr || !e->b->type.flt || e->b->type.bits != 64) bad = e->a;
+            } else if (!strcmp(e->name, "__cfebr") || !strcmp(e->name, "__cgebr")) {
+                if (!e->a->type.ptr || e->b->type.flt || !e->c->type.flt ||
+                    e->c->type.bits != 32) bad = e->c;
+            } else if (!strcmp(e->name, "__cfdbr") || !strcmp(e->name, "__cgdbr")) {
+                if (!e->a->type.ptr || e->b->type.flt || !e->c->type.flt ||
+                    e->c->type.bits != 64) bad = e->c;
+            } else if (!strcmp(e->name, "__maebr") || !strcmp(e->name, "__msebr") ||
+                       !strcmp(e->name, "__fmadds") || !strcmp(e->name, "__fmsubs")) {
+                if (!e->a->type.flt || !e->b->type.flt || !e->c->type.flt ||
+                    e->a->type.bits != 32 || e->b->type.bits != 32 || e->c->type.bits != 32)
+                    bad = e->a;
+            } else if (!strcmp(e->name, "__madbr") || !strcmp(e->name, "__msdbr") ||
+                       !strcmp(e->name, "__fmadd") || !strcmp(e->name, "__fmsub")) {
+                if (!e->a->type.flt || !e->b->type.flt || !e->c->type.flt ||
+                    e->a->type.bits != 64 || e->b->type.bits != 64 || e->c->type.bits != 64)
+                    bad = e->a;
+            } else if (!strcmp(e->name, "__sfpc")) {
+                if (e->a->type.ptr) bad = e->a;
+            }
+            if (bad) {
+                cb_error(p->b, bad->line, bad->col, "ZA5003", "%s has an argument of the wrong type",
+                         e->name);
+                p->err = 1;
+            }
             return e;
         }
         if (!strcmp(name, "__popcnt") || !strcmp(name, "__popcnt4") ||
@@ -1443,7 +1607,7 @@ static int const_eval(CBExpr *e, int64_t *out) {
     int64_t a, b;
     if (!e) return 0;
     switch (e->kind) {
-    case E_NUM: *out = e->num; return 1;
+    case E_NUM: if (e->type.flt) return 0; *out = e->num; return 1;
     case E_UN:
         if (!const_eval(e->a, &a)) return 0;
         if (e->op == '+') *out = a;
@@ -1966,6 +2130,20 @@ static void add_scratch(CBlock *b, int reg, int line) {
     b->scratch[b->nscratch++] = reg;
 }
 
+static void add_fscratch(CBlock *b, int reg, int line) {
+    int i;
+    for (i = 0; i < b->nfscratch; i++)
+        if (b->fscratch[i] == reg) {
+            cb_error(b, line, 1, "ZA5005", "register %%f%d is listed twice in cscratch", reg);
+            return;
+        }
+    if (b->nfscratch >= 16) {
+        cb_error(b, line, 1, "ZA5005", "too many cscratch floating-point registers");
+        return;
+    }
+    b->fscratch[b->nfscratch++] = reg;
+}
+
 static int binding_parse(CBlock *b, const char *rest, int line, VKind kind) {
     char *s = xstrdup(rest);
     char *p = s;
@@ -1973,7 +2151,7 @@ static int binding_parse(CBlock *b, const char *rest, int line, VKind kind) {
         char *comma = strchr(p, ',');
         char *decl = NULL, *eq, *vn = NULL, *rn = NULL;
         CType t;
-        int reg, i, bad = 0;
+        int reg, i, bad = 0, isf = 0;
         if (comma) *comma = 0;
         decl = trim(p);
         if (*decl) {
@@ -2000,13 +2178,17 @@ static int binding_parse(CBlock *b, const char *rest, int line, VKind kind) {
                     if (!type_text_parse(b, type_text, &t)) {
                         cb_error(b, line, 1, "ZA5002", "unsupported cblock type \"%s\"", type_text);
                         bad = 1;
-                    } else if (!reg_parse(rn, &reg)) {
-                        cb_error(b, line, 1, "ZA5005", "\"%s\" is not a %%r0-%%r15 register binding", rn);
+                    } else if (t.flt ? !freg_parse(rn, &reg) : !reg_parse(rn, &reg)) {
+                        cb_error(b, line, 1, "ZA5005",
+                                 t.flt ? "\"%s\" is not a %%f0-%%f15 register binding for a float or double"
+                                       : "\"%s\" is not a %%r0-%%r15 register binding", rn);
                         bad = 1;
                     } else {
+                        isf = t.flt;
                         for (i = 0; i < (int)b->vars.n; i++)
-                            if (b->vars.v[i]->reg == reg) {
-                                cb_error(b, line, 1, "ZA5005", "register %%r%d is bound more than once", reg);
+                            if (b->vars.v[i]->reg == reg && b->vars.v[i]->type.flt == isf) {
+                                cb_error(b, line, 1, "ZA5005", "register %s%d is bound more than once",
+                                         isf ? "%%f" : "%%r", reg);
                                 bad = 1;
                                 break;
                             }
@@ -2197,6 +2379,18 @@ static void store_slot(CBlock *b, int line, int slot, CType t, int reg) {
     else asm_line(b, line, "ST %%r%d,%ld(%%r%d)", reg, off, b->temp_reg);
 }
 
+static void load_fp_slot(CBlock *b, int line, int slot, CType t, int fpr) {
+    long off = slot_off(b, slot);
+    asm_line(b, line, t.bits == 32 ? "LE %%f%d,%ld(%%r%d)" : "LD %%f%d,%ld(%%r%d)",
+             fpr, off, b->temp_reg);
+}
+
+static void store_fp_slot(CBlock *b, int line, int slot, CType t, int fpr) {
+    long off = slot_off(b, slot);
+    asm_line(b, line, t.bits == 32 ? "STE %%f%d,%ld(%%r%d)" : "STD %%f%d,%ld(%%r%d)",
+             fpr, off, b->temp_reg);
+}
+
 static void load_imm(CBlock *b, int line, int64_t v, CType t, int reg) {
     uint64_t u = (uint64_t)v;
     if (t.bits == 32) {
@@ -2299,11 +2493,19 @@ static void emit_test(CBlock *b, int line, CType t) {
     asm_line(b, line, t.bits == 64 ? "LTGR %%r0,%%r0" : "LTR %%r0,%%r0");
 }
 
+static int pick_fpr(CBlock *b, int used1, int used2);
 static int pick_addr(CBlock *b, int used1, int used2);
 static int pick_addr3(CBlock *b, int used1, int used2, int used3);
 static int pick_addr4(CBlock *b, int used1, int used2, int used3, int used4);
 static int pick_pair(CBlock *b, int used1, int used2, int *second);
 static int eval(Cg *cg, CBExpr *e, int *slotp);
+
+static int load_fp_expr(Cg *cg, CBExpr *e, int fpr) {
+    int slot;
+    if (!eval(cg, e, &slot)) return 0;
+    load_fp_slot(cg->b, e->line, slot, e->type, fpr);
+    return 1;
+}
 
 static int eval_bin(Cg *cg, CBExpr *e, int *slotp) {
     CBlock *b = cg->b;
@@ -2406,7 +2608,18 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
     int s, s0, res;
     switch (e->kind) {
     case E_NUM:
-        load_imm(b, e->line, e->num, e->type, 0);
+        if (e->type.flt) {
+            uint64_t u;
+            if (e->type.bits == 32) {
+                float f = (float)e->fnum;
+                uint32_t w;
+                memcpy(&w, &f, sizeof w);
+                u = w;
+            } else {
+                memcpy(&u, &e->fnum, sizeof u);
+            }
+            load_imm(b, e->line, (int64_t)u, type_of(e->type.bits, 1), 0);
+        } else load_imm(b, e->line, e->num, e->type, 0);
         s = alloc_slot(cg);
         store_slot(b, e->line, s, e->type, 0);
         *slotp = s;
@@ -2467,6 +2680,58 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
         return 1;
     }
     case E_CAST:
+        if (e->type.flt) {
+            int fp = pick_fpr(b, -1, -1);
+            if (fp < 0) {
+                cb_error(b, e->line, e->col, "ZA5005", "a float conversion needs a cscratch FPR");
+                return 0;
+            }
+            if (e->a->type.flt) {
+                if (!load_fp_expr(cg, e->a, fp)) return 0;
+                if (e->type.bits != e->a->type.bits)
+                    asm_line(b, e->line, e->type.bits == 64 ? "LDEBR %%f%d,%%f%d" : "LEDBR %%f%d,%%f%d",
+                             fp, fp);
+            } else {
+                if (!eval(cg, e->a, &s0)) return 0;
+                load_slot(b, e->line, s0, e->a->type, 0);
+                if (e->a->type.bits == 64) {
+                    if (e->a->type.unsig) asm_line(b, e->line, "CELGBR %%f%d,0,%%r0,0", fp);
+                    else asm_line(b, e->line, "CDGBR %%f%d,%%r0", fp);
+                } else {
+                    if (e->a->type.unsig) asm_line(b, e->line, "CELFBR %%f%d,0,%%r0,0", fp);
+                    else asm_line(b, e->line, "CEFBR %%f%d,%%r0", fp);
+                }
+            }
+            res = alloc_slot(cg);
+            store_fp_slot(b, e->line, res, e->type, fp);
+            *slotp = res;
+            return 1;
+        }
+        if (e->a->type.flt) {
+            int fp = pick_fpr(b, -1, -1);
+            if (fp < 0) {
+                cb_error(b, e->line, e->col, "ZA5005", "a float conversion needs a cscratch FPR");
+                return 0;
+            }
+            if (!load_fp_expr(cg, e->a, fp)) return 0;
+            if (e->type.bits == 64) {
+                if (e->type.unsig)
+                    asm_line(b, e->line, e->a->type.bits == 64 ? "CLGDBR %%r0,0,%%f%d,0"
+                                                              : "CLGEBR %%r0,0,%%f%d,0", fp);
+                else asm_line(b, e->line, e->a->type.bits == 64 ? "CGDBR %%r0,0,%%f%d"
+                                                               : "CGEBR %%r0,0,%%f%d", fp);
+            } else {
+                if (e->type.unsig)
+                    asm_line(b, e->line, e->a->type.bits == 64 ? "CLFDBR %%r0,0,%%f%d,0"
+                                                              : "CLFEBR %%r0,0,%%f%d,0", fp);
+                else asm_line(b, e->line, e->a->type.bits == 64 ? "CFDBR %%r0,0,%%f%d"
+                                                               : "CFEBR %%r0,0,%%f%d", fp);
+            }
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, e->type, 0);
+            *slotp = res;
+            return 1;
+        }
         if (!eval(cg, e->a, &s0)) return 0;
         load_slot(b, e->line, s0, e->a->type, 0);
         if (e->type.bits == 64 && e->a->type.bits == 32)
@@ -3013,6 +3278,148 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             *slotp = res;
             return 1;
         }
+        if (!strcmp(e->name, "__efpc") || !strcmp(e->name, "__sfpc") ||
+            !strcmp(e->name, "__fiebr") || !strcmp(e->name, "__fidbr") ||
+            !strcmp(e->name, "__lpebr") || !strcmp(e->name, "__lpdbr") ||
+            !strcmp(e->name, "__lnebr") || !strcmp(e->name, "__lndbr") ||
+            !strcmp(e->name, "__sqebr") || !strcmp(e->name, "__sqdbr") ||
+            !strcmp(e->name, "__cfebr") || !strcmp(e->name, "__cfdbr") ||
+            !strcmp(e->name, "__cgebr") || !strcmp(e->name, "__cgdbr") ||
+            !strcmp(e->name, "__maebr") || !strcmp(e->name, "__madbr") ||
+            !strcmp(e->name, "__msebr") || !strcmp(e->name, "__msdbr") ||
+            !strcmp(e->name, "__fmadd") || !strcmp(e->name, "__fmadds") ||
+            !strcmp(e->name, "__fmsub") || !strcmp(e->name, "__fmsubs")) {
+            int fa, fb, fc, ra, sb = -1, sc = -1;
+            int64_t m = 0;
+            if (!strcmp(e->name, "__efpc")) {
+                asm_line(b, e->line, "EFPC %%r0");
+                res = alloc_slot(cg);
+                store_slot(b, e->line, res, type_of(32, 0), 0);
+                *slotp = res;
+                return 1;
+            }
+            if (!strcmp(e->name, "__sfpc")) {
+                if (!eval(cg, e->a, &sa)) return 0;
+                load_slot(b, e->line, sa, e->a->type, 0);
+                asm_line(b, e->line, "SFPC %%r0");
+                res = alloc_slot(cg);
+                asm_line(b, e->line, "LGHI %%r0,0");
+                store_slot(b, e->line, res, type_of(32, 0), 0);
+                *slotp = res;
+                return 1;
+            }
+            if (!strcmp(e->name, "__fiebr") || !strcmp(e->name, "__fidbr")) {
+                if (!const_eval(e->a, &m) || m < 0 || m > 7) {
+                    cb_error(b, e->line, e->col, "ZA5005", "%s needs a constant rounding mode 0 to 7",
+                             e->name);
+                    return 0;
+                }
+                fa = pick_fpr(b, -1, -1);
+                fb = pick_fpr(b, fa, -1);
+                if (fa < 0 || fb < 0 || !load_fp_expr(cg, e->b, fb)) {
+                    cb_error(b, e->line, e->col, "ZA5005", "%s needs two cscratch FPRs", e->name);
+                    return 0;
+                }
+                asm_line(b, e->line, !strcmp(e->name, "__fiebr") ? "FIEBR %%f%d,%lld,%%f%d" :
+                                                              "FIDBR %%f%d,%lld,%%f%d",
+                         fa, (long long)m, fb);
+                res = alloc_slot(cg);
+                store_fp_slot(b, e->line, res, e->type, fa);
+                *slotp = res;
+                return 1;
+            }
+            if (!strcmp(e->name, "__lpebr") || !strcmp(e->name, "__lpdbr") ||
+                !strcmp(e->name, "__lnebr") || !strcmp(e->name, "__lndbr")) {
+                if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sb)) return 0;
+                fa = pick_fpr(b, -1, -1);
+                fb = pick_fpr(b, fa, -1);
+                ra = pick_addr(b, 0, 0);
+                if (fa < 0 || fb < 0 || ra < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005", "%s needs two FPRs and one address register",
+                             e->name);
+                    return 0;
+                }
+                load_slot(b, e->line, sa, type_ptr(), ra);
+                load_fp_slot(b, e->line, sb, e->b->type, fb);
+                asm_line(b, e->line, !strcmp(e->name, "__lpebr") ? "LPEBR %%f%d,%%f%d" :
+                                       !strcmp(e->name, "__lpdbr") ? "LPDBR %%f%d,%%f%d" :
+                                       !strcmp(e->name, "__lnebr") ? "LNEBR %%f%d,%%f%d" :
+                                                                     "LNDBR %%f%d,%%f%d", fa, fb);
+                asm_line(b, e->line, !strcmp(e->name, "__lpebr") || !strcmp(e->name, "__lnebr")
+                                       ? "STE %%f%d,0(%%r%d)" : "STD %%f%d,0(%%r%d)", fa, ra);
+                asm_line(b, e->line, "IPM %%r0");
+                asm_line(b, e->line, "SRL %%r0,%%r0,28");
+                res = alloc_slot(cg);
+                store_slot(b, e->line, res, type_of(32, 0), 0);
+                *slotp = res;
+                return 1;
+            }
+            if (!strcmp(e->name, "__sqebr") || !strcmp(e->name, "__sqdbr")) {
+                fa = pick_fpr(b, -1, -1);
+                fb = pick_fpr(b, fa, -1);
+                if (fa < 0 || fb < 0 || !load_fp_expr(cg, e->a, fb)) {
+                    cb_error(b, e->line, e->col, "ZA5005", "%s needs two cscratch FPRs", e->name);
+                    return 0;
+                }
+                asm_line(b, e->line, !strcmp(e->name, "__sqebr") ? "SQEBR %%f%d,%%f%d" :
+                                                              "SQDBR %%f%d,%%f%d", fa, fb);
+                res = alloc_slot(cg);
+                store_fp_slot(b, e->line, res, e->type, fa);
+                *slotp = res;
+                return 1;
+            }
+            if (!strcmp(e->name, "__cfebr") || !strcmp(e->name, "__cfdbr") ||
+                !strcmp(e->name, "__cgebr") || !strcmp(e->name, "__cgdbr")) {
+                int is64 = !strcmp(e->name, "__cgebr") || !strcmp(e->name, "__cgdbr");
+                int isshort = !strcmp(e->name, "__cfebr") || !strcmp(e->name, "__cgebr");
+                if (!const_eval(e->b, &m) || m < 0 || m > 15) {
+                    cb_error(b, e->line, e->col, "ZA5005", "%s needs a constant rounding mode 0 to 15",
+                             e->name);
+                    return 0;
+                }
+                if (!eval(cg, e->a, &sa) || !eval(cg, e->c, &sc)) return 0;
+                fa = pick_fpr(b, -1, -1);
+                ra = pick_addr(b, 0, 0);
+                if (fa < 0 || ra < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005", "%s needs one FPR and one address register",
+                             e->name);
+                    return 0;
+                }
+                load_slot(b, e->line, sa, type_ptr(), ra);
+                load_fp_slot(b, e->line, sc, e->c->type, fa);
+                asm_line(b, e->line, isshort ? (is64 ? "CGEBR %%r0,%lld,%%f%d" : "CFEBR %%r0,%lld,%%f%d")
+                                             : (is64 ? "CGDBR %%r0,%lld,%%f%d" : "CFDBR %%r0,%lld,%%f%d"),
+                         (long long)m, fa);
+                asm_line(b, e->line, is64 ? "STG %%r0,0(%%r%d)" : "ST %%r0,0(%%r%d)", ra);
+                asm_line(b, e->line, "IPM %%r0");
+                asm_line(b, e->line, "SRL %%r0,%%r0,28");
+                res = alloc_slot(cg);
+                store_slot(b, e->line, res, type_of(32, 0), 0);
+                *slotp = res;
+                return 1;
+            }
+            /* three-operand multiply-add/subtract */
+            fa = pick_fpr(b, -1, -1);
+            fb = pick_fpr(b, fa, -1);
+            fc = pick_fpr(b, fa, fb);
+            if (fa < 0 || fb < 0 || fc < 0 ||
+                !load_fp_expr(cg, e->a, fa) || !load_fp_expr(cg, e->b, fb) ||
+                !load_fp_expr(cg, e->c, fc)) {
+                cb_error(b, e->line, e->col, "ZA5005", "%s needs three cscratch FPRs", e->name);
+                return 0;
+            }
+            asm_line(b, e->line, !strcmp(e->name, "__maebr") || !strcmp(e->name, "__fmadds")
+                                   ? "MAEBR %%f%d,%%f%d,%%f%d" :
+                 !strcmp(e->name, "__msebr") || !strcmp(e->name, "__fmsubs")
+                                   ? "MSEBR %%f%d,%%f%d,%%f%d" :
+                 !strcmp(e->name, "__madbr") || !strcmp(e->name, "__fmadd")
+                                   ? "MADBR %%f%d,%%f%d,%%f%d" : "MSDBR %%f%d,%%f%d,%%f%d",
+                     fa, fb, fc);
+            res = alloc_slot(cg);
+            store_fp_slot(b, e->line, res, e->type, fa);
+            *slotp = res;
+            return 1;
+        }
         if (!strcmp(e->name, "__strcpy")) {
             int ra, rb, saved;
             char *top, *end;
@@ -3379,6 +3786,15 @@ static int pick_addr4(CBlock *b, int used1, int used2, int used3, int used4) {
             b->scratch[i] != used3 && b->scratch[i] != used4)
             return b->scratch[i];
     if (used1 != 1 && used2 != 1 && used3 != 1 && used4 != 1) return 1;
+    return -1;
+}
+
+static int pick_fpr(CBlock *b, int used1, int used2) {
+    int i;
+    for (i = 0; i < b->nfscratch; i++) {
+        int r = b->fscratch[i];
+        if (r != used1 && r != used2) return r;
+    }
     return -1;
 }
 
@@ -3901,8 +4317,17 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
                 if (comma) *comma = 0;
                 part = trim(pp);
                 dash = strchr(part, '-');
-                if (dash) { *dash = 0; if (!reg_parse(trim(dash + 1), &r2)) r2 = -1; }
-                if (!reg_parse(trim(part), &r1)) {
+                if (dash) {
+                    *dash = 0;
+                    if (!reg_parse(trim(dash + 1), &r2) &&
+                        !freg_parse(trim(dash + 1), &r2)) r2 = -1;
+                }
+                if (freg_parse(trim(part), &r1)) {
+                    if (dash) {
+                        cb_error(&b, body[i].line, 1, "ZA5005", "cscratch floating-point ranges are not supported");
+                        ok = 0;
+                    } else add_fscratch(&b, r1, body[i].line);
+                } else if (!reg_parse(trim(part), &r1)) {
                     cb_error(&b, body[i].line, 1, "ZA5005", "\"%s\" is not a register", part);
                     ok = 0;
                 } else if (dash && (r2 < r1)) {
@@ -3934,15 +4359,27 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
         goto done;
     }
     for (i = 0; i < b.vars.n; i++) {
-        if (b.vars.v[i]->reg == 0 || b.vars.v[i]->reg == 1) {
+        if (!b.vars.v[i]->type.flt &&
+            (b.vars.v[i]->reg == 0 || b.vars.v[i]->reg == 1)) {
             cb_error(&b, line, 1, "ZA5005", "register %%r%d cannot be a cin/cout binding",
                      b.vars.v[i]->reg);
             goto done;
         }
-        if (b.vars.v[i]->reg == b.temp_reg) {
+        if (!b.vars.v[i]->type.flt && b.vars.v[i]->reg == b.temp_reg) {
             cb_error(&b, line, 1, "ZA5005", "bound register %%r%d is also the ctemp base",
                      b.vars.v[i]->reg);
             goto done;
+        }
+    }
+    for (i = 0; i < (size_t)b.nfscratch; i++) {
+        size_t j;
+        for (j = 0; j < b.vars.n; j++) {
+            CBVar *v = b.vars.v[j];
+            if (v->type.flt && v->reg == b.fscratch[i]) {
+                cb_error(&b, line, 1, "ZA5005", "bound register %%f%d also appears in cscratch",
+                         v->reg);
+                goto done;
+            }
         }
     }
     for (i = 0; i < (size_t)b.nscratch; i++) {
@@ -3953,7 +4390,7 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
         }
         for (j = 0; j < b.vars.n; j++) {
             CBVar *v = b.vars.v[j];
-            if (v->reg >= 0 && v->reg == b.scratch[i]) {
+            if (!v->type.flt && v->reg >= 0 && v->reg == b.scratch[i]) {
                 cb_error(&b, line, 1, "ZA5005", "bound register %%r%d also appears in cscratch", v->reg);
                 goto done;
             }
@@ -4016,7 +4453,8 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
             for (i = 0; i < b.vars.n; i++) {
                 CBVar *v = b.vars.v[i];
                 if (v->kind == V_CIN || v->kind == V_CINOUT) {
-                    store_slot(&b, line, v->slot, v->type, v->reg);
+                    if (v->type.flt) store_fp_slot(&b, line, v->slot, v->type, v->reg);
+                    else store_slot(&b, line, v->slot, v->type, v->reg);
                 }
             }
             for (i = 0; i < stmts.n && ok; i++) ok = codegen_stmt(&cg, &stmts.v[i]);
@@ -4028,7 +4466,10 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
             if (ok) {
                 for (i = 0; i < b.vars.n; i++) {
                     CBVar *v = b.vars.v[i];
-                    if (v->kind == V_COUT || v->kind == V_CINOUT) load_slot(&b, line, v->slot, v->type, v->reg);
+                    if (v->kind == V_COUT || v->kind == V_CINOUT) {
+                        if (v->type.flt) load_fp_slot(&b, line, v->slot, v->type, v->reg);
+                        else load_slot(&b, line, v->slot, v->type, v->reg);
+                    }
                 }
                 if (b.save_r0 >= 0 && b.save_r1 >= 0)
                     asm_line(&b, line, "LMG %%r0,%%r1,%ld(%%r%d)", slot_off(&b, b.save_r0), b.temp_reg);

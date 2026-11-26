@@ -23,6 +23,15 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
   `__unpka`, `__unpku` and `__mvcrl` are included. PLO/TM/vector/far/float groups are
   deferred. `__lpd*` needs an even-odd pair in `cscratch`; decimal lengths
   must be compile-time constants.
+* CBLOCK IEEE `float` and `double` scalars, pointers and `%fN`
+  `cin`/`cout` bindings, with `cscratch` FPRs. Direct builtins: `__sqebr`,
+  `__sqdbr`, `__fiebr`, `__fidbr`, `__maebr`, `__madbr`, `__msebr`,
+  `__msdbr`, `__fmadd`, `__fmadds`, `__fmsub`, `__fmsubs`, `__lpebr`,
+  `__lpdbr`, `__lnebr`, `__lndbr`, `__cfebr`, `__cfdbr`, `__cgebr`,
+  `__cgdbr`, `__efpc` and `__sfpc`. Floating literals use `1.5` for
+  `double` and `1.5f` for `float`. Floating arithmetic and comparisons are
+  not implemented yet; long double and hexadecimal float forms are
+  deferred.
 * CBLOCK 16-bit `int16_t`/`uint16_t` scalars and pointers, with `LGH`/`LLGH`
   loads, `STH` stores, integer promotion, typed pointer arithmetic, and
   `__lrvh`/`__strvh`.

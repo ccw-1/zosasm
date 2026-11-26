@@ -145,6 +145,80 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "AP 0(1,%r1),0(1,%r5)");
+    expect("IEEE float and double builtins",
+           "#pragma cblock a\n"
+           "#pragma cin double a=%f0, float b=%f2\n"
+           "#pragma cout double c=%f4, float d=%f6\n"
+           "#pragma cscratch %r2, %r3, %r4, %r5, %f8, %f10, %f12\n"
+           "#pragma ctemp %r12, 256, down\n"
+           "#pragma cbegin\n"
+           "c = __sqdbr(a);\n"
+           "d = __sqebr(b);\n"
+           "c = __madbr(a, a, a);\n"
+           "d = __fmadds(b, b, b);\n"
+           "c = __msdbr(a, a, a);\n"
+           "d = __fmsub(a, a, a);\n"
+           "c = __fidbr(0, a);\n"
+           "d = __fiebr(0, b);\n"
+           "double x;\n"
+           "float y;\n"
+           "int32_t cc;\n"
+           "cc = __lpdbr(&x, a);\n"
+           "cc = __lndbr(&x, a);\n"
+           "cc = __lpebr(&y, b);\n"
+           "cc = __lnebr(&y, b);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "SQDBR %f8,%f10");
+    expect("IEEE conversions and FPC",
+           "#pragma cblock a\n"
+           "#pragma cin double a=%f0, float b=%f2\n"
+           "#pragma cout int32_t cc=%r3\n"
+           "#pragma cscratch %r2, %r4, %r5, %r6, %f8, %f10\n"
+           "#pragma ctemp %r12, 256, down\n"
+           "#pragma cbegin\n"
+           "int32_t x;\n"
+           "int64_t y;\n"
+           "cc = __cfdbr(&x, 0, a);\n"
+           "cc = __cfebr(&x, 0, b);\n"
+           "cc = __cgdbr(&y, 0, a);\n"
+           "cc = __cgebr(&y, 0, b);\n"
+           "cc = __efpc();\n"
+           "__sfpc(cc);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "CFDBR %r0,0,%f8");
+    expect("float literals",
+           "#pragma cblock a\n"
+           "#pragma cout double c=%f4, float d=%f6\n"
+           "#pragma cscratch %r2, %r3, %f8\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "c = 1.5;\n"
+           "d = 2.25f;\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "IIHF %r0,1073217536");
+    expect("float casts",
+           "#pragma cblock a\n"
+           "#pragma cout float f=%f4, int32_t i=%r2\n"
+           "#pragma cscratch %r3, %f8\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "f = 1.5;\n"
+           "i = 1.5;\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "LEDBR %f8,%f8");
+    expect("float binding needs an FPR",
+           "#pragma cblock a\n"
+           "#pragma cin double a=%r2\n"
+           "#pragma ctemp %r12, 64, down\n"
+           "#pragma cbegin\n"
+           "a = a;\n"
+           "#pragma cend\n"
+           " END\n",
+           "ZA5005", "");
     expect("packing and 64-bit decimal builtins",
            "#pragma cblock a\n"
            "#pragma cin char *a=%r2, char *b=%r3, uint16_t *u=%r4\n"

@@ -47,10 +47,13 @@ expected values.
 | pragma | meaning |
 |---|---|
 | `cblock [name]` | start a block; the name is used in diagnostics and the listing |
-| `cin type name=%rN` | register read by the block |
-| `cout type name=%rN` | register written by the block |
-| `cinout type name=%rN` | register read and written |
-| `cscratch %rN,...` | registers the generated code may clobber |
+| `cin type name=%rN` | general register read by the block |
+| `cin type name=%fN` | floating-point register read by the block |
+| `cout type name=%rN` | general register written by the block |
+| `cout type name=%fN` | floating-point register written by the block |
+| `cinout type name=%rN` | general register read and written |
+| `cinout type name=%fN` | floating-point register read and written |
+| `cscratch %rN,%fN,...` | registers the generated code may clobber |
 | `ctemp %rN,SIZE,up\|down` | caller-provided temporary area |
 | `cbegin` | start the C body |
 | `cend` | end the block |
@@ -61,7 +64,9 @@ A bound register cannot also appear in
 scratch; it is never a base, index or branch register. If both are missing from
 `cscratch`, the block saves and restores them as a pair with `STMG`/`LMG`;
 if only one is missing, it uses `STG`/`LG`. A bound `cin`/`cout` register
-therefore cannot be `%r0` or `%r1`.
+therefore cannot be `%r0` or `%r1`. A `float` or `double` binding uses
+`%f0` to `%f15`; list every FPR that the generated code may use in
+`cscratch`. Floating-point `cscratch` ranges are not supported.
 
 `ctemp` size is in bytes and must be a multiple of 8. The compiler computes the
 slots it needs and reports `ZA5006` when the area is too small. The base
@@ -74,6 +79,13 @@ Types:
 
 * `int32_t`, `uint32_t`, `int64_t`, `uint64_t`
 * `int` and `unsigned` as 32-bit aliases
+* `float` and `double` scalars and typed pointers, for the floating-point
+  builtins below. They are IEEE binary floating point. A scalar holds its
+  raw 4-byte or 8-byte value in a temporary slot; use a `%fN` binding to
+  read or write it without a conversion. Floating-point literals with an
+  optional `f` suffix initialize `float` and `double` variables. Casts
+  convert between integer, `float` and `double` values. Floating-point
+  arithmetic and comparisons are not implemented yet.
 * `uint8_t *`, `void *` and `char *` byte pointers
 * 16-bit scalars promote to 32 bits in expressions; loads use `LGH`/`LLGH`
   and stores use `STH`
@@ -141,7 +153,8 @@ Statements:
 
 Expressions:
 
-* integer literals, string literals, variables, casts;
+* integer and floating-point literals (`1.5`, `1.5f`), string literals,
+  variables, casts;
 * `__align(N) "text"` aligns a generated literal table to a power-of-two
   boundary from 1 to 4096 (default: no alignment);
 * `__sizeof(section)` and `__offsetof(section, field)`;
@@ -151,8 +164,9 @@ Expressions:
 * comparisons, `&&`, `||`, `!`, `?:`;
 * prefix and postfix `++` and `--` on variables, not on `*p`.
 
-There are no arrays, structures, floating point, user-defined function calls,
-global variables or recursion. String literals are data tables, not values:
+There are no arrays, structures, user-defined function calls,
+global variables or recursion. Floating point is limited to the scalar
+types and direct builtins described below. String literals are data tables, not values:
 they can initialize a `char *` and are not otherwise assignable or indexable as
 objects. The `__strlen`,
 `__memchr`, `__memcmp`, `__strcmp`, `__strcpy`, `__sizeof` and
@@ -310,6 +324,46 @@ void __unpka(a, len, b);      /* UNPKA */
 void __unpku(a, len, b);      /* UNPKU */
 void __mvcrl(a, b, len);      /* MVCRL */
 ```
+
+### IEEE floating-point builtins
+
+The block supports `float` and `double` bindings and direct IEEE
+floating-point builtins. List the FPRs the generated code may use in
+`cscratch`.
+
+```c
+float  f = __sqebr(x);        /* SQEBR */
+double d = __sqdbr(x);        /* SQDBR */
+float  f = __fiebr(mode, x);  /* FIEBR, mode is 0 to 7 */
+double d = __fidbr(mode, x);  /* FIDBR, mode is 0 to 7 */
+float  f = __maebr(a, b, c);  /* MAEBR */
+double d = __madbr(a, b, c);  /* MADBR */
+float  f = __msebr(a, b, c);  /* MSEBR */
+double d = __msdbr(a, b, c);  /* MSDBR */
+float  f = __fmadds(a, b, c); /* same as __maebr */
+double d = __fmadd(a, b, c);  /* same as __madbr */
+float  f = __fmsubs(a, b, c); /* same as __msebr */
+double d = __fmsub(a, b, c);  /* same as __msdbr */
+int cc = __lpebr(&f, x);      /* LPEBR, stores the result through &f */
+int cc = __lpdbr(&d, x);      /* LPDBR */
+int cc = __lnebr(&f, x);      /* LNEBR */
+int cc = __lndbr(&d, x);      /* LNDBR */
+int cc = __cfebr(&i, mode, x);/* CFEBR, mode is 0 to 15 */
+int cc = __cfdbr(&i, mode, x);/* CFDBR */
+int cc = __cgebr(&l, mode, x);/* CGEBR */
+int cc = __cgdbr(&l, mode, x);/* CGDBR */
+int fpc = __efpc();           /* EFPC */
+__sfpc(fpc);                  /* SFPC */
+```
+
+The load positive and load negative forms store the converted operand
+through the first pointer and return the instruction condition code. The
+convert-to-fixed forms store the integer through the first pointer and
+return the condition code. `__efpc` returns the floating-point control
+register; `__sfpc` writes it.
+
+Long double, hexadecimal floating point, test-data-class, divide-to-integer
+and the `-qfloat=hex` forms are not implemented.
 
 The length arguments must currently be compile-time constants in the
 architectural 0..15 length-field range. Runtime lengths need the same
