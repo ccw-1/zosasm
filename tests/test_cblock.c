@@ -280,6 +280,32 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "THDER %f4,%f4");
+    expect("vector load and splat",
+           "#pragma cblock a\n"
+           "#pragma cin __vector unsigned int v=%v0\n"
+           "#pragma cout __vector unsigned int w=%v2\n"
+           "#pragma cscratch %r2, %r3, %r4, %r5, %v4, %v6\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "__vector unsigned int a;\n"
+           "a = __vec_splats_u4(7);\n"
+           "w = __vec_load_len_u4((uint32_t *)0, 16);\n"
+           "__vec_store_len(a, (uint32_t *)0, 16);\n"
+           "w = a;\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VLREP %v4,0(%r2),2");
+    expect("vector operators are rejected",
+           "#pragma cblock a\n"
+           "#pragma cin __vector unsigned int a=%v0\n"
+           "#pragma cout __vector unsigned int c=%v2\n"
+           "#pragma cscratch %r2, %v4\n"
+           "#pragma ctemp %r12, 256, down\n"
+           "#pragma cbegin\n"
+           "c = a + a;\n"
+           "#pragma cend\n"
+           " END\n",
+           "ZA5002", "");
     expect("DFP conversions",
            "#pragma cblock a\n"
            "#pragma cin char *p=%r2\n"

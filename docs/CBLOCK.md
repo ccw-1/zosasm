@@ -421,6 +421,26 @@ pointer points to the zoned decimal field. `__czdt` and `__czxt` return the
 instruction condition code. The `-qdfp` option activates these builtins in
 XL C; CBLOCK accepts the names directly.
 
+### Vector builtins
+
+The first vector group supports `__vector` types, `%vN` bindings and
+`%vN` entries in `cscratch`.
+
+```c
+__vector unsigned int v;
+v = __vec_splats_u4(7);              /* VLREP */
+v = __vec_load_len_u4(p, 16);        /* VLL */
+v = __vec_load_bndry_u4(p, 16);      /* VL; the boundary is an alignment hint */
+__vec_store_len(v, p, 16);           /* VSTL */
+```
+
+The element types are `char`, `short`, `int`, `long long`, `float` and
+`double`, with `signed`, `unsigned`, `bool` and the `s1/u1/s2/u2/s4/u4/s8/u8/f4/f8`
+builtin suffixes. Vector arithmetic and the remaining `__vec_*` builtins
+are not implemented yet. `__vec_load_bndry_*` accepts the boundary argument
+but uses an unaligned `VL`, which is correct and only loses an alignment
+optimization.
+
 The length arguments must currently be compile-time constants in the
 architectural 0..15 length-field range. Runtime lengths need the same
 `EXRL`/template machinery as the compiler; that is a later step.

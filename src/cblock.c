@@ -21,6 +21,11 @@ typedef struct {
     int elem_unsig;
     int flt;        /* scalar is float (bits 32) or double (bits 64) */
     int dfp;        /* scalar is decimal floating point */
+    int vec;        /* value is a 128-bit vector */
+    int vbits;      /* vector element width: 8, 16, 32 or 64 */
+    int vunsig;     /* vector element is unsigned */
+    int vfloat;     /* vector element is float or double */
+    int vbool;      /* vector element is a comparison mask */
     int elem_flt;   /* pointer element is float/double */
     int elem_dfp;   /* pointer element is decimal floating point */
 } CType;
@@ -99,6 +104,8 @@ typedef struct {
     int nscratch;
     int fscratch[16];
     int nfscratch;
+    int vscratch[32];
+    int nvscratch;
     Vec(char *) ptypenames; /* opaque pointer target names, index + 1 in CType.target */
     struct CBString *lits; /* string literal tables, emitted after the block */
     size_t nlits, lits_cap;
@@ -138,6 +145,11 @@ static CType type_of(int bits, int unsig) {
     t.elem_unsig = 0;
     t.flt = 0;
     t.dfp = 0;
+    t.vec = 0;
+    t.vbits = 0;
+    t.vunsig = 0;
+    t.vfloat = 0;
+    t.vbool = 0;
     t.elem_flt = 0;
     t.elem_dfp = 0;
     return t;
@@ -152,6 +164,11 @@ static CType type_ptr(void) {
     t.elem_unsig = 1;
     t.flt = 0;
     t.dfp = 0;
+    t.vec = 0;
+    t.vbits = 0;
+    t.vunsig = 0;
+    t.vfloat = 0;
+    t.vbool = 0;
     t.elem_flt = 0;
     t.elem_dfp = 0;
     return t;
@@ -175,6 +192,40 @@ static CType type_dfp(int bits) {
     t.dfp = 1;
     return t;
 }
+static CType type_vec(int vbits, int vunsig, int vfloat, int vbool) {
+    CType t = type_of(128, 1);
+    t.vec = 1;
+    t.vbits = vbits;
+    t.vunsig = vunsig;
+    t.vfloat = vfloat;
+    t.vbool = vbool;
+    return t;
+}
+
+static int vec_suffix_type(const char *suffix, CType *t) {
+    int bits, unsig = 0, flt = 0;
+    if (!strcmp(suffix, "s1")) bits = 8;
+    else if (!strcmp(suffix, "u1")) { bits = 8; unsig = 1; }
+    else if (!strcmp(suffix, "s2")) bits = 16;
+    else if (!strcmp(suffix, "u2")) { bits = 16; unsig = 1; }
+    else if (!strcmp(suffix, "s4")) bits = 32;
+    else if (!strcmp(suffix, "u4")) { bits = 32; unsig = 1; }
+    else if (!strcmp(suffix, "s8")) bits = 64;
+    else if (!strcmp(suffix, "u8")) { bits = 64; unsig = 1; }
+    else if (!strcmp(suffix, "f4")) { bits = 32; flt = 1; }
+    else if (!strcmp(suffix, "f8")) { bits = 64; flt = 1; }
+    else return 0;
+    *t = type_vec(bits, unsig, flt, 0);
+    return 1;
+}
+
+static int vec_suffix_code(const char *suffix) {
+    if (!strcmp(suffix, "s1") || !strcmp(suffix, "u1")) return 0;
+    if (!strcmp(suffix, "s2") || !strcmp(suffix, "u2")) return 1;
+    if (!strcmp(suffix, "s4") || !strcmp(suffix, "u4") || !strcmp(suffix, "f4")) return 2;
+    return 3;
+}
+
 static CType type_ptr_fp(int bits) {
     CType t = type_ptr();
     t.elem_bits = bits;
@@ -191,6 +242,11 @@ static CType type_ptr_named(CBlock *b, const char *name) {
     t.elem_unsig = 0;
     t.flt = 0;
     t.dfp = 0;
+    t.vec = 0;
+    t.vbits = 0;
+    t.vunsig = 0;
+    t.vfloat = 0;
+    t.vbool = 0;
     t.elem_flt = 0;
     t.elem_dfp = 0;
     for (i = 0; i < b->ptypenames.n; i++)
@@ -207,8 +263,12 @@ static int type_same(CType a, CType b) {
     return a.bits == b.bits && a.unsig == b.unsig && a.ptr == b.ptr && a.target == b.target &&
            a.elem_bits == b.elem_bits && a.elem_unsig == b.elem_unsig &&
            a.flt == b.flt && a.elem_flt == b.elem_flt &&
-           a.dfp == b.dfp && a.elem_dfp == b.elem_dfp;
+           a.dfp == b.dfp && a.elem_dfp == b.elem_dfp &&
+           a.vec == b.vec && a.vbits == b.vbits && a.vunsig == b.vunsig &&
+           a.vfloat == b.vfloat && a.vbool == b.vbool;
 }
+
+static int vec_type_text(const char *text, CType *t);
 
 static int type_parse(const char *s, CType *t) {
     char *p = xstrdup(s);
@@ -217,6 +277,7 @@ static int type_parse(const char *s, CType *t) {
     size_t n = strlen(q);
     while (n > 0 && (q[n - 1] == ' ' || q[n - 1] == '\t')) q[--n] = 0;
     if (n > 5 && !za_strncmpi(q, "const ", 6)) { q += 6; n -= 6; }
+    if (vec_type_text(q, t)) { free(p); return 1; }
     while (n > 0 && (q[n - 1] == ' ' || q[n - 1] == '\t')) q[--n] = 0;
     if (n > 0 && q[n - 1] == '*') {
         q[--n] = 0;
@@ -257,6 +318,39 @@ static int type_parse(const char *s, CType *t) {
     free(p);
     return r;
 }
+static int vec_type_text(const char *text, CType *t) {
+    char *buf = xstrdup(text), *w[8], *p;
+    int n = 0, i, vbits = 0, vunsig = 0, vfloat = 0, vbool = 0;
+    for (p = buf; *p && n < 8; ) {
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p) break;
+        w[n++] = p;
+        while (*p && *p != ' ' && *p != '\t') p++;
+        if (*p) *p++ = 0;
+    }
+    i = 0;
+    if (i < n && za_streqi(w[i], "__vector")) i++;
+    else { free(buf); return 0; }
+    if (i < n && za_streqi(w[i], "bool")) { vbool = 1; i++; }
+    if (i < n && za_streqi(w[i], "signed")) i++;
+    else if (i < n && za_streqi(w[i], "unsigned")) { vunsig = 1; i++; }
+    if (i >= n) { free(buf); return 0; }
+    if (za_streqi(w[i], "char")) vbits = 8;
+    else if (za_streqi(w[i], "short")) vbits = 16;
+    else if (za_streqi(w[i], "int")) vbits = 32;
+    else if (za_streqi(w[i], "long")) {
+        vbits = 64;
+        if (++i < n && za_streqi(w[i], "long")) { }
+        else { free(buf); return 0; }
+    } else if (za_streqi(w[i], "float")) { vbits = 32; vfloat = 1; }
+    else if (za_streqi(w[i], "double")) { vbits = 64; vfloat = 1; }
+    else { free(buf); return 0; }
+    if (vbool && vfloat) { free(buf); return 0; }
+    *t = type_vec(vbits, vunsig, vfloat, vbool);
+    free(buf);
+    return 1;
+}
+
 static int type_text_parse(CBlock *b, const char *text, CType *t) {
     char *p = xstrdup(text), *q = str_trim(p);
     size_t n = strlen(q);
@@ -341,6 +435,25 @@ static int freg_parse(const char *s, int *out) {
     }
     while (*p == ' ' || *p == '\t') p++;
     if (*p || n > 15) return 0;
+    *out = n;
+    return 1;
+}
+
+static int vreg_parse(const char *s, int *out) {
+    const char *p = s;
+    char kind;
+    int n;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p++ != '%') return 0;
+    kind = (char)za_tolower((unsigned char)*p++);
+    if (kind != 'v' || !za_isdigit((unsigned char)*p)) return 0;
+    n = 0;
+    while (za_isdigit((unsigned char)*p)) {
+        n = n * 10 + (*p - '0');
+        p++;
+    }
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p || n > 31) return 0;
     *out = n;
     return 1;
 }
@@ -885,6 +998,68 @@ static CBExpr *parse_primary(Parser *p) {
             if (!strcmp(e->name, "__strlen")) e->type = type_of(64, 1);
             else if (is_memchr || is_strcpy) e->type = type_ptr();
             else e->type = type_of(32, 0);
+            return e;
+        }
+        if (!strncmp(name, "__vec_load_len_", 15) ||
+            !strncmp(name, "__vec_load_bndry_", 17) ||
+            !strncmp(name, "__vec_splats_", 13) ||
+            !strcmp(name, "__vec_store_len") || !strcmp(name, "__vec_store_len_r")) {
+            CBExpr *e;
+            CBExpr *args[3] = {0, 0, 0};
+            CType vt;
+            const char *suffix = NULL;
+            int argc = !strncmp(name, "__vec_splats_", 13) ? 1 :
+                       (!strncmp(name, "__vec_load_len_", 15) ||
+                        !strncmp(name, "__vec_load_bndry_", 17)) ? 2 : 3;
+            if (!strncmp(name, "__vec_load_len_", 15)) suffix = name + 15;
+            else if (!strncmp(name, "__vec_load_bndry_", 17)) suffix = name + 17;
+            else if (!strncmp(name, "__vec_splats_", 13)) suffix = name + 13;
+            else {
+                vt = type_vec(8, 1, 0, 0);
+                if (!strcmp(name, "__vec_store_len_r")) vt = type_vec(8, 1, 0, 0);
+            }
+            if (suffix && !vec_suffix_type(suffix, &vt)) {
+                cb_error(p->b, line, col, "ZA5002", "unsupported vector type suffix");
+                p->err = 1;
+                free(name);
+                return NULL;
+            }
+            if (!suffix && (!strcmp(name, "__vec_store_len") || !strcmp(name, "__vec_store_len_r")))
+                vt = type_vec(8, 1, 0, 0);
+            e = mk_expr(E_CALL, (!strncmp(name, "__vec_load_len_", 15) ||
+                                 !strncmp(name, "__vec_load_bndry_", 17) ||
+                                 !strncmp(name, "__vec_splats_", 13)) ? vt : type_of(32, 0),
+                        line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, argc)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1]; e->c = args[2];
+            if (!strncmp(e->name, "__vec_splats_", 13)) {
+                if (e->a->type.ptr || e->a->type.vec) {
+                    cb_error(p->b, line, col, "ZA5003", "a vector splat needs a scalar");
+                    p->err = 1;
+                }
+            } else if (!strncmp(e->name, "__vec_load_len_", 15) ||
+                       !strncmp(e->name, "__vec_load_bndry_", 17)) {
+                if (!e->a->type.ptr || e->b->type.ptr) {
+                    cb_error(p->b, line, col, "ZA5003", "vector load needs a pointer and a length");
+                    p->err = 1;
+                }
+            } else {
+                if (!e->a->type.vec || !e->b->type.ptr || e->c->type.ptr) {
+                    cb_error(p->b, line, col, "ZA5003",
+                             "vector store needs a vector, a pointer and a length");
+                    p->err = 1;
+                }
+            }
             return e;
         }
         if (!strcmp(name, "__efpc") || !strcmp(name, "__sfpc") ||
@@ -1433,8 +1608,10 @@ static CBExpr *parse_postfix(Parser *p) {
             p->err = 1;
             return e;
         }
-        if (e->type.flt) {
-            cb_error(p->b, e->line, e->col, "ZA5003", "++/-- on a floating-point value is not implemented");
+        if (e->type.flt || e->type.vec) {
+            cb_error(p->b, e->line, e->col, "ZA5003",
+                     e->type.vec ? "++/-- on a vector is not implemented"
+                                 : "++/-- on a floating-point value is not implemented");
             p->err = 1;
             return e;
         }
@@ -1545,8 +1722,10 @@ static CBExpr *parse_unary(Parser *p) {
             p->err = 1;
             return a;
         }
-        if (a->type.flt) {
-            cb_error(p->b, a->line, a->col, "ZA5003", "++/-- on a floating-point value is not implemented");
+        if (a->type.flt || a->type.vec) {
+            cb_error(p->b, a->line, a->col, "ZA5003",
+                     a->type.vec ? "++/-- on a vector is not implemented"
+                                 : "++/-- on a floating-point value is not implemented");
             p->err = 1;
             return a;
         }
@@ -1639,7 +1818,7 @@ static CBVar *var_new(CBlock *b, const char *name, CType t, VKind k, int reg) {
     v->kind = k;
     v->reg = reg;
     v->slot = b->next_var_slot;
-    b->next_var_slot += t.bits == 128 ? 2 : 1;
+    b->next_var_slot += (t.vec || t.bits == 128) ? 2 : 1;
     v->initialized = k != V_COUT;
     vec_push(&b->vars, v);
     strmap_put(&b->byname, v->name, v);
@@ -1663,6 +1842,36 @@ static int parse_type(Parser *p, CType *t) {
         }
         lex_next(&p->l);
         *t = type_ptr();
+        return 1;
+    }
+    if (tok_id(&p->l, "__vector")) {
+        int vbits = 0, vunsig = 0, vfloat = 0, vbool = 0;
+        lex_next(&p->l);
+        if (tok_id(&p->l, "bool")) { vbool = 1; lex_next(&p->l); }
+        if (tok_id(&p->l, "signed")) lex_next(&p->l);
+        else if (tok_id(&p->l, "unsigned")) { vunsig = 1; lex_next(&p->l); }
+        if (tok_id(&p->l, "char")) vbits = 8;
+        else if (tok_id(&p->l, "short")) vbits = 16;
+        else if (tok_id(&p->l, "int")) vbits = 32;
+        else if (tok_id(&p->l, "long")) {
+            vbits = 64;
+            lex_next(&p->l);
+            if (!tok_id(&p->l, "long")) {
+                cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5002",
+                         "vector long must be long long");
+                p->err = 1;
+                return 1;
+            }
+        } else if (tok_id(&p->l, "float")) { vbits = 32; vfloat = 1; }
+        else if (tok_id(&p->l, "double")) { vbits = 64; vfloat = 1; }
+        else {
+            cb_error(p->b, p->l.tok.line, p->l.tok.col, "ZA5002",
+                     "unsupported vector element type");
+            p->err = 1;
+            return 1;
+        }
+        lex_next(&p->l);
+        *t = type_vec(vbits, vunsig, vfloat, vbool);
         return 1;
     }
     if (tok_id(&p->l, "long")) {
@@ -2305,6 +2514,20 @@ static void add_fscratch(CBlock *b, int reg, int line) {
     b->fscratch[b->nfscratch++] = reg;
 }
 
+static void add_vscratch(CBlock *b, int reg, int line) {
+    int i;
+    for (i = 0; i < b->nvscratch; i++)
+        if (b->vscratch[i] == reg) {
+            cb_error(b, line, 1, "ZA5005", "register %%v%d is listed twice in cscratch", reg);
+            return;
+        }
+    if (b->nvscratch >= 32) {
+        cb_error(b, line, 1, "ZA5005", "too many cscratch vector registers");
+        return;
+    }
+    b->vscratch[b->nvscratch++] = reg;
+}
+
 static int binding_parse(CBlock *b, const char *rest, int line, VKind kind) {
     char *s = xstrdup(rest);
     char *p = s;
@@ -2339,17 +2562,20 @@ static int binding_parse(CBlock *b, const char *rest, int line, VKind kind) {
                     if (!type_text_parse(b, type_text, &t)) {
                         cb_error(b, line, 1, "ZA5002", "unsupported cblock type \"%s\"", type_text);
                         bad = 1;
-                    } else if (t.flt ? !freg_parse(rn, &reg) : !reg_parse(rn, &reg)) {
+                    } else if (t.vec ? !vreg_parse(rn, &reg) :
+                               t.flt ? !freg_parse(rn, &reg) : !reg_parse(rn, &reg)) {
                         cb_error(b, line, 1, "ZA5005",
-                                 t.flt ? "\"%s\" is not a %%f0-%%f15 register binding for a float or double"
+                                 t.vec ? "\"%s\" is not a %%v0-%%v31 register binding for a vector"
+                                 : t.flt ? "\"%s\" is not a %%f0-%%f15 register binding for a float or double"
                                        : "\"%s\" is not a %%r0-%%r15 register binding", rn);
                         bad = 1;
                     } else {
                         isf = t.flt;
                         for (i = 0; i < (int)b->vars.n; i++)
-                            if (b->vars.v[i]->reg == reg && b->vars.v[i]->type.flt == isf) {
+                            if (b->vars.v[i]->reg == reg && b->vars.v[i]->type.vec == t.vec &&
+                                b->vars.v[i]->type.flt == isf) {
                                 cb_error(b, line, 1, "ZA5005", "register %s%d is bound more than once",
-                                         isf ? "%%f" : "%%r", reg);
+                                         t.vec ? "%%v" : isf ? "%%f" : "%%r", reg);
                                 bad = 1;
                                 break;
                             }
@@ -2566,6 +2792,14 @@ static void store_fp_slot(CBlock *b, int line, int slot, CType t, int fpr) {
              fpr, off, b->temp_reg);
 }
 
+static void load_vec_slot(CBlock *b, int line, int slot, int vr) {
+    asm_line(b, line, "VL %%v%d,%ld(%%r%d)", vr, slot_off(b, slot), b->temp_reg);
+}
+
+static void store_vec_slot(CBlock *b, int line, int slot, int vr) {
+    asm_line(b, line, "VST %%v%d,%ld(%%r%d)", vr, slot_off(b, slot), b->temp_reg);
+}
+
 static void store_fp_mem(CBlock *b, int line, CType t, int fpr, int addr) {
     if (t.bits == 128) {
         asm_line(b, line, "STD %%f%d,0(%%r%d)", fpr, addr);
@@ -2576,7 +2810,7 @@ static void store_fp_mem(CBlock *b, int line, CType t, int fpr, int addr) {
 }
 
 static void copy_slot(CBlock *b, int line, int dst, int src, CType t) {
-    if (t.bits == 128) {
+    if (t.vec || t.bits == 128) {
         asm_line(b, line, "LG %%r0,%ld(%%r%d)", slot_off(b, src), b->temp_reg);
         asm_line(b, line, "STG %%r0,%ld(%%r%d)", slot_off(b, dst), b->temp_reg);
         asm_line(b, line, "LG %%r0,%ld(%%r%d)", slot_off(b, src + 1), b->temp_reg);
@@ -2691,6 +2925,7 @@ static void emit_test(CBlock *b, int line, CType t) {
 
 static int pick_fpr(CBlock *b, int used1, int used2);
 static int pick_fpr_pair(CBlock *b, int used1, int used2);
+static int pick_vr(CBlock *b, int used1, int used2);
 static int pick_addr(CBlock *b, int used1, int used2);
 static int pick_addr3(CBlock *b, int used1, int used2, int used3);
 static int pick_addr4(CBlock *b, int used1, int used2, int used3, int used4);
@@ -2838,6 +3073,10 @@ static int eval_bin(Cg *cg, CBExpr *e, int *slotp) {
     int s0, s1, res;
     CType t = e->type;
     CType ot = type_usual(e->a->type, e->b->type);
+    if (e->type.vec || e->a->type.vec || e->b->type.vec) {
+        cb_error(b, e->line, e->col, "ZA5002", "vector operators are not implemented");
+        return 0;
+    }
     if (e->op == OP_LAND || e->op == OP_LOR) {
         char *lab = new_label(b), *end = new_label(b);
         res = alloc_slot(cg);
@@ -2962,7 +3201,7 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
                      e->var->name);
             return 0;
         }
-        s = alloc_slots(cg, e->var->type.bits == 128 ? 2 : 1);
+        s = alloc_slots(cg, (e->var->type.vec || e->var->type.bits == 128) ? 2 : 1);
         copy_slot(b, e->line, s, e->var->slot, e->var->type);
         *slotp = s;
         return 1;
@@ -3016,6 +3255,10 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
         return 1;
     }
     case E_CAST:
+        if (e->type.vec || e->a->type.vec) {
+            cb_error(b, e->line, e->col, "ZA5002", "vector conversions are not implemented");
+            return 0;
+        }
         if (e->type.dfp || e->a->type.dfp) {
             cb_error(b, e->line, e->col, "ZA5002",
                      "decimal floating-point conversions are not implemented");
@@ -3082,6 +3325,10 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
         *slotp = res;
         return 1;
     case E_UN:
+        if (e->a->type.vec) {
+            cb_error(b, e->line, e->col, "ZA5002", "vector unary operators are not implemented");
+            return 0;
+        }
         if (e->a->type.flt) {
             int isx = e->a->type.bits == 128;
             if (e->a->type.dfp) {
@@ -3667,6 +3914,82 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             else if (!strcmp(e->name, "__unpka")) asm_line(b, e->line, "UNPKA 0(%lld,%%r%d),0(%%r%d)", (long long)len, ra, rb);
             else if (!strcmp(e->name, "__unpku")) asm_line(b, e->line, "UNPKU 0(%lld,%%r%d),0(%%r%d)", (long long)len, ra, rb);
             else asm_line(b, e->line, "MVCRL 0(%lld,%%r%d),0(%%r%d)", (long long)len, ra, rb);
+            res = alloc_slot(cg);
+            asm_line(b, e->line, "LGHI %%r0,0");
+            store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strncmp(e->name, "__vec_load_len_", 15) ||
+            !strncmp(e->name, "__vec_load_bndry_", 17) ||
+            !strncmp(e->name, "__vec_splats_", 13) ||
+            !strcmp(e->name, "__vec_store_len") || !strcmp(e->name, "__vec_store_len_r")) {
+            int vr, addr, len;
+            if (!strncmp(e->name, "__vec_splats_", 13)) {
+                int elem = vec_suffix_code(e->name + 13);
+                if (!eval(cg, e->a, &sa)) return 0;
+                vr = pick_vr(b, -1, -1);
+                addr = pick_addr(b, 0, 0);
+                if (vr < 0 || addr < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "a vector splat needs a vector and an address register");
+                    return 0;
+                }
+                asm_line(b, e->line, "LA %%r%d,%ld(%%r%d)", addr, slot_off(b, sa), b->temp_reg);
+                asm_line(b, e->line, "VLREP %%v%d,0(%%r%d),%d", vr, addr, elem);
+                res = alloc_slots(cg, 2);
+                store_vec_slot(b, e->line, res, vr);
+                *slotp = res;
+                return 1;
+            }
+            if (!strncmp(e->name, "__vec_load_bndry_", 17)) {
+                if (!eval(cg, e->a, &sa)) return 0;
+                vr = pick_vr(b, -1, -1);
+                addr = pick_addr(b, 0, 0);
+                if (vr < 0 || addr < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "vector load needs a vector and an address register");
+                    return 0;
+                }
+                load_slot(b, e->line, sa, type_ptr(), addr);
+                asm_line(b, e->line, "VL %%v%d,0(%%r%d)", vr, addr);
+                res = alloc_slots(cg, 2);
+                store_vec_slot(b, e->line, res, vr);
+                *slotp = res;
+                return 1;
+            }
+            if (!strncmp(e->name, "__vec_load_len_", 15)) {
+                if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sl)) return 0;
+                vr = pick_vr(b, -1, -1);
+                addr = pick_addr(b, 0, 0);
+                len = pick_addr(b, addr, 0);
+                if (vr < 0 || addr < 0 || len < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "vector load needs a vector and two address registers");
+                    return 0;
+                }
+                load_slot(b, e->line, sa, type_ptr(), addr);
+                load_slot(b, e->line, sl, e->b->type, len);
+                asm_line(b, e->line, "VLL %%v%d,%%r%d,0(%%r%d)", vr, len, addr);
+                res = alloc_slots(cg, 2);
+                store_vec_slot(b, e->line, res, vr);
+                *slotp = res;
+                return 1;
+            }
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp) || !eval(cg, e->c, &sl))
+                return 0;
+            vr = pick_vr(b, -1, -1);
+            addr = pick_addr(b, 0, 0);
+            len = pick_addr(b, addr, 0);
+            if (vr < 0 || addr < 0 || len < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "vector store needs a vector and two address registers");
+                return 0;
+            }
+            load_slot(b, e->line, sp, type_ptr(), addr);
+            load_slot(b, e->line, sl, e->c->type, len);
+            load_vec_slot(b, e->line, sa, vr);
+            asm_line(b, e->line, "VSTL %%v%d,%%r%d,0(%%r%d)", vr, len, addr);
             res = alloc_slot(cg);
             asm_line(b, e->line, "LGHI %%r0,0");
             store_slot(b, e->line, res, type_of(32, 0), 0);
@@ -4509,6 +4832,15 @@ static int pick_fpr_pair(CBlock *b, int used1, int used2) {
     return -1;
 }
 
+static int pick_vr(CBlock *b, int used1, int used2) {
+    int i;
+    for (i = 0; i < b->nvscratch; i++) {
+        int r = b->vscratch[i];
+        if (r != used1 && r != used2) return r;
+    }
+    return -1;
+}
+
 static int pick_pair(CBlock *b, int used1, int used2, int *second) {
     int i;
     for (i = 0; i < b->nscratch; i++) {
@@ -4856,7 +5188,7 @@ for_fail:
             copy_slot(b, st->line, st->var->slot, s, st->var->type);
         } else {
             asm_line(b, st->line, "LGHI %%r0,0");
-            if (st->var->type.bits == 128) {
+            if (st->var->type.vec || st->var->type.bits == 128) {
                 asm_line(b, st->line, "STG %%r0,%ld(%%r%d)", slot_off(b, st->var->slot), b->temp_reg);
                 asm_line(b, st->line, "STG %%r0,%ld(%%r%d)", slot_off(b, st->var->slot + 1), b->temp_reg);
             } else store_slot(b, st->line, st->var->slot, st->var->type, 0);
@@ -5045,7 +5377,12 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
                     if (!reg_parse(trim(dash + 1), &r2) &&
                         !freg_parse(trim(dash + 1), &r2)) r2 = -1;
                 }
-                if (freg_parse(trim(part), &r1)) {
+                if (vreg_parse(trim(part), &r1)) {
+                    if (dash) {
+                        cb_error(&b, body[i].line, 1, "ZA5005", "cscratch vector ranges are not supported");
+                        ok = 0;
+                    } else add_vscratch(&b, r1, body[i].line);
+                } else if (freg_parse(trim(part), &r1)) {
                     if (dash) {
                         cb_error(&b, body[i].line, 1, "ZA5005", "cscratch floating-point ranges are not supported");
                         ok = 0;
@@ -5082,18 +5419,20 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
         goto done;
     }
     for (i = 0; i < b.vars.n; i++) {
-        if (b.vars.v[i]->type.bits == 128 && (b.vars.v[i]->reg % 4 != 0)) {
+        if (!b.vars.v[i]->type.vec && b.vars.v[i]->type.bits == 128 &&
+            (b.vars.v[i]->reg % 4 != 0)) {
             cb_error(&b, line, 1, "ZA5005",
                      "long double binding %%f%d is not the base of an FPR pair", b.vars.v[i]->reg);
             goto done;
         }
-        if (!b.vars.v[i]->type.flt &&
+        if (!b.vars.v[i]->type.flt && !b.vars.v[i]->type.vec &&
             (b.vars.v[i]->reg == 0 || b.vars.v[i]->reg == 1)) {
             cb_error(&b, line, 1, "ZA5005", "register %%r%d cannot be a cin/cout binding",
                      b.vars.v[i]->reg);
             goto done;
         }
-        if (!b.vars.v[i]->type.flt && b.vars.v[i]->reg == b.temp_reg) {
+        if (!b.vars.v[i]->type.flt && !b.vars.v[i]->type.vec &&
+            b.vars.v[i]->reg == b.temp_reg) {
             cb_error(&b, line, 1, "ZA5005", "bound register %%r%d is also the ctemp base",
                      b.vars.v[i]->reg);
             goto done;
@@ -5103,7 +5442,7 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
         size_t j;
         for (j = 0; j < b.vars.n; j++) {
             CBVar *v = b.vars.v[j];
-            if (v->type.flt &&
+            if (!v->type.vec && v->type.flt &&
                 (v->reg == b.fscratch[i] ||
                  (v->type.bits == 128 && v->reg + 2 == b.fscratch[i]))) {
                 cb_error(&b, line, 1, "ZA5005", "bound register %%f%d also appears in cscratch",
@@ -5120,7 +5459,7 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
         }
         for (j = 0; j < b.vars.n; j++) {
             CBVar *v = b.vars.v[j];
-            if (!v->type.flt && v->reg >= 0 && v->reg == b.scratch[i]) {
+            if (!v->type.flt && !v->type.vec && v->reg >= 0 && v->reg == b.scratch[i]) {
                 cb_error(&b, line, 1, "ZA5005", "bound register %%r%d also appears in cscratch", v->reg);
                 goto done;
             }
@@ -5183,7 +5522,8 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
             for (i = 0; i < b.vars.n; i++) {
                 CBVar *v = b.vars.v[i];
                 if (v->kind == V_CIN || v->kind == V_CINOUT) {
-                    if (v->type.flt) store_fp_slot(&b, line, v->slot, v->type, v->reg);
+                    if (v->type.vec) store_vec_slot(&b, line, v->slot, v->reg);
+                    else if (v->type.flt) store_fp_slot(&b, line, v->slot, v->type, v->reg);
                     else store_slot(&b, line, v->slot, v->type, v->reg);
                 }
             }
@@ -5197,7 +5537,8 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
                 for (i = 0; i < b.vars.n; i++) {
                     CBVar *v = b.vars.v[i];
                     if (v->kind == V_COUT || v->kind == V_CINOUT) {
-                        if (v->type.flt) load_fp_slot(&b, line, v->slot, v->type, v->reg);
+                        if (v->type.vec) load_vec_slot(&b, line, v->slot, v->reg);
+                        else if (v->type.flt) load_fp_slot(&b, line, v->slot, v->type, v->reg);
                         else load_slot(&b, line, v->slot, v->type, v->reg);
                     }
                 }
