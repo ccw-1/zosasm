@@ -302,6 +302,13 @@ int cc = __unpk(a, l1, b, l2); /* UNPK */
 int cc = __ed(a, b, len);      /* ED */
 int cc = __tp(a, len);         /* TP */
 int cc = __srp(a, len, shift, pattern); /* SRP */
+int64_t v = __cvbg(a);        /* CVBG */
+void __cvdg(v, a);            /* CVDG */
+void __pka(a, b, len);        /* PKA */
+void __pku(a, b, len);        /* PKU */
+void __unpka(a, len, b);      /* UNPKA */
+void __unpku(a, len, b);      /* UNPKU */
+void __mvcrl(a, b, len);      /* MVCRL */
 ```
 
 The length arguments must currently be compile-time constants in the

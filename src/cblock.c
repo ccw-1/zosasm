@@ -972,6 +972,45 @@ static CBExpr *parse_primary(Parser *p) {
             e->a = args[0]; e->b = args[1]; e->c = args[2];
             return e;
         }
+        if (!strcmp(name, "__cvbg") || !strcmp(name, "__cvdg") ||
+            !strcmp(name, "__pka") || !strcmp(name, "__pku") ||
+            !strcmp(name, "__unpka") || !strcmp(name, "__unpku") ||
+            !strcmp(name, "__mvcrl")) {
+            CBExpr *e = mk_expr(E_CALL, type_of(32, 0), line, col);
+            CBExpr *args[3] = {0, 0, 0};
+            int argc = !strcmp(name, "__cvbg") ? 1 : !strcmp(name, "__cvdg") ? 2 : 3;
+            int i, bad = 0;
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, argc)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1]; e->c = args[2];
+            for (i = 0; i < argc; i++) if (!args[i]) bad = 1;
+            if (!strcmp(e->name, "__cvbg")) {
+                if (!e->a->type.ptr) bad = 1;
+                e->type = type_of(64, 0);
+            } else if (!strcmp(e->name, "__cvdg")) {
+                if (e->a->type.ptr || !e->b->type.ptr) bad = 1;
+            } else if (!strcmp(e->name, "__pka") || !strcmp(e->name, "__pku")) {
+                if (!e->a->type.ptr || !e->b->type.ptr || e->c->type.ptr) bad = 1;
+            } else if (!strcmp(e->name, "__unpka") || !strcmp(e->name, "__unpku")) {
+                if (!e->a->type.ptr || e->b->type.ptr || !e->c->type.ptr) bad = 1;
+            } else if (!strcmp(e->name, "__mvcrl")) {
+                if (!e->a->type.ptr || !e->b->type.ptr || e->c->type.ptr) bad = 1;
+            }
+            if (bad) {
+                cb_error(p->b, line, col, "ZA5003", "%s has an argument of the wrong type", e->name);
+                p->err = 1;
+            }
+            return e;
+        }
         CBVar *v = strmap_get(&p->b->byname, name);
         CType t;
         if (type_parse(name, &t)) {
@@ -2906,6 +2945,70 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             asm_line(b, e->line, "IPM %%r0");
             asm_line(b, e->line, "SRL %%r0,%%r0,28");
             res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__cvbg")) {
+            int ra;
+            if (!eval(cg, e->a, &sa)) return 0;
+            ra = pick_addr(b, 0, 0);
+            if (ra < 0) { cb_error(b, e->line, e->col, "ZA5005", "__cvbg needs a scratch register"); return 0; }
+            load_slot(b, e->line, sa, type_ptr(), ra);
+            asm_line(b, e->line, "CVBG %%r0,0(%%r%d)", ra);
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(64, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__cvdg")) {
+            int ra;
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+            ra = pick_addr(b, 0, 0);
+            if (ra < 0) { cb_error(b, e->line, e->col, "ZA5005", "__cvdg needs a scratch register"); return 0; }
+            load_slot(b, e->line, sa, e->a->type, 0);
+            load_slot(b, e->line, sp, type_ptr(), ra);
+            asm_line(b, e->line, "CVDG %%r0,0(%%r%d)", ra);
+            res = alloc_slot(cg);
+            asm_line(b, e->line, "LGHI %%r0,0");
+            store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__pka") || !strcmp(e->name, "__pku") ||
+            !strcmp(e->name, "__unpka") || !strcmp(e->name, "__unpku") ||
+            !strcmp(e->name, "__mvcrl")) {
+            int64_t len;
+            int ra, rb;
+            if (!strcmp(e->name, "__unpka") || !strcmp(e->name, "__unpku")) {
+                if (!const_eval(e->b, &len) || len < 0 || len > 255) {
+                    cb_error(b, e->line, e->col, "ZA5005", "%s length must be a constant 0 to 255", e->name);
+                    return 0;
+                }
+                if (!eval(cg, e->a, &sa) || !eval(cg, e->c, &sl)) return 0;
+            } else {
+                if (!const_eval(e->c, &len) || len < 0 || len > 255) {
+                    cb_error(b, e->line, e->col, "ZA5005", "%s length must be a constant 0 to 255", e->name);
+                    return 0;
+                }
+                if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+                sl = sp;
+            }
+            ra = pick_addr(b, 0, 0);
+            rb = pick_addr(b, ra, 0);
+            if (ra < 0 || rb < 0) {
+                cb_error(b, e->line, e->col, "ZA5005", "%s needs two address registers", e->name);
+                return 0;
+            }
+            load_slot(b, e->line, sa, type_ptr(), ra);
+            load_slot(b, e->line, sl, type_ptr(), rb);
+            if (!strcmp(e->name, "__pka")) asm_line(b, e->line, "PKA 0(%%r%d),0(%lld,%%r%d)", ra, (long long)len, rb);
+            else if (!strcmp(e->name, "__pku")) asm_line(b, e->line, "PKU 0(%%r%d),0(%lld,%%r%d)", ra, (long long)len, rb);
+            else if (!strcmp(e->name, "__unpka")) asm_line(b, e->line, "UNPKA 0(%lld,%%r%d),0(%%r%d)", (long long)len, ra, rb);
+            else if (!strcmp(e->name, "__unpku")) asm_line(b, e->line, "UNPKU 0(%lld,%%r%d),0(%%r%d)", (long long)len, ra, rb);
+            else asm_line(b, e->line, "MVCRL 0(%lld,%%r%d),0(%%r%d)", (long long)len, ra, rb);
+            res = alloc_slot(cg);
+            asm_line(b, e->line, "LGHI %%r0,0");
             store_slot(b, e->line, res, type_of(32, 0), 0);
             *slotp = res;
             return 1;

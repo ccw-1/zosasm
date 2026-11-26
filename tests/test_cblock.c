@@ -145,6 +145,23 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "AP 0(1,%r1),0(1,%r5)");
+    expect("packing and 64-bit decimal builtins",
+           "#pragma cblock a\n"
+           "#pragma cin char *a=%r2, char *b=%r3, uint16_t *u=%r4\n"
+           "#pragma cout int64_t r=%r5\n"
+           "#pragma cscratch %r0, %r1, %r6, %r7\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "r = __cvbg(a);\n"
+           "__cvdg(r, b);\n"
+           "__pka(a, b, 5);\n"
+           "__pku(a, u, 5);\n"
+           "__unpka(a, 5, b);\n"
+           "__unpku(u, 5, b);\n"
+           "__mvcrl(a, b, 5);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "PKA 0(%r1),0(5,%r6)");
     expect("decimal length must be constant",
            "#pragma cblock a\n"
            "#pragma cin unsigned char *a=%r2, unsigned char *b=%r3\n"

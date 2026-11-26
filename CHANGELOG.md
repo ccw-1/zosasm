@@ -19,7 +19,8 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
   `__lax`/`__laxg`, `__lao`/`__laog`, `__csg`, `__cdsg`, `__lpd` and `__lpdg`.
   Constant-length decimal/character builtins `__ap`, `__cp`, `__sp`, `__mp`,
   `__dp`, `__zap`, `__nc`, `__oc`, `__xc`, `__tr`, `__ed`, `__tp`, `__srp`,
-  `__cvb`, `__cvd`, `__pack` and `__unpk` are included. PLO/TM/vector/far/float groups are
+  `__cvb`, `__cvd`, `__cvbg`, `__cvdg`, `__pack`, `__unpk`, `__pka`, `__pku`,
+  `__unpka`, `__unpku` and `__mvcrl` are included. PLO/TM/vector/far/float groups are
   deferred. `__lpd*` needs an even-odd pair in `cscratch`; decimal lengths
   must be compile-time constants.
 * CBLOCK 16-bit `int16_t`/`uint16_t` scalars and pointers, with `LGH`/`LLGH`
