@@ -275,6 +275,29 @@ nonzero address registers. The current allocator does not yet implement
 pair-aware allocation for `CDSG`, `CLCL`, `MVCLE`, or vector/FPR overlaps;
 those builtins are not exposed yet.
 
+Constant-length decimal and character builtins are also available:
+
+```c
+int cc = __ap(a, l1, b, l2);   /* AP */
+int cc = __cp(a, l1, b, l2);   /* CP */
+int cc = __sp(a, l1, b, l2);   /* SP */
+int cc = __mp(a, l1, b, l2);   /* MP */
+int cc = __dp(a, l1, b, l2);   /* DP */
+int cc = __zap(a, l1, b, l2);  /* ZAP */
+int cc = __nc(a, b, len);      /* NC */
+int cc = __oc(a, b, len);      /* OC */
+int cc = __xc(a, b, len);      /* XC */
+void  __tr(a, table, len);     /* TR */
+int cc = __cvb(p);             /* CVB */
+void  __cvd(v, p);             /* CVD */
+int cc = __pack(a, l1, b, l2); /* PACK */
+int cc = __unpk(a, l1, b, l2); /* UNPK */
+```
+
+The length arguments must currently be compile-time constants in the
+architectural 0..15 length-field range. Runtime lengths need the same
+`EXRL`/template machinery as the compiler; that is a later step.
+
 ### String literal tables
 
 A string literal used as a pointer initializer emits a byte table after the

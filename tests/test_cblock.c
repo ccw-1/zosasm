@@ -114,6 +114,36 @@ static void test_atomic_builtins(void) {
            "", "CSG %r0,%r1,0(");
 }
 
+static void test_decimal_builtins(void) {
+    expect("decimal and character builtins",
+           "#pragma cblock a\n"
+           "#pragma cin unsigned char *a=%r2, unsigned char *b=%r3\n"
+           "#pragma cout int32_t cc=%r4\n"
+           "#pragma cscratch %r0, %r1, %r5, %r6\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "cc = __ap(a, 1, b, 1);\n"
+           "cc = __nc(a, b, 3);\n"
+           "__tr(a, b, 3);\n"
+           "cc = __cvb(a);\n"
+           "__cvd(cc, a);\n"
+           "__pack(a, 2, b, 3);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "AP 0(1,%r1),0(1,%r5)");
+    expect("decimal length must be constant",
+           "#pragma cblock a\n"
+           "#pragma cin unsigned char *a=%r2, unsigned char *b=%r3\n"
+           "#pragma cin int32_t n=%r4\n"
+           "#pragma cscratch %r0, %r1, %r5\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "__nc(a, b, n);\n"
+           "#pragma cend\n"
+           " END\n",
+           "ZA5005", NULL);
+}
+
 static void test_debug_metadata(void) {
     const char *src =
         "#pragma cblock dbg\n"
@@ -389,6 +419,7 @@ int main(void) {
            "ZA5001", NULL);
     test_arch_builtins();
     test_atomic_builtins();
+    test_decimal_builtins();
     test_debug_metadata();
     test_compiled_assembly();
     TEST_MAIN_END();
