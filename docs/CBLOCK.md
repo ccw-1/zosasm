@@ -402,6 +402,25 @@ values are not implemented. The test-data-class forms take the mask
 address as their integer argument, matching XL C. Hexadecimal floating
 point and the `-qfloat=hex` forms are not implemented.
 
+### Decimal floating point
+
+`_Decimal64` and `_Decimal128` values are supported for the conversion
+builtins. `_Decimal64` uses one FPR, `_Decimal128` uses an FPR pair, and
+both can be bound through `%fN`. Decimal arithmetic, casts and literals are
+not implemented.
+
+```c
+_Decimal64  d = __cdzt(p, length, mask);   /* CDZT: zoned to DFP64 */
+_Decimal128 x = __cxzt(p, length, mask);   /* CXZT: zoned to DFP128 */
+int cc = __czdt(d, p, length, mask);       /* CZDT: DFP64 to zoned */
+int cc = __czxt(x, p, length, mask);       /* CZXT: DFP128 to zoned */
+```
+
+`length` and `mask` are compile-time constants. The source or result
+pointer points to the zoned decimal field. `__czdt` and `__czxt` return the
+instruction condition code. The `-qdfp` option activates these builtins in
+XL C; CBLOCK accepts the names directly.
+
 The length arguments must currently be compile-time constants in the
 architectural 0..15 length-field range. Runtime lengths need the same
 `EXRL`/template machinery as the compiler; that is a later step.

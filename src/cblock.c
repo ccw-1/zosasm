@@ -20,7 +20,9 @@ typedef struct {
     int elem_bits;  /* typed pointer element width: 0 byte/void/named, else 32 or 64 */
     int elem_unsig;
     int flt;        /* scalar is float (bits 32) or double (bits 64) */
+    int dfp;        /* scalar is decimal floating point */
     int elem_flt;   /* pointer element is float/double */
+    int elem_dfp;   /* pointer element is decimal floating point */
 } CType;
 
 typedef enum { V_CIN, V_COUT, V_CINOUT, V_LOCAL } VKind;
@@ -135,7 +137,9 @@ static CType type_of(int bits, int unsig) {
     t.elem_bits = 0;
     t.elem_unsig = 0;
     t.flt = 0;
+    t.dfp = 0;
     t.elem_flt = 0;
+    t.elem_dfp = 0;
     return t;
 }
 static CType type_ptr(void) {
@@ -147,7 +151,9 @@ static CType type_ptr(void) {
     t.elem_bits = 8; /* byte pointer: pointer arithmetic in bytes, *p is one byte */
     t.elem_unsig = 1;
     t.flt = 0;
+    t.dfp = 0;
     t.elem_flt = 0;
+    t.elem_dfp = 0;
     return t;
 }
 static CType type_ptr_scalar(int bits, int unsig) {
@@ -155,11 +161,18 @@ static CType type_ptr_scalar(int bits, int unsig) {
     t.elem_bits = bits;
     t.elem_unsig = unsig;
     t.elem_flt = 0;
+    t.elem_dfp = 0;
     return t;
 }
 static CType type_fp(int bits) {
     CType t = type_of(bits, 1);
     t.flt = 1;
+    t.dfp = 0;
+    return t;
+}
+static CType type_dfp(int bits) {
+    CType t = type_fp(bits);
+    t.dfp = 1;
     return t;
 }
 static CType type_ptr_fp(int bits) {
@@ -167,6 +180,7 @@ static CType type_ptr_fp(int bits) {
     t.elem_bits = bits;
     t.elem_unsig = 1;
     t.elem_flt = 1;
+    t.elem_dfp = 0;
     return t;
 }
 
@@ -176,7 +190,9 @@ static CType type_ptr_named(CBlock *b, const char *name) {
     t.elem_bits = 0;
     t.elem_unsig = 0;
     t.flt = 0;
+    t.dfp = 0;
     t.elem_flt = 0;
+    t.elem_dfp = 0;
     for (i = 0; i < b->ptypenames.n; i++)
         if (!strcmp(b->ptypenames.v[i], name)) {
             t.target = (int)i + 1;
@@ -190,7 +206,8 @@ static CType type_ptr_named(CBlock *b, const char *name) {
 static int type_same(CType a, CType b) {
     return a.bits == b.bits && a.unsig == b.unsig && a.ptr == b.ptr && a.target == b.target &&
            a.elem_bits == b.elem_bits && a.elem_unsig == b.elem_unsig &&
-           a.flt == b.flt && a.elem_flt == b.elem_flt;
+           a.flt == b.flt && a.elem_flt == b.elem_flt &&
+           a.dfp == b.dfp && a.elem_dfp == b.elem_dfp;
 }
 
 static int type_parse(const char *s, CType *t) {
@@ -207,10 +224,14 @@ static int type_parse(const char *s, CType *t) {
         if (za_streqi(q, "uint8_t") || za_streqi(q, "int8_t") ||
             za_streqi(q, "uint16_t") || za_streqi(q, "int16_t") ||
             za_streqi(q, "float") || za_streqi(q, "double") ||
+            za_streqi(q, "_Decimal32") || za_streqi(q, "_Decimal64") ||
+            za_streqi(q, "_Decimal128") ||
             za_streqi(q, "long double") || za_streqi(q, "void") || za_streqi(q, "char")) {
-            if (za_streqi(q, "float") || za_streqi(q, "double") || za_streqi(q, "long double"))
-                *t = type_ptr_fp(za_streqi(q, "float") ? 32 :
-                                 za_streqi(q, "double") ? 64 : 128);
+            if (za_streqi(q, "_Decimal32") || za_streqi(q, "_Decimal64") ||
+                za_streqi(q, "_Decimal128") || za_streqi(q, "float") ||
+                za_streqi(q, "double") || za_streqi(q, "long double"))
+                *t = type_ptr_fp(za_streqi(q, "_Decimal32") || za_streqi(q, "float") ? 32 :
+                                 za_streqi(q, "_Decimal64") || za_streqi(q, "double") ? 64 : 128);
             else
                 *t = (za_streqi(q, "uint16_t") || za_streqi(q, "int16_t"))
                          ? type_ptr_scalar(16, za_streqi(q, "uint16_t"))
@@ -219,7 +240,10 @@ static int type_parse(const char *s, CType *t) {
             return 1;
         }
     }
-    if (za_streqi(q, "float")) { *t = type_fp(32); r = 1; }
+    if (za_streqi(q, "_Decimal32")) { *t = type_dfp(32); r = 1; }
+    else if (za_streqi(q, "_Decimal64")) { *t = type_dfp(64); r = 1; }
+    else if (za_streqi(q, "_Decimal128")) { *t = type_dfp(128); r = 1; }
+    else if (za_streqi(q, "float")) { *t = type_fp(32); r = 1; }
     else if (za_streqi(q, "double")) { *t = type_fp(64); r = 1; }
     else if (za_streqi(q, "long double")) { *t = type_fp(128); r = 1; }
     else if (za_streqi(q, "int16_t")) { *t = type_of(16, 0); r = 1; }
@@ -246,10 +270,14 @@ static int type_text_parse(CBlock *b, const char *text, CType *t) {
         if (za_streqi(q, "uint8_t") || za_streqi(q, "int8_t") ||
             za_streqi(q, "uint16_t") || za_streqi(q, "int16_t") ||
             za_streqi(q, "float") || za_streqi(q, "double") ||
+            za_streqi(q, "_Decimal32") || za_streqi(q, "_Decimal64") ||
+            za_streqi(q, "_Decimal128") ||
             za_streqi(q, "long double") || za_streqi(q, "void") || za_streqi(q, "char")) {
-            if (za_streqi(q, "float") || za_streqi(q, "double") || za_streqi(q, "long double"))
-                *t = type_ptr_fp(za_streqi(q, "float") ? 32 :
-                                 za_streqi(q, "double") ? 64 : 128);
+            if (za_streqi(q, "_Decimal32") || za_streqi(q, "_Decimal64") ||
+                za_streqi(q, "_Decimal128") || za_streqi(q, "float") ||
+                za_streqi(q, "double") || za_streqi(q, "long double"))
+                *t = type_ptr_fp(za_streqi(q, "_Decimal32") || za_streqi(q, "float") ? 32 :
+                                 za_streqi(q, "_Decimal64") || za_streqi(q, "double") ? 64 : 128);
             else
                 *t = (za_streqi(q, "uint16_t") || za_streqi(q, "int16_t"))
                          ? type_ptr_scalar(16, za_streqi(q, "uint16_t"))
@@ -285,6 +313,8 @@ static int type_parse_old(const char *s, CType *t) {
 #endif
 
 static CType type_usual(CType a, CType b) {
+    if (a.dfp || b.dfp) return type_dfp(a.dfp && b.dfp ? (a.bits > b.bits ? a.bits : b.bits) :
+                                         (a.dfp ? a.bits : b.bits));
     if (a.flt || b.flt) return type_fp(a.flt && b.flt ? (a.bits > b.bits ? a.bits : b.bits) :
                                        (a.flt ? a.bits : b.bits));
     if (a.bits < 32 && b.bits < 32) return type_of(32, 0); /* integer promotion */
@@ -875,7 +905,9 @@ static CBExpr *parse_primary(Parser *p) {
             !strcmp(name, "__tcxb") || !strcmp(name, "__srnm") ||
             !strcmp(name, "__thder") || !strcmp(name, "__thdr") ||
             !strcmp(name, "__tbedr") || !strcmp(name, "__tbdr") ||
-            !strcmp(name, "__diebr") || !strcmp(name, "__didbr")) {
+            !strcmp(name, "__diebr") || !strcmp(name, "__didbr") ||
+            !strcmp(name, "__cdzt") || !strcmp(name, "__cxzt") ||
+            !strcmp(name, "__czdt") || !strcmp(name, "__czxt")) {
             CBExpr *e = mk_expr(E_CALL, type_of(32, 0), line, col);
             CBExpr *args[5] = {0, 0, 0, 0, 0};
             int argc = (!strcmp(name, "__efpc")) ? 0 :
@@ -895,7 +927,9 @@ static CBExpr *parse_primary(Parser *p) {
                         !strcmp(name, "__lnxbr") || !strcmp(name, "__tceb") ||
                         !strcmp(name, "__tcdb") || !strcmp(name, "__tcxb") ||
                         !strcmp(name, "__thder") || !strcmp(name, "__thdr")) ? 2 :
-                       (!strcmp(name, "__tbedr") || !strcmp(name, "__tbdr")) ? 3 :
+                       (!strcmp(name, "__tbedr") || !strcmp(name, "__tbdr") ||
+                        !strcmp(name, "__cdzt") || !strcmp(name, "__cxzt")) ? 3 :
+                       (!strcmp(name, "__czdt") || !strcmp(name, "__czxt")) ? 4 :
                        (!strcmp(name, "__diebr") || !strcmp(name, "__didbr")) ? 5 : 1;
             CBExpr *bad = NULL;
             e->name = xstrdup(name);
@@ -924,6 +958,8 @@ static CBExpr *parse_primary(Parser *p) {
                 e->type = type_fp(64);
             else if (!strcmp(e->name, "__sqxbr") || !strcmp(e->name, "__fixbr"))
                 e->type = type_fp(128);
+            else if (!strcmp(e->name, "__cdzt")) e->type = type_dfp(64);
+            else if (!strcmp(e->name, "__cxzt")) e->type = type_dfp(128);
             else e->type = type_of(32, 0);
             if (!strcmp(e->name, "__fiebr")) {
                 if (e->a->type.flt || !e->b->type.flt || e->b->type.bits != 32) bad = e->b;
@@ -943,6 +979,17 @@ static CBExpr *parse_primary(Parser *p) {
             } else if (!strcmp(e->name, "__cfdbr") || !strcmp(e->name, "__cgdbr")) {
                 if (!e->a->type.ptr || e->b->type.flt || !e->c->type.flt ||
                     e->c->type.bits != 64) bad = e->c;
+            } else if (!strcmp(e->name, "__cdzt") || !strcmp(e->name, "__cxzt")) {
+                if (!e->a->type.ptr || e->b->type.ptr || e->b->type.flt ||
+                    e->c->type.ptr || e->c->type.flt) bad = e->a;
+            } else if (!strcmp(e->name, "__czdt")) {
+                if (!e->a->type.dfp || e->a->type.bits != 64 || !e->b->type.ptr ||
+                    e->c->type.ptr || e->c->type.flt || e->d->type.ptr ||
+                    e->d->type.flt) bad = e->a;
+            } else if (!strcmp(e->name, "__czxt")) {
+                if (!e->a->type.dfp || e->a->type.bits != 128 || !e->b->type.ptr ||
+                    e->c->type.ptr || e->c->type.flt || e->d->type.ptr ||
+                    e->d->type.flt) bad = e->a;
             } else if (!strcmp(e->name, "__thder")) {
                 if (!e->a->type.ptr || !e->b->type.flt || e->b->type.bits != 32) bad = e->b;
             } else if (!strcmp(e->name, "__thdr")) {
@@ -2731,6 +2778,10 @@ static int eval_float_bin(Cg *cg, CBExpr *e, int *slotp) {
     CType ot = type_usual(e->a->type, e->b->type);
     int fa, fb, sa, sb, res;
     int isx = ot.bits == 128;
+    if (ot.dfp) {
+        cb_error(b, e->line, e->col, "ZA5002", "decimal floating-point arithmetic is not implemented");
+        return 0;
+    }
     if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sb)) return 0;
     fa = isx ? pick_fpr_pair(b, -1, -1) : pick_fpr(b, -1, -1);
     fb = isx ? pick_fpr_pair(b, fa, -1) : pick_fpr(b, fa, -1);
@@ -2965,6 +3016,11 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
         return 1;
     }
     case E_CAST:
+        if (e->type.dfp || e->a->type.dfp) {
+            cb_error(b, e->line, e->col, "ZA5002",
+                     "decimal floating-point conversions are not implemented");
+            return 0;
+        }
         if (e->type.flt) {
             int fp = e->type.bits == 128 ? pick_fpr_pair(b, -1, -1) : pick_fpr(b, -1, -1);
             if (fp < 0) {
@@ -3028,6 +3084,11 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
     case E_UN:
         if (e->a->type.flt) {
             int isx = e->a->type.bits == 128;
+            if (e->a->type.dfp) {
+                cb_error(b, e->line, e->col, "ZA5002",
+                         "decimal floating-point unary operators are not implemented");
+                return 0;
+            }
             int fp = isx ? pick_fpr_pair(b, -1, -1) : pick_fpr(b, -1, -1);
             if (fp < 0) {
                 cb_error(b, e->line, e->col, "ZA5005",
@@ -3630,7 +3691,9 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             !strcmp(e->name, "__tcxb") || !strcmp(e->name, "__srnm") ||
             !strcmp(e->name, "__thder") || !strcmp(e->name, "__thdr") ||
             !strcmp(e->name, "__tbedr") || !strcmp(e->name, "__tbdr") ||
-            !strcmp(e->name, "__diebr") || !strcmp(e->name, "__didbr")) {
+            !strcmp(e->name, "__diebr") || !strcmp(e->name, "__didbr") ||
+            !strcmp(e->name, "__cdzt") || !strcmp(e->name, "__cxzt") ||
+            !strcmp(e->name, "__czdt") || !strcmp(e->name, "__czxt")) {
             int fa, fb, fc, ra, rb, sb = -1, sc = -1, sd = -1;
             int64_t m = 0;
             if (!strcmp(e->name, "__efpc")) {
@@ -3689,6 +3752,63 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
                                                                      "LNDBR %%f%d,%%f%d", fa, fb);
                 asm_line(b, e->line, !strcmp(e->name, "__lpebr") || !strcmp(e->name, "__lnebr")
                                        ? "STE %%f%d,0(%%r%d)" : "STD %%f%d,0(%%r%d)", fa, ra);
+                asm_line(b, e->line, "IPM %%r0");
+                asm_line(b, e->line, "SRL %%r0,28");
+                res = alloc_slot(cg);
+                store_slot(b, e->line, res, type_of(32, 0), 0);
+                *slotp = res;
+                return 1;
+            }
+            if (!strcmp(e->name, "__cdzt") || !strcmp(e->name, "__cxzt")) {
+                int isx = !strcmp(e->name, "__cxzt");
+                int64_t len, mask;
+                if (!const_eval(e->b, &len) || len < 0 || len > 255 ||
+                    !const_eval(e->c, &mask) || mask < 0 || mask > 15) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "%s needs constant length 0 to 255 and mask 0 to 15", e->name);
+                    return 0;
+                }
+                if (!eval(cg, e->a, &sa)) return 0;
+                fa = isx ? pick_fpr_pair(b, -1, -1) : pick_fpr(b, -1, -1);
+                ra = pick_addr(b, 0, 0);
+                if (fa < 0 || ra < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "%s needs one FPR%s and one address register", e->name,
+                             isx ? " pair" : "");
+                    return 0;
+                }
+                load_slot(b, e->line, sa, type_ptr(), ra);
+                asm_line(b, e->line, isx ? "CXZT %%f%d,0(%lld,%%r%d),%lld" :
+                                            "CDZT %%f%d,0(%lld,%%r%d),%lld",
+                         fa, (long long)len, ra, (long long)mask);
+                res = alloc_slots(cg, isx ? 2 : 1);
+                store_fp_slot(b, e->line, res, e->type, fa);
+                *slotp = res;
+                return 1;
+            }
+            if (!strcmp(e->name, "__czdt") || !strcmp(e->name, "__czxt")) {
+                int isx = !strcmp(e->name, "__czxt");
+                int64_t len, mask;
+                if (!const_eval(e->c, &len) || len < 0 || len > 255 ||
+                    !const_eval(e->d, &mask) || mask < 0 || mask > 15) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "%s needs constant length 0 to 255 and mask 0 to 15", e->name);
+                    return 0;
+                }
+                if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+                fa = isx ? pick_fpr_pair(b, -1, -1) : pick_fpr(b, -1, -1);
+                ra = pick_addr(b, 0, 0);
+                if (fa < 0 || ra < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "%s needs one FPR%s and one address register", e->name,
+                             isx ? " pair" : "");
+                    return 0;
+                }
+                load_slot(b, e->line, sp, type_ptr(), ra);
+                load_fp_slot(b, e->line, sa, e->a->type, fa);
+                asm_line(b, e->line, isx ? "CZXT %%f%d,0(%lld,%%r%d),%lld" :
+                                            "CZDT %%f%d,0(%lld,%%r%d),%lld",
+                         fa, (long long)len, ra, (long long)mask);
                 asm_line(b, e->line, "IPM %%r0");
                 asm_line(b, e->line, "SRL %%r0,28");
                 res = alloc_slot(cg);

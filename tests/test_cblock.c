@@ -280,6 +280,33 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "THDER %f4,%f4");
+    expect("DFP conversions",
+           "#pragma cblock a\n"
+           "#pragma cin char *p=%r2\n"
+           "#pragma cout int32_t c=%r3\n"
+           "#pragma cscratch %r4, %r5, %f0, %f2, %f4, %f6\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "_Decimal64 d;\n"
+           "_Decimal128 x;\n"
+           "d = __cdzt(p, 5, 0);\n"
+           "x = __cxzt(p, 5, 0);\n"
+           "c = __czdt(d, p, 5, 0);\n"
+           "c = __czxt(x, p, 5, 0);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "CDZT %f0,0(5,%r4),0");
+    expect("DFP arithmetic is rejected",
+           "#pragma cblock a\n"
+           "#pragma cin _Decimal64 a=%f0\n"
+           "#pragma cout _Decimal64 c=%f2\n"
+           "#pragma cscratch %r2, %f4, %f6\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "c = a + a;\n"
+           "#pragma cend\n"
+           " END\n",
+           "ZA5002", "");
     expect("long double binding needs an FPR pair",
            "#pragma cblock a\n"
            "#pragma cin long double a=%f2\n"
