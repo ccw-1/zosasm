@@ -311,6 +311,19 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "FIXR %f12,%f12");
+    expect("vector select and permute",
+           "#pragma cblock a\n"
+           "#pragma cin __vector unsigned int a=%v0, __vector unsigned int b=%v2, __vector unsigned char m=%v4\n"
+           "#pragma cout __vector unsigned int c=%v6\n"
+           "#pragma cscratch %r2, %r3, %v8, %v10, %v12, %v14\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_sel(a, b, m);\n"
+           "c = __vec_perm(a, b, m);\n"
+           "c = __vec_permi(a, b, 1);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VSEL %v8,%v10,%v12,%v14");
     expect("runtime facility checks",
            "#pragma cblock a\n"
            "#pragma cout int32_t c=%r2\n"

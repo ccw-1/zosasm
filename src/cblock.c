@@ -1037,6 +1037,40 @@ static CBExpr *parse_primary(Parser *p) {
             else e->type = type_of(32, 0);
             return e;
         }
+        if (!strcmp(name, "__vec_sel") || !strcmp(name, "__vec_sel_8") ||
+            !strcmp(name, "__vec_perm") || !strcmp(name, "__vec_permi")) {
+            CBExpr *e;
+            CBExpr *args[3] = {0, 0, 0};
+            int argc = !strcmp(name, "__vec_permi") ? 3 : 3;
+            e = mk_expr(E_CALL, type_of(128, 1), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, argc)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1]; e->c = args[2];
+            if (!strcmp(e->name, "__vec_permi")) {
+                if (!e->a->type.vec || !e->b->type.vec ||
+                    e->c->type.vec || e->c->type.ptr || e->c->type.flt) {
+                    cb_error(p->b, line, col, "ZA5003",
+                             "__vec_permi needs two vectors and an integer selector");
+                    p->err = 1;
+                }
+            } else if (!e->a->type.vec || !e->b->type.vec ||
+                       !e->c->type.vec) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s needs vector arguments", e->name);
+                p->err = 1;
+            }
+            e->type = e->a->type;
+            return e;
+        }
         if (!strncmp(name, "__vec_load_len_", 15) ||
             !strncmp(name, "__vec_load_bndry_", 17) ||
             !strncmp(name, "__vec_splats_", 13) ||
@@ -3034,6 +3068,7 @@ static void emit_test(CBlock *b, int line, CType t) {
 static int pick_fpr(CBlock *b, int used1, int used2);
 static int pick_fpr_pair(CBlock *b, int used1, int used2);
 static int pick_vr(CBlock *b, int used1, int used2);
+static int pick_vr4(CBlock *b, int u1, int u2, int u3, int u4);
 static int pick_addr(CBlock *b, int used1, int used2);
 static int pick_addr3(CBlock *b, int used1, int used2, int used3);
 static int pick_addr4(CBlock *b, int used1, int used2, int used3, int used4);
@@ -3560,7 +3595,7 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
         *slotp = s;
         return 1;
     case E_CALL: {
-        int sa, sp, sl = -1;
+        int sa, sp, sl = -1, sc = -1;
         if (!strcmp(e->name, "__sizeof") || !strcmp(e->name, "__offsetof")) {
             if (e->field)
                 asm_line(b, e->line, "LGFI %%r0,offsetof(%s,%s)", e->sym, e->field);
@@ -4135,6 +4170,43 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             res = alloc_slot(cg);
             asm_line(b, e->line, "LGHI %%r0,0");
             store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_sel") || !strcmp(e->name, "__vec_sel_8") ||
+            !strcmp(e->name, "__vec_perm") || !strcmp(e->name, "__vec_permi")) {
+            int vr, va, vb, vm;
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp) || !eval(cg, e->c, &sc))
+                return 0;
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            vb = pick_vr4(b, vr, va, -1, -1);
+            vm = pick_vr4(b, vr, va, vb, -1);
+            if (vr < 0 || va < 0 || vb < 0 || vm < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs four cscratch vector registers", e->name);
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            load_vec_slot(b, e->line, sp, vb);
+            if (!strcmp(e->name, "__vec_sel") || !strcmp(e->name, "__vec_sel_8")) {
+                load_vec_slot(b, e->line, sc, vm);
+                asm_line(b, e->line, "VSEL %%v%d,%%v%d,%%v%d,%%v%d", vr, va, vb, vm);
+            } else if (!strcmp(e->name, "__vec_perm")) {
+                load_vec_slot(b, e->line, sc, vm);
+                asm_line(b, e->line, "VPERM %%v%d,%%v%d,%%v%d,%%v%d", vr, va, vb, vm);
+            } else {
+                int64_t imm;
+                if (!const_eval(e->c, &imm) || imm < 0 || imm > 15) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "__vec_permi needs a constant selector 0 to 15");
+                    return 0;
+                }
+                asm_line(b, e->line, "VPDI %%v%d,%%v%d,%%v%d,%lld", vr, va, vb,
+                         (long long)imm);
+            }
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
             *slotp = res;
             return 1;
         }
@@ -5260,6 +5332,15 @@ static int pick_vr(CBlock *b, int used1, int used2) {
     for (i = 0; i < b->nvscratch; i++) {
         int r = b->vscratch[i];
         if (r != used1 && r != used2) return r;
+    }
+    return -1;
+}
+
+static int pick_vr4(CBlock *b, int u1, int u2, int u3, int u4) {
+    int i;
+    for (i = 0; i < b->nvscratch; i++) {
+        int r = b->vscratch[i];
+        if (r != u1 && r != u2 && r != u3 && r != u4) return r;
     }
     return -1;
 }

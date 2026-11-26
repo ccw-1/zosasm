@@ -482,12 +482,16 @@ v = __vec_splats_u4(7);              /* VLREP */
 v = __vec_load_len_u4(p, 16);        /* VLL */
 v = __vec_load_bndry_u4(p, 16);      /* VL; the boundary is an alignment hint */
 __vec_store_len(v, p, 16);           /* VSTL */
+v = __vec_sel(a, b, mask);           /* VSEL */
+v = __vec_perm(a, b, mask);          /* VPERM */
+v = __vec_permi(a, b, 1);            /* VPDI */
 ```
 
 The element types are `char`, `short`, `int`, `long long`, `float` and
 `double`, with `signed`, `unsigned`, `bool` and the `s1/u1/s2/u2/s4/u4/s8/u8/f4/f8`
-builtin suffixes. Vector arithmetic and the remaining `__vec_*` builtins
-are not implemented yet. `__vec_load_bndry_*` accepts the boundary argument
+builtin suffixes. Vector select, permute and permute-doubleword-immediate are implemented.
+Vector arithmetic and the remaining `__vec_*` builtins are not implemented
+yet. `__vec_load_bndry_*` accepts the boundary argument
 but uses an unaligned `VL`, which is correct and only loses an alignment
 optimization.
 
