@@ -128,6 +128,30 @@ run_case floatand '' '' \
 run_case floatsqrt '' '' \
     '#pragma cout int32_t c=%r4' \
     'c = (int32_t)__sqdbr(4.0);' 2
+run_case longdouble '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'long double x = 1.5; c = (int32_t)(x + 2.25);' 3
+run_case longdoublemul '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'long double x = 1.5; c = (int32_t)(x * 2.0);' 3
+run_case longdoublecmp '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'long double x = 1.5; c = (x < 2.0) + (x >= 2.0) * 2;' 1
+run_case longdoubleptr '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'long double x = 1.5; long double *p = (long double *)&x; c = (int32_t)(*p + 2.0);' 3
+run_case longdoubleload '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'long double x; int32_t cc; cc = __lnxbr(&x, (long double)1.5); c = (int32_t)x;' 255
+run_case longdoubleconvert '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'int32_t i; c = __cfxbr(&i, 5, (long double)3.75); c = i;' 3
+run_case longdoublesqrt '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'c = (int32_t)__sqxbr((long double)4.0);' 2
+run_case longdoublefix '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'c = (int32_t)__fixbr(0, (long double)3.75);' 4
 run_case floatassign '' '' \
     '#pragma cout int32_t c=%r4' \
     'float x = 1.5f; x += 2.0f; c = (int32_t)x;' 3

@@ -65,8 +65,10 @@ scratch; it is never a base, index or branch register. If both are missing from
 `cscratch`, the block saves and restores them as a pair with `STMG`/`LMG`;
 if only one is missing, it uses `STG`/`LG`. A bound `cin`/`cout` register
 therefore cannot be `%r0` or `%r1`. A `float` or `double` binding uses
-`%f0` to `%f15`; list every FPR that the generated code may use in
-`cscratch`. Floating-point `cscratch` ranges are not supported.
+`%f0` to `%f15`; a `long double` binding uses an FPR pair (`%f0`/`%f2`,
+`%f4`/`%f6`, `%f8`/`%f10` or `%f12`/`%f14`). List every FPR that the
+generated code may use in `cscratch`; for long double list both members of
+each pair. Floating-point `cscratch` ranges are not supported.
 
 `ctemp` size is in bytes and must be a multiple of 8. The compiler computes the
 slots it needs and reports `ZA5006` when the area is too small. The base
@@ -79,15 +81,17 @@ Types:
 
 * `int32_t`, `uint32_t`, `int64_t`, `uint64_t`
 * `int` and `unsigned` as 32-bit aliases
-* `float` and `double` scalars and typed pointers, for the floating-point
-  builtins below. They are IEEE binary floating point. A scalar holds its
-  raw 4-byte or 8-byte value in a temporary slot; use a `%fN` binding to
-  read or write it without a conversion. Floating-point literals with an
-  optional `f` suffix initialize `float` and `double` variables. Casts
-  convert between integer, `float` and `double` values. Arithmetic
-  (`+ - * /`), comparisons and conditions work on floating-point values;
-  mixed integer and floating-point operands are converted to the floating
-  type. The `%` operator is not available for floating point.
+* `float`, `double` and `long double` scalars and typed pointers, for the
+  floating-point builtins below. They are IEEE binary floating point.
+  A scalar holds its raw 4-byte, 8-byte or 16-byte value in temporary
+  slots; use a `%fN` binding to read or write it without a conversion.
+  Floating-point literals with an optional `f` suffix initialize `float`
+  and `double` variables; `L` initializes a `long double` through a
+  conversion. Casts convert between integer, `float`, `double`
+  and `long double` values. Arithmetic (`+ - * /`), comparisons and
+  conditions work on floating-point values; mixed integer and
+  floating-point operands are converted to the floating type. The `%`
+  operator is not available for floating point.
 * `uint8_t *`, `void *` and `char *` byte pointers
 * 16-bit scalars promote to 32 bits in expressions; loads use `LGH`/`LLGH`
   and stores use `STH`
@@ -356,7 +360,21 @@ int cc = __cgebr(&l, mode, x);/* CGEBR */
 int cc = __cgdbr(&l, mode, x);/* CGDBR */
 int fpc = __efpc();           /* EFPC */
 __sfpc(fpc);                  /* SFPC */
+long double x = __sqxbr(y);   /* SQXBR */
+long double x = __fixbr(mode, y); /* FIXBR, mode is 0 to 7 */
+int cc = __lpxbr(&x, y);      /* LPXBR */
+int cc = __lnxbr(&x, y);      /* LNXBR */
+int cc = __cfxbr(&i, mode, y);/* CFXBR, mode is 0 to 15 */
+int cc = __cgxbr(&l, mode, y);/* CGXBR */
 ```
+
+`long double` uses 16 bytes and an FPR pair. Store it in a local, pass it
+through a `%fN` binding, or produce it with a cast or a long double
+builtin. `__fixbr` and `__sqxbr` return `long double`; `__lpxbr` and
+`__lnxbr` store the result through their first pointer and return the
+condition code; `__cfxbr` and `__cgxbr` store the integer through their
+first pointer and return the condition code. The long double forms use the
+same arithmetic and comparison operators as `float` and `double`.
 
 The load positive and load negative forms store the converted operand
 through the first pointer and return the instruction condition code. The
@@ -370,9 +388,8 @@ type. `float` and `double` values can be compared with `<`, `>`, `<=`, `>=`,
 and floating-point values can be used in `if`, `while`, `for`, `&&` and
 `||`. Compound assignments such as `f += 2` work. A conversion to an integer
 truncates toward zero. `++`/`--`, `%` and bit operations on floating-point
-values are not implemented. Long double, hexadecimal floating point,
-test-data-class, divide-to-integer and the `-qfloat=hex` forms are not
-implemented.
+values are not implemented. Hexadecimal floating point, test-data-class,
+divide-to-integer and the `-qfloat=hex` forms are not implemented.
 
 The length arguments must currently be compile-time constants in the
 architectural 0..15 length-field range. Runtime lengths need the same

@@ -223,6 +223,47 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "ADBR %f8,%f10");
+    expect("long double arithmetic and binding",
+           "#pragma cblock a\n"
+           "#pragma cin long double a=%f0\n"
+           "#pragma cout long double c=%f8, int32_t r=%r2\n"
+           "#pragma cscratch %r3, %f4, %f6, %f12, %f14\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "long double x;\n"
+           "x = a + 2.0;\n"
+           "c = x * 2.0;\n"
+           "r = (a < 2.0) + (a >= 2.0) * 2;\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "AXBR %f4,%f12");
+    expect("long double builtins",
+           "#pragma cblock a\n"
+           "#pragma cin long double a=%f0\n"
+           "#pragma cout long double c=%f8, int32_t r=%r2\n"
+           "#pragma cscratch %r3, %f4, %f6, %f12, %f14\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "long double x;\n"
+           "int32_t i;\n"
+           "c = __sqxbr(a);\n"
+           "c = __fixbr(0, a);\n"
+           "r = __lpxbr(&x, a);\n"
+           "r = __lnxbr(&x, a);\n"
+           "r = __cfxbr(&i, 0, a);\n"
+           "r = __cgxbr(&i, 0, a);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "SQXBR %f4,%f4");
+    expect("long double binding needs an FPR pair",
+           "#pragma cblock a\n"
+           "#pragma cin long double a=%f2\n"
+           "#pragma ctemp %r12, 64, down\n"
+           "#pragma cbegin\n"
+           "a = a;\n"
+           "#pragma cend\n"
+           " END\n",
+           "ZA5005", "");
     expect("float binding needs an FPR",
            "#pragma cblock a\n"
            "#pragma cin double a=%r2\n"

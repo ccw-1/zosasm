@@ -33,7 +33,11 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
   and conditions work on `float` and `double`, with integer operands
   converted to the floating type. Compound assignments work.
   Float-to-integer casts truncate toward zero. `++`/`--`, `%` and bit
-  operations on floating-point values are not implemented. Long double and hexadecimal float forms are deferred.
+  operations on floating-point values are not implemented. `long double`
+  uses IEEE binary128, `1.5L` literals and FPR pairs, with `__sqxbr`,
+  `__fixbr`,
+  `__lpxbr`, `__lnxbr`, `__cfxbr` and `__cgxbr`, plus long double
+  arithmetic and comparisons. Long double and hexadecimal float forms are deferred.
 * CBLOCK 16-bit `int16_t`/`uint16_t` scalars and pointers, with `LGH`/`LLGH`
   loads, `STH` stores, integer promotion, typed pointer arithmetic, and
   `__lrvh`/`__strvh`.
