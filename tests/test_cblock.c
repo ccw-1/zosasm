@@ -75,6 +75,45 @@ static void test_arch_builtins(void) {
     rep_free(o.rep);
 }
 
+static void test_atomic_builtins(void) {
+    expect("lad builtin",
+           "#pragma cblock a\n"
+           "#pragma cin uint32_t *out=%r2\n"
+           "#pragma cin uint32_t v=%r3\n"
+           "#pragma cin uint32_t *mem=%r4\n"
+           "#pragma cout int32_t cc=%r5\n"
+           "#pragma cscratch %r0, %r1, %r6, %r7\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "cc = __lad(out, v, mem);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "LAA %r1,%r0,0(");
+    expect("lpd builtin",
+           "#pragma cblock a\n"
+           "#pragma cin uint32_t *a=%r2, uint32_t *b=%r3\n"
+           "#pragma cin uint32_t *c=%r4, uint32_t *d=%r5\n"
+           "#pragma cout int32_t cc=%r6\n"
+           "#pragma cscratch %r0, %r1, %r7, %r8, %r9\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "cc = __lpd(a, b, c, d);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "LPD %r8,0(");
+    expect("csg builtin",
+           "#pragma cblock a\n"
+           "#pragma cin void *a=%r2, void *b=%r3, void *c=%r4\n"
+           "#pragma cout int32_t cc=%r5\n"
+           "#pragma cscratch %r0, %r1, %r6, %r7, %r8\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "cc = __csg(a, b, c);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "CSG %r0,%r1,0(");
+}
+
 static void test_debug_metadata(void) {
     const char *src =
         "#pragma cblock dbg\n"
@@ -349,6 +388,7 @@ int main(void) {
            " END\n",
            "ZA5001", NULL);
     test_arch_builtins();
+    test_atomic_builtins();
     test_debug_metadata();
     test_compiled_assembly();
     TEST_MAIN_END();

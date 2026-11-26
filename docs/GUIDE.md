@@ -2982,9 +2982,11 @@ against constants outside the -1/0/1 result range are folded. The same
 rules apply to `__strcmp`.
 
 Initial direct z/Architecture builtins: `__popcnt`, `__popcnt4`,
-`__popcnt8`, `__lrv`, `__lrvg`, `__strv`, `__strvg`, `__stck`, `__stcke`
-and `__stckf`. The PLO, transactional-memory, vector, far-pointer and
-floating-point groups are not implemented in CBLOCK yet.
+`__popcnt8`, `__lrv`, `__lrvg`, `__strv`, `__strvg`, `__stck`, `__stcke`,
+`__stckf`, the `__lad*` family, `__csg`, `__lpd` and `__lpdg`. The PLO,
+transactional-memory, vector, far-pointer and floating-point groups are not
+implemented in CBLOCK yet. `__lpd*` requires both registers of an even-odd
+pair in `cscratch`.
 
 The first example uses a loop, `switch`, byte pointers, and every memory and
 scan intrinsic. It only assembles; the comments give the expected values.

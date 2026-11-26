@@ -256,9 +256,24 @@ int cc = __stckf(p);            // STCKF, returns CC
 16-byte (STCK/STCKE) or 8-byte (STCKF) output area. The clock builtins return
 the instruction condition code. `__strv*` return 0.
 
-Register pairs and vector/FPR overlap are not relevant to this first group.
-Later builtins that require an even-odd pair or a vector register will need
-explicit pair-aware scratch allocation; they are not implemented yet.
+Load-and-atomic builtins:
+
+```c
+int cc = __lad(old, value, mem);   /* LAA: old = *mem; *mem += value */
+int cc = __ladl(old, value, mem);  /* LAAL */
+int cc = __lan(old, value, mem);   /* LAN */
+int cc = __lax(old, value, mem);   /* LAX */
+int cc = __lao(old, value, mem);   /* LAO */
+int cc = __csg(compare, mem, new); /* CSG; compare receives the old value */
+int cc = __lpd(a, b, c, d);        /* LPD; load pair from c,d into a,b */
+```
+
+`__ladg`, `__ladlg`, `__lang`, `__laxg`, `__laog` and `__lpdg` are the
+64-bit forms. `__lpd`/`__lpdg` require an even-odd register pair in
+`cscratch`; both registers of the pair must be listed. `__csg` needs three
+nonzero address registers. The current allocator does not yet implement
+pair-aware allocation for `CDSG`, `CLCL`, `MVCLE`, or vector/FPR overlaps;
+those builtins are not exposed yet.
 
 ### String literal tables
 

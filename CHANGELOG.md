@@ -7,8 +7,11 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 ## Unreleased
 
 * CBLOCK: initial direct z/Architecture builtins `__popcnt`, `__popcnt4`,
-  `__popcnt8`, `__lrv`, `__lrvg`, `__strv`, `__strvg`, `__stck`, `__stcke`
-  and `__stckf`. PLO/TM/vector/far/float groups are deferred.
+  `__popcnt8`, `__lrv`, `__lrvg`, `__strv`, `__strvg`, `__stck`, `__stcke`,
+  `__stckf`, `__lad`/`__ladl`/`__ladg`/`__ladlg`, `__lan`/`__lang`,
+  `__lax`/`__laxg`, `__lao`/`__laog`, `__csg`, `__lpd` and `__lpdg`.
+  PLO/TM/vector/far/float groups are deferred. `__lpd*` needs an even-odd
+  pair in `cscratch`.
 
 ## 0.7.3 - 2026-11-25
 
