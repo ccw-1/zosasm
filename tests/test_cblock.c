@@ -347,6 +347,18 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VREP %v4,%v6,1,2");
+    expect("vector all/any equality",
+           "#pragma cblock a\n"
+           "#pragma cin __vector unsigned int a=%v0, __vector unsigned int b=%v2\n"
+           "#pragma cout int32_t c=%r2\n"
+           "#pragma cscratch %r3, %r4, %v4, %v6, %v8\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_all_eq(a, b);\n"
+           "c = __vec_any_ne(a, b);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VCEQ %v4,%v6,%v8,2,1");
     expect("vector 128-bit carry results",
            "#pragma cblock a\n"
            "#pragma cin __vector unsigned char a=%v0, __vector unsigned char b=%v2, __vector unsigned char k=%v4\n"
