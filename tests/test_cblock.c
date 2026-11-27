@@ -347,6 +347,19 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VREP %v4,%v6,1,2");
+    expect("vector absolute value",
+           "#pragma cblock a\n"
+           "#pragma cin __vector signed int a=%v0, __vector double d=%v2\n"
+           "#pragma cout __vector signed int c=%v4, __vector double e=%v6\n"
+           "#pragma cscratch %r2, %r3, %v8, %v10, %v12\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_abs(a);\n"
+           "e = __vec_abs_8(d);\n"
+           "e = __vec_nabs(d);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VMX %v8,%v10,%v12,2");
     expect("vector sign extend to 64",
            "#pragma cblock a\n"
            "#pragma cin __vector signed char a=%v0\n"

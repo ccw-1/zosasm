@@ -1453,6 +1453,40 @@ static CBExpr *parse_primary(Parser *p) {
             }
             return e;
         }
+        if (!strcmp(name, "__vec_abs") || !strcmp(name, "__vec_abs_8") ||
+            !strcmp(name, "__vec_nabs")) {
+            CBExpr *e;
+            CBExpr *arg;
+            e = mk_expr(E_CALL, type_of(128, 1), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            arg = parse_assignment(p);
+            if (!arg || !tok_is(l, ')')) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            e->a = arg;
+            if (!arg->type.vec ||
+                (!arg->type.vfloat && arg->type.vbool)) {
+                cb_error(p->b, line, col, "ZA5003", "%s needs a numeric vector", e->name);
+                p->err = 1;
+            } else if (!strcmp(e->name, "__vec_nabs") && !arg->type.vfloat) {
+                cb_error(p->b, line, col, "ZA5003", "__vec_nabs needs a float or double vector");
+                p->err = 1;
+            } else if (!strcmp(e->name, "__vec_abs_8") &&
+                       !((arg->type.vfloat && arg->type.vbits == 64) ||
+                         (!arg->type.vfloat && arg->type.vbits == 64))) {
+                cb_error(p->b, line, col, "ZA5003", "__vec_abs_8 needs a 64-bit vector");
+                p->err = 1;
+            } else e->type = arg->type;
+            return e;
+        }
         if (!strcmp(name, "__vec_ctd") || !strcmp(name, "__vec_ctsl") ||
             !strcmp(name, "__vec_ctul")) {
             CBExpr *e;
@@ -5519,6 +5553,37 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
                 asm_line(b, e->line, "VUPH %%v%d,%%v%d,2", vr, vr);
             } else {
                 asm_line(b, e->line, "VUPH %%v%d,%%v%d,2", vr, va);
+            }
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_abs") || !strcmp(e->name, "__vec_abs_8") ||
+            !strcmp(e->name, "__vec_nabs")) {
+            int vr, va, vt;
+            if (!eval(cg, e->a, &sa)) return 0;
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            vt = pick_vr4(b, vr, va, -1, -1);
+            if (vr < 0 || va < 0 || vt < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs three cscratch vector registers", e->name);
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            if (e->a->type.vfloat) {
+                asm_line(b, e->line, "VFPSO %%v%d,%%v%d,%d,0,2", vr, va,
+                         e->a->type.vbits == 32 ? 2 : 3);
+                if (!strcmp(e->name, "__vec_nabs"))
+                    asm_line(b, e->line, "VFPSO %%v%d,%%v%d,%d,0,1", vr, vr,
+                             e->a->type.vbits == 32 ? 2 : 3);
+            } else {
+                int elem = e->a->type.vbits == 8 ? 0 : e->a->type.vbits == 16 ? 1 :
+                           e->a->type.vbits == 32 ? 2 : 3;
+                asm_line(b, e->line, "VGBM %%v%d,0", vt);
+                asm_line(b, e->line, "VS %%v%d,%%v%d,%%v%d,%d", vt, vt, va, elem);
+                asm_line(b, e->line, "VMX %%v%d,%%v%d,%%v%d,%d", vr, va, vt, elem);
             }
             res = alloc_slots(cg, 2);
             store_vec_slot(b, e->line, res, vr);
