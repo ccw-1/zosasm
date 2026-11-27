@@ -47,10 +47,13 @@ expected values.
 | pragma | meaning |
 |---|---|
 | `cblock [name]` | start a block; the name is used in diagnostics and the listing |
-| `cin type name=%rN` | register read by the block |
-| `cout type name=%rN` | register written by the block |
-| `cinout type name=%rN` | register read and written |
-| `cscratch %rN,...` | registers the generated code may clobber |
+| `cin type name=%rN` | general register read by the block |
+| `cin type name=%fN` | floating-point register read by the block |
+| `cout type name=%rN` | general register written by the block |
+| `cout type name=%fN` | floating-point register written by the block |
+| `cinout type name=%rN` | general register read and written |
+| `cinout type name=%fN` | floating-point register read and written |
+| `cscratch %rN,%fN,...` | registers the generated code may clobber |
 | `ctemp %rN,SIZE,up\|down` | caller-provided temporary area |
 | `cbegin` | start the C body |
 | `cend` | end the block |
@@ -61,7 +64,11 @@ A bound register cannot also appear in
 scratch; it is never a base, index or branch register. If both are missing from
 `cscratch`, the block saves and restores them as a pair with `STMG`/`LMG`;
 if only one is missing, it uses `STG`/`LG`. A bound `cin`/`cout` register
-therefore cannot be `%r0` or `%r1`.
+therefore cannot be `%r0` or `%r1`. A `float` or `double` binding uses
+`%f0` to `%f15`; a `long double` binding uses an FPR pair (`%f0`/`%f2`,
+`%f4`/`%f6`, `%f8`/`%f10` or `%f12`/`%f14`). List every FPR that the
+generated code may use in `cscratch`; for long double list both members of
+each pair. Floating-point `cscratch` ranges are not supported.
 
 `ctemp` size is in bytes and must be a multiple of 8. The compiler computes the
 slots it needs and reports `ZA5006` when the area is too small. The base
@@ -74,7 +81,20 @@ Types:
 
 * `int32_t`, `uint32_t`, `int64_t`, `uint64_t`
 * `int` and `unsigned` as 32-bit aliases
+* `float`, `double` and `long double` scalars and typed pointers, for the
+  floating-point builtins below. They are IEEE binary floating point.
+  A scalar holds its raw 4-byte, 8-byte or 16-byte value in temporary
+  slots; use a `%fN` binding to read or write it without a conversion.
+  Floating-point literals with an optional `f` suffix initialize `float`
+  and `double` variables; `L` initializes a `long double` through a
+  conversion. Casts convert between integer, `float`, `double`
+  and `long double` values. Arithmetic (`+ - * /`), comparisons and
+  conditions work on floating-point values; mixed integer and
+  floating-point operands are converted to the floating type. The `%`
+  operator is not available for floating point.
 * `uint8_t *`, `void *` and `char *` byte pointers
+* 16-bit scalars promote to 32 bits in expressions; loads use `LGH`/`LLGH`
+  and stores use `STH`
 * string literals as pointer initializers and intrinsic arguments
   (`char *p = "text";`); adjacent literals concatenate, C escapes work
 * typed scalar pointers: `int32_t *`, `uint32_t *`, `int64_t *` and
@@ -139,7 +159,8 @@ Statements:
 
 Expressions:
 
-* integer literals, string literals, variables, casts;
+* integer and floating-point literals (`1.5`, `1.5f`), string literals,
+  variables, casts;
 * `__align(N) "text"` aligns a generated literal table to a power-of-two
   boundary from 1 to 4096 (default: no alignment);
 * `__sizeof(section)` and `__offsetof(section, field)`;
@@ -149,8 +170,9 @@ Expressions:
 * comparisons, `&&`, `||`, `!`, `?:`;
 * prefix and postfix `++` and `--` on variables, not on `*p`.
 
-There are no arrays, structures, floating point, user-defined function calls,
-global variables or recursion. String literals are data tables, not values:
+There are no arrays, structures, user-defined function calls,
+global variables or recursion. Floating point is limited to the scalar
+types and direct builtins described below. String literals are data tables, not values:
 they can initialize a `char *` and are not otherwise assignable or indexable as
 objects. The `__strlen`,
 `__memchr`, `__memcmp`, `__strcmp`, `__strcpy`, `__sizeof` and
@@ -236,6 +258,323 @@ and `if (__memcmp(a,b,n) != 2)` emits only the true path. The byte value is trun
 bits. Both use a byte loop with `LLGC`, so the loaded byte does not inherit the
 upper bits of the scratch register. `LLGC` zero-extends the byte; an `IC`
 would leave the previous high bits in place and break the zero test.
+
+### Initial z/Architecture builtins
+
+The first group of direct-instruction builtins is implemented:
+
+```c
+uint64_t n = __popcnt(x);       // POPCNT
+uint32_t v = __lrv(p);          // LRV
+uint16_t v = __lrvh(p);         // LRVH
+uint64_t v = __lrvg(p);         // LRVG
+__strv(v, p);                   // STRV, result value 0
+__strvh(v, p);                  // STRVH, result value 0
+__strvg(v, p);                  // STRVG, result value 0
+int cc = __stck(p);             // STCK, returns CC
+int cc = __stcke(p);            // STCKE, returns CC
+int cc = __stckf(p);            // STCKF, returns CC
+```
+
+`__lrv*` and `__strv*` take a byte/typed pointer; `__lrvh`/`__strvh`
+use `uint16_t *` and halfword loads/stores. `__stck*` take a
+16-byte (STCK/STCKE) or 8-byte (STCKF) output area. The clock builtins return
+the instruction condition code. `__strv*` return 0.
+
+Load-and-atomic builtins:
+
+```c
+int cc = __lad(old, value, mem);   /* LAA: old = *mem; *mem += value */
+int cc = __ladl(old, value, mem);  /* LAAL */
+int cc = __lan(old, value, mem);   /* LAN */
+int cc = __lax(old, value, mem);   /* LAX */
+int cc = __lao(old, value, mem);   /* LAO */
+int cc = __csg(compare, mem, new); /* CSG; compare receives the old value */
+int cc = __cdsg(compare, mem, new);/* CDSG; 16-byte compare/new pairs */
+int cc = __lpd(a, b, c, d);        /* LPD; load pair from c,d into a,b */
+```
+
+`__ladg`, `__ladlg`, `__lang`, `__laxg`, `__laog` and `__lpdg` are the
+64-bit forms. `__lpd`/`__lpdg` require an even-odd register pair in
+`cscratch`; both registers of the pair must be listed. `__cdsg` requires two
+even-odd pairs plus one address register. `__csg` needs three nonzero address
+registers. The current allocator does not yet implement pair-aware allocation
+for `CLCL`, `MVCLE`, or vector/FPR overlaps; those builtins are not exposed
+yet.
+
+Constant-length decimal and character builtins are also available:
+
+```c
+int cc = __ap(a, l1, b, l2);   /* AP */
+int cc = __cp(a, l1, b, l2);   /* CP */
+int cc = __sp(a, l1, b, l2);   /* SP */
+int cc = __mp(a, l1, b, l2);   /* MP */
+int cc = __dp(a, l1, b, l2);   /* DP */
+int cc = __zap(a, l1, b, l2);  /* ZAP */
+int cc = __nc(a, b, len);      /* NC */
+int cc = __oc(a, b, len);      /* OC */
+int cc = __xc(a, b, len);      /* XC */
+void  __tr(a, table, len);     /* TR */
+int cc = __cvb(p);             /* CVB */
+void  __cvd(v, p);             /* CVD */
+int cc = __pack(a, l1, b, l2); /* PACK */
+int cc = __unpk(a, l1, b, l2); /* UNPK */
+int cc = __ed(a, b, len);      /* ED */
+int cc = __tp(a, len);         /* TP */
+int cc = __srp(a, len, shift, pattern); /* SRP */
+int64_t v = __cvbg(a);        /* CVBG */
+void __cvdg(v, a);            /* CVDG */
+void __pka(a, b, len);        /* PKA */
+void __pku(a, b, len);        /* PKU */
+void __unpka(a, len, b);      /* UNPKA */
+void __unpku(a, len, b);      /* UNPKU */
+void __mvcrl(a, b, len);      /* MVCRL */
+```
+
+### IEEE floating-point builtins
+
+The block supports `float` and `double` bindings and direct IEEE
+floating-point builtins. List the FPRs the generated code may use in
+`cscratch`.
+
+```c
+float  f = __sqebr(x);        /* SQEBR */
+double d = __sqdbr(x);        /* SQDBR */
+float  f = __fiebr(mode, x);  /* FIEBR, mode is 0 to 7 */
+double d = __fidbr(mode, x);  /* FIDBR, mode is 0 to 7 */
+float  f = __maebr(a, b, c);  /* MAEBR */
+double d = __madbr(a, b, c);  /* MADBR */
+float  f = __msebr(a, b, c);  /* MSEBR */
+double d = __msdbr(a, b, c);  /* MSDBR */
+float  f = __fmadds(a, b, c); /* same as __maebr */
+double d = __fmadd(a, b, c);  /* same as __madbr */
+float  f = __fmsubs(a, b, c); /* same as __msebr */
+double d = __fmsub(a, b, c);  /* same as __msdbr */
+int cc = __lpebr(&f, x);      /* LPEBR, stores the result through &f */
+int cc = __lpdbr(&d, x);      /* LPDBR */
+int cc = __lnebr(&f, x);      /* LNEBR */
+int cc = __lndbr(&d, x);      /* LNDBR */
+int cc = __cfebr(&i, mode, x);/* CFEBR, mode is 0 to 15 */
+int cc = __cfdbr(&i, mode, x);/* CFDBR */
+int cc = __cgebr(&l, mode, x);/* CGEBR */
+int cc = __cgdbr(&l, mode, x);/* CGDBR */
+int fpc = __efpc();           /* EFPC */
+__sfpc(fpc);                  /* SFPC */
+long double x = __sqxbr(y);   /* SQXBR */
+long double x = __fixbr(mode, y); /* FIXBR, mode is 0 to 7 */
+int cc = __lpxbr(&x, y);      /* LPXBR */
+int cc = __lnxbr(&x, y);      /* LNXBR */
+int cc = __cfxbr(&i, mode, y);/* CFXBR, mode is 0 to 15 */
+int cc = __cgxbr(&l, mode, y);/* CGXBR */
+int cc = __tceb(x, m);        /* TCEB; m is the mask address */
+int cc = __tcdb(x, m);        /* TCDB */
+int cc = __tcxb(x, m);        /* TCXB */
+int cc = __thder(&d, x);      /* THDER: BFP short to HFP */
+int cc = __thdr(&d, x);       /* THDR: BFP long to HFP */
+int cc = __tbedr(&f, mode, x);/* TBEDR: HFP to BFP short */
+int cc = __tbdr(&d, mode, x); /* TBDR: HFP to BFP long */
+int cc = __diebr(&q, &r, a, b, mode); /* DIEBR: 7.0 / 2.0, mode is 0 to 15 */
+int cc = __didbr(&q, &r, a, b, mode); /* DIDBR */
+void __srnm(m);               /* SRNM; m is the mask address */
+```
+
+`long double` uses 16 bytes and an FPR pair. Store it in a local, pass it
+through a `%fN` binding, or produce it with a cast or a long double
+builtin. `__fixbr` and `__sqxbr` return `long double`; `__lpxbr` and
+`__lnxbr` store the result through their first pointer and return the
+condition code; `__cfxbr` and `__cgxbr` store the integer through their
+first pointer and return the condition code. The long double forms use the
+same arithmetic and comparison operators as `float` and `double`.
+
+The load positive and load negative forms store the converted operand
+through the first pointer and return the instruction condition code. The
+convert-to-fixed forms store the integer through the first pointer and
+return the condition code. `__efpc` returns the floating-point control
+register; `__sfpc` writes it.
+
+Floating-point arithmetic keeps the IEEE binary result in the variable's
+type. `float` and `double` values can be compared with `<`, `>`, `<=`, `>=`,
+`==` and `!=`; the result is an `int32_t`. Unary `+`, unary `-` and `!` work,
+and floating-point values can be used in `if`, `while`, `for`, `&&` and
+`||`. Compound assignments such as `f += 2` work. A conversion to an integer
+truncates toward zero. `++`/`--`, `%` and bit operations on floating-point
+values are not implemented. The test-data-class forms take the mask
+address as their integer argument, matching XL C. Hexadecimal floating
+point and the `-qfloat=hex` forms are not implemented.
+
+### Decimal floating point
+
+`_Decimal32`, `_Decimal64` and `_Decimal128` values are supported.
+`_Decimal32` and `_Decimal64` use one FPR, `_Decimal128` uses an FPR pair,
+and all can be bound through `%fN`. Decimal `+ - * /`, comparisons, unary
+`+`, unary `-` and `!` work. Decimal literals use the `df`, `dd` and `dl`
+suffixes. Casts work between the decimal widths and between decimal and
+integer values. A `_Decimal32` operation is widened to `_Decimal64`, as XL C
+does. Decimal to BFP and BFP to decimal casts are not implemented.
+
+```c
+_Decimal64  d = 1.25dd;                    /* DD'1.25' */
+_Decimal128 x = (_Decimal128)d;            /* LXDTR */
+int i = (int)d;                            /* CFDTR */
+_Decimal64  z = __cdzt(p, length, mask);   /* CDZT: zoned to DFP64 */
+_Decimal128 x = __cxzt(p, length, mask);   /* CXZT: zoned to DFP128 */
+int cc = __czdt(d, p, length, mask);       /* CZDT: DFP64 to zoned */
+int cc = __czxt(x, p, length, mask);       /* CZXT: DFP128 to zoned */
+```
+
+`length` and `mask` are compile-time constants. The source or result
+pointer points to the zoned decimal field. `__czdt` and `__czxt` return the
+instruction condition code. The `-qdfp` option activates these builtins in
+XL C; CBLOCK accepts the names directly.
+
+### Hexadecimal floating-point builtins
+
+The `-qfloat=hex` conversion and arithmetic forms use the same
+`float`, `double` and `long double` CBLOCK types, but the instructions
+operate on hexadecimal floating-point values:
+
+```c
+int cc = __lper(&f, x);       /* LPER; stores through &f */
+int cc = __lpdr(&d, x);       /* LPDR */
+int cc = __lner(&f, x);       /* LNER */
+int cc = __lndr(&d, x);       /* LNDR */
+float  f = __sqer(x);         /* SQER */
+double d = __sqdr(x);         /* SQDR */
+long double x = __sqxr(y);    /* SQXR */
+float  f = __fier(x);         /* FIER */
+double d = __fidr(x);         /* FIDR */
+long double x = __fixr(y);    /* FIXR */
+int cc = __cfer(&i, mode, x); /* CFER */
+int cc = __cfdr(&i, mode, x); /* CFDR */
+int cc = __cfxr(&i, mode, y); /* CFXR */
+int cc = __lpxr(&y, x);       /* LPXR */
+int cc = __lnxr(&y, x);       /* LNXR */
+int cc = __cger(&l, mode, x); /* CGER */
+int cc = __cgdr(&l, mode, x); /* CGDR */
+int cc = __cgxr(&l, mode, y); /* CGXR */
+```
+
+The `mode` values are compile-time constants from 0 to 15. These
+builtins do not convert between the hexadecimal and binary formats. Do
+not mix their results with ordinary BFP arithmetic; use an explicit
+conversion or keep the HFP value as raw data.
+
+### Runtime facility checks
+
+Three builtins expose the facility list:
+
+```c
+int cc = __stfle(area);              /* one STFLE, stores 8 bytes, returns CC */
+int has = __facility(129);           /* issues STFLE internally and tests bit 129 */
+int has = __facility_test(list, 129);/* tests bit 129 in a caller-supplied list */
+```
+
+Facility bits are numbered from 0 at the most significant bit of the first
+8-byte word. `__facility` uses a 32-byte temporary block and supports bits
+0 through 255. `__stfle` and `__facility_test` let the caller supply the
+storage, for example a local variable or a z/OS absolute address. Prefer an
+explicit storage area over the z/OS location-200 convention: writing a
+fixed system location is platform-specific and can clash with the caller.
+The result is `1` when the bit is set and `0` otherwise.
+
+### Vector builtins
+
+The first vector group supports `__vector` types, `%vN` bindings and
+`%vN` entries in `cscratch`.
+
+```c
+__vector unsigned int v;
+v = __vec_splats_u4(7);              /* VLREP */
+v = __vec_load_len_u4(p, 16);        /* VLL */
+v = __vec_load_bndry_u4(p, 16);      /* VL; the boundary is an alignment hint */
+__vec_store_len(v, p, 16);           /* VSTL */
+v = __vec_sel(a, b, mask);           /* VSEL */
+v = __vec_perm(a, b, mask);          /* VPERM */
+v = __vec_permi(a, b, 1);            /* VPDI */
+cb = __vec_cmpeq(a, b);              /* VCEQ, integer vectors */
+cb = __vec_cmpge(a, b);              /* VCH/VCHL plus VNO */
+cb = __vec_cmpgt(a, b);
+cb = __vec_cmple(a, b);
+cb = __vec_cmplt(a, b);
+v = __vec_max(a, b);                 /* VMX/VMXL/VMXF/VMXG */
+v = __vec_min(a, b);                 /* VMN/VMNL/VMNF/VMNG */
+v = __vec_avg(a, b);                 /* VAVG/VAVGL/VAVGF/VAVGG */
+x = __vec_extract_s4(v, 3);          /* VSTEF; index is a constant */
+v = __vec_insert_s4(x, v, 1);        /* VLEF */
+v = __vec_promote_s4(x, 2);          /* VGBM plus VLEF */
+v = __vec_insert_and_zero_s4(p);     /* VLLEZ */
+c = __vec_pack(a, b);                /* VPK */
+c = __vec_packs(a, b);               /* VPKS */
+c = __vec_packsu(a, b);              /* VPKLS */
+d = __vec_unpackh_s2(c);             /* VUPH */
+d = __vec_unpackl_u2(c);             /* VUPLL */
+v = __vec_mergeh(a, b);              /* VMRH/VMRHG */
+v = __vec_mergel(a, b);              /* VMRL/VMRLG */
+v = __vec_checksum(a, b);            /* VCKSM */
+v = __vec_cntlz(a);                  /* VCLZ */
+v = __vec_cnttz(a);                  /* VCTZ */
+v = __vec_sll(a, n);                /* VSL */
+v = __vec_srl(a, n);                /* VSRL */
+v = __vec_sral(a, n);               /* VSRA */
+v = __vec_slb(a, n);                /* VSLB */
+v = __vec_srab(a, n);               /* VSRAB */
+v = __vec_rl(a, n);                 /* VERLLV */
+v = __vec_rli(a, 3);                /* VERLL */
+v = __vec_rl_mask(a, n, 15);        /* VERIM */
+v = __vec_sld(a, b, 4);             /* VSLD */
+v = __vec_sldb(a, b, 4);            /* VSLDB */
+v = __vec_andc(a, b);               /* VNC */
+v = __vec_nand(a, b);               /* VNN */
+v = __vec_nor(a, b);                /* VNO */
+v = __vec_orc(a, b);                /* VOC */
+v = __vec_eqv(a, b);                /* VNX */
+v = __vec_sqrt(a);                  /* VFSQSB/VFSQDB */
+cb = __vec_cmpeq(a, b);             /* VFCE for float/double */
+cb = __vec_cmpge(a, b);             /* VFCHE */
+cb = __vec_cmpgt(a, b);             /* VFCH */
+cb = __vec_cmple(a, b);             /* VFCHE, reversed */
+cb = __vec_cmplt(a, b);             /* VFCH, reversed */
+v = __vec_round(a);                 /* VFI, ties away */
+v = __vec_roundc(a);                /* VFI, current mode */
+v = __vec_roundm(a);                /* VFI, toward -infinity */
+v = __vec_roundp(a);                /* VFI, toward +infinity */
+v = __vec_roundz(a);                /* VFI, toward zero */
+v = __vec_trunc(a);                 /* VFI, toward zero */
+v = __vec_ceil(a);                  /* VFI, toward +infinity */
+v = __vec_floor(a);                 /* VFI, toward -infinity */
+v = __vec_bperm(a, b);              /* VBPERM, byte vectors to u64 vector */
+v = __vec_load_pair_s8(x, y);      /* two 64-bit scalars into a vector */
+v = __vec_gfmsum(a, b);             /* VGFM */
+v = __vec_gfmsum_accum(a, b, c);   /* VGFMA */
+v = __vec_sum2(a, b);               /* VSUMG */
+v = __vec_sum4(a, b);               /* VSUM */
+v = __vec_sum_u128(a, b);           /* VSUMQ */
+v = __vec_xld2(byte_offset, p);     /* VL at p + byte_offset */
+v = __vec_xlw4(byte_offset, p);
+__vec_xstd2(v, byte_offset, p);     /* VST at p + byte_offset */
+__vec_xstw4(v, byte_offset, p);
+v = __vec_genmask(65535);           /* VGBM */
+v = __vec_genmasks_8(3, 5);        /* VGM */
+flag = __vec_test_mask(v, mask);   /* VTM, condition code as int */
+v = __vec_gfmsum(a, b);             /* VGFMG for 64-bit inputs */
+v = __vec_msum_u128(a, b, acc, 1); /* VMSL, 64-bit inputs to 128 bits */
+```
+
+The element types are `char`, `short`, `int`, `long long`, `float` and
+`double`, with `signed`, `unsigned`, `bool` and the `s1/u1/s2/u2/s4/u4/s8/u8/f4/f8`
+builtin suffixes. Vector select, permute, permute-doubleword-immediate, integer
+ordered/equal compares, max, min, average, scalar element
+extract/insert/promote, pack/unpack, merge, checksum, bit counts, the main shift forms, rotations and double
+shifts including word-count and right-byte double shifts, floating data-class tests, gather/scatter elements, element splats, float/double and integer conversions, carry/borrow vectors, rounding conversions, sign extension, absolute values, 128-bit add/subtract and carry results, all/any equality reductions, multiply even/odd/high, FP multiply-add/subtract, population count, immediate splats, integer multiply-add, ordered/negated all/any comparisons, string search, runtime-length TRT/TRTR/EDMK, the boolean logic forms, floating-point square root, floating
+comparisons, rounding, bit permutation, the 64-bit load-pair form and GF
+multiply-sum, its accumulator form, the sum2/sum4/128-bit sum forms and indexed vector load/store, mask generation/testing the GF-128 forms and VMSL 128-bit multiply-sum are implemented. Vector arithmetic and the remaining
+`__vec_*` builtins are not implemented yet. `__vec_load_bndry_*` accepts the boundary argument
+but uses an unaligned `VL`, which is correct and only loses an alignment
+optimization.
+
+The length arguments must currently be compile-time constants in the
+architectural 0..15 length-field range. Runtime lengths need the same
+`EXRL`/template machinery as the compiler; that is a later step.
 
 ### String literal tables
 
@@ -323,11 +662,12 @@ expanded assembly.
 ## Tests
 
 * `make test` runs `tests/test_cblock.c`.
-* `make test-cblock-runtime` runs 45 generated ELF cases under `qemu-s390x`
+* `make test-cblock-runtime` runs 48 generated ELF cases under `qemu-s390x`
   when `s390x-linux-gnu-ld` and `qemu-s390x` are installed. The suite covers
   arithmetic, control flow, pointer arithmetic, `*p`, `p[i]`, `&local`,
   `__memcpy`, `__memmove`, `__memset`, `__strlen`, `__memchr`, `__memcmp`,
-  `__strcmp`, `__strcpy`, direct conditions, and the runnable example.
+  `__strcmp`, `__strcpy`, direct conditions, `__popcnt`, `__lrv`, and the
+  runnable example.
 * `tools/cblock_oracle.sh SRC.za pok56` expands a CBLOCK with `zosasm -E`,
   converts it to HLASM source and compares the GOFF structure with HLASM
   through `tryhlasm.sh`.

@@ -8,12 +8,44 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 
 * `XATTR RENAME(YES|NO)` sets the GOFF ESD renameable flag (bit 41.2).
   `-disasm` writes it back and `-dump-readable` shows it.
-
 * `-dump-readable FILE` prints a grouped GOFF listing with section, text and
   relocation headings. Without `-insn`, text uses an xxd-style layout with
   EBCDIC and ASCII columns. `-insn` (with `-dump` or `-dump-readable`)
   disassembles text records using a best-effort even-byte skip over data. The
   existing machine-readable `-dump` output is unchanged.
+* CBLOCK: initial direct z/Architecture builtins `__popcnt`, `__popcnt4`,
+  `__popcnt8`, `__lrv`, `__lrvh`, `__lrvg`, `__strv`, `__strvh`, `__strvg`, `__stck`, `__stcke`,
+  `__stckf`, `__lad`/`__ladl`/`__ladg`/`__ladlg`, `__lan`/`__lang`,
+  `__lax`/`__laxg`, `__lao`/`__laog`, `__csg`, `__cdsg`, `__lpd` and `__lpdg`.
+  Constant-length decimal/character builtins `__ap`, `__cp`, `__sp`, `__mp`,
+  `__dp`, `__zap`, `__nc`, `__oc`, `__xc`, `__tr`, `__ed`, `__tp`, `__srp`,
+  `__cvb`, `__cvd`, `__cvbg`, `__cvdg`, `__pack`, `__unpk`, `__pka`, `__pku`,
+  `__unpka`, `__unpku` and `__mvcrl` are included. PLO/TM/vector/far/float groups are
+  deferred. `__lpd*` needs an even-odd pair in `cscratch`; decimal lengths
+  must be compile-time constants.
+* CBLOCK IEEE `float` and `double` scalars, pointers and `%fN`
+  `cin`/`cout` bindings, with `cscratch` FPRs. Direct builtins: `__sqebr`,
+  `__sqdbr`, `__fiebr`, `__fidbr`, `__maebr`, `__madbr`, `__msebr`,
+  `__msdbr`, `__fmadd`, `__fmadds`, `__fmsub`, `__fmsubs`, `__lpebr`,
+  `__lpdbr`, `__lnebr`, `__lndbr`, `__cfebr`, `__cfdbr`, `__cgebr`,
+  `__cgdbr`, `__efpc` and `__sfpc`. Floating literals use `1.5` for
+  `double` and `1.5f` for `float`; `+ - * /`, comparisons, unary operators
+  and conditions work on `float` and `double`, with integer operands
+  converted to the floating type. Compound assignments work.
+  Float-to-integer casts truncate toward zero. `++`/`--`, `%` and bit
+  operations on floating-point values are not implemented. `long double`
+  uses IEEE binary128, `1.5L` literals and FPR pairs, with `__sqxbr`,
+  `__fixbr`,
+  `__lpxbr`, `__lnxbr`, `__cfxbr` and `__cgxbr`, plus long double
+  arithmetic and comparisons. Long double and hexadecimal float forms are deferred.
+* CBLOCK DFP arithmetic, literals and casts. `_Decimal32`, `_Decimal64`
+  and `_Decimal128` support `+ - * /`, comparisons, unary `+ - !`, `df`/
+  `dd`/`dl` literals, casts between the decimal widths, and casts between
+  decimal and integer values. BFP to DFP and DFP to BFP casts remain
+  unsupported.
+* CBLOCK 16-bit `int16_t`/`uint16_t` scalars and pointers, with `LGH`/`LLGH`
+  loads, `STH` stores, integer promotion, typed pointer arithmetic, and
+  `__lrvh`/`__strvh`.
 
 ## 0.7.3 - 2026-11-25
 

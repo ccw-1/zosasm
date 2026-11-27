@@ -21,13 +21,13 @@ run_case() {
     cat > "$tmp/$name.za" <<EOS
 _START CSECT
          LGR   %r12,%r15
-         AGHI  %r12,-128
+         AGHI  %r12,-512
 $setup
 #pragma cblock $name
 $cin
 $cout
-#pragma cscratch %r0, %r1, %r5, %r6
-#pragma ctemp %r12, 128, down
+#pragma cscratch %r0, %r1, %r5, %r6, %f0, %f2, %f4, %f6
+#pragma ctemp %r12, 512, down
 #pragma cbegin
 $body
 #pragma cend
@@ -56,6 +56,25 @@ EOS
     fi
 }
 
+run_case popcnt '         LHI   %r2,255' \
+    '#pragma cin uint32_t a=%r2' '#pragma cout int32_t c=%r4' \
+    'c = (int32_t)__popcnt(a);' 8
+run_case lrvh "         LARL  %r2,HDATA
+         BRCL  15,HSTART
+         DS    0H
+HDATA    DC    X'0102'
+         DS    0H
+HSTART   DS    0H" \
+    '#pragma cin uint16_t *p=%r2' '#pragma cout int32_t c=%r4' \
+    'c = (int32_t)__lrvh(p) & 255;' 1
+run_case lrv "         LARL  %r2,LDATA
+         BRCL  15,LSTART
+         DS    0H
+LDATA    DC    X'01020304'
+         DS    0H
+LSTART   DS    0H" \
+    '#pragma cin uint32_t *p=%r2' '#pragma cout int32_t c=%r4' \
+    'c = (int32_t)__lrv(p) & 255;' 1
 run_case strings '' '' \
     '#pragma cout int32_t c=%r4' \
     'const char *p = __align(8) "ABC"; c = p[0] + __strlen(p);' 68
@@ -91,6 +110,60 @@ CS       DC    C'HELLO'
 CSTART   DS    0H" \
     '#pragma cin char *d=%r2, char *s=%r3' '#pragma cout int32_t c=%r4' \
     'char *r = __strcpy(d,s); c = __strlen(r) + d[0];' 77
+run_case floatarith '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'c = (int32_t)(1.5 + 2.25);' 3
+run_case floatcmp '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'c = (1.5 < 2.25) + (2.5 >= 2.5) * 2;' 3
+run_case floatmixed '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'c = (int32_t)(1 + 2.5) + (int32_t)(5.0 / 2.0) * 10;' 23
+run_case floatcond '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'if (0.0) c = 1; else c = 2;' 2
+run_case floatand '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'c = (1.5 && 0.0) ? 1 : 2;' 2
+run_case floatsqrt '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'c = (int32_t)__sqdbr(4.0);' 2
+run_case longdouble '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'long double x = 1.5; c = (int32_t)(x + 2.25);' 3
+run_case longdoublemul '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'long double x = 1.5; c = (int32_t)(x * 2.0);' 3
+run_case longdoublecmp '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'long double x = 1.5; c = (x < 2.0) + (x >= 2.0) * 2;' 1
+run_case facilitybits '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'char *p0 = "\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"; char *p64 = "\x00\x00\x00\x00\x00\x00\x00\x00\x80\x00\x00\x00\x00\x00\x00\x00"; char *p127 = "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01"; c = __facility_test(p0, 0) + __facility_test(p0, 63) * 2 + __facility_test(p64, 64) * 4 + __facility_test(p127, 127) * 8;' 13
+run_case facilityif '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'char *p0 = "\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"; if (__facility_test(p0, 0)) c = 1; else c = 2;' 1
+run_case longdoubleptr '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'long double x = 1.5; long double *p = (long double *)&x; c = (int32_t)(*p + 2.0);' 3
+run_case longdoubleload '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'long double x; int32_t cc; cc = __lnxbr(&x, (long double)1.5); c = (int32_t)x;' 255
+run_case longdoubleconvert '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'int32_t i; c = __cfxbr(&i, 5, (long double)3.75); c = i;' 3
+run_case longdoublesqrt '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'c = (int32_t)__sqxbr((long double)4.0);' 2
+run_case longdoublefix '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'c = (int32_t)__fixbr(0, (long double)3.75);' 4
+run_case floatassign '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'float x = 1.5f; x += 2.0f; c = (int32_t)x;' 3
+run_case floatunary '' '' \
+    '#pragma cout int32_t c=%r4' \
+    'c = (int32_t)(-1.5) + (!0.0) * 10;' 9
 run_case memcmpimpossible "         LARL  %r2,MA
          LARL  %r3,MB
          BRCL  15,MSTART
@@ -246,7 +319,7 @@ $setup
 #pragma cblock $name
 $cin
 $cout
-#pragma cscratch %r0, %r1, %r5, %r6
+#pragma cscratch %r0, %r1, %r5, %r6, %f0, %f2, %f4, %f6
 #pragma ctemp %r12, 128, down
 #pragma cbegin
 $body
