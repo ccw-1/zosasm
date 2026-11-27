@@ -1078,6 +1078,32 @@ static CBExpr *parse_primary(Parser *p) {
             } else e->type = arg->type;
             return e;
         }
+        if (!strcmp(name, "__vec_gfmsum")) {
+            CBExpr *e;
+            CBExpr *args[2] = {0, 0};
+            e = mk_expr(E_CALL, type_vec(16, 1, 0, 0), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, 2)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1];
+            if (!e->a->type.vec || !e->b->type.vec ||
+                e->a->type.vbits != e->b->type.vbits ||
+                (e->a->type.vbits != 8 && e->a->type.vbits != 16 &&
+                 e->a->type.vbits != 32)) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "__vec_gfmsum needs two equal-width byte, halfword or word vectors");
+                p->err = 1;
+            } else e->type = type_vec(e->a->type.vbits * 2, 1, 0, 0);
+            return e;
+        }
         if (!strcmp(name, "__vec_load_pair_s8") || !strcmp(name, "__vec_load_pair_u8")) {
             CBExpr *e;
             CBExpr *args[2] = {0, 0};
@@ -4658,6 +4684,26 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             else mode = 5;
             asm_line(b, e->line, "VFI %%v%d,%%v%d,%d,0,%d", vr, va,
                      e->a->type.vbits == 32 ? 2 : 3, mode);
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_gfmsum")) {
+            int vr, va, vb;
+            int m4 = e->a->type.vbits == 8 ? 0 : e->a->type.vbits == 16 ? 1 : 2;
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            vb = pick_vr4(b, vr, va, -1, -1);
+            if (vr < 0 || va < 0 || vb < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "__vec_gfmsum needs three cscratch vector registers");
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            load_vec_slot(b, e->line, sp, vb);
+            asm_line(b, e->line, "VGFM %%v%d,%%v%d,%%v%d,%d", vr, va, vb, m4);
             res = alloc_slots(cg, 2);
             store_vec_slot(b, e->line, res, vr);
             *slotp = res;

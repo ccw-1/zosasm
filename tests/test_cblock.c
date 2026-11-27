@@ -324,6 +324,17 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VSEL %v8,%v10,%v12,%v14");
+    expect("vector GF multiply sum",
+           "#pragma cblock a\n"
+           "#pragma cin __vector unsigned char a=%v0, __vector unsigned char b=%v2\n"
+           "#pragma cout __vector unsigned short c=%v4\n"
+           "#pragma cscratch %r2, %r3, %v6, %v8, %v10\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_gfmsum(a, b);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VGFM %v6,%v8,%v10,0");
     expect("vector load pair",
            "#pragma cblock a\n"
            "#pragma cin int64_t x=%r2, int64_t y=%r3\n"

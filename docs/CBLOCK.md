@@ -538,6 +538,7 @@ v = __vec_ceil(a);                  /* VFI, toward +infinity */
 v = __vec_floor(a);                 /* VFI, toward -infinity */
 v = __vec_bperm(a, b);              /* VBPERM, byte vectors to u64 vector */
 v = __vec_load_pair_s8(x, y);      /* two 64-bit scalars into a vector */
+v = __vec_gfmsum(a, b);             /* VGFM */
 ```
 
 The element types are `char`, `short`, `int`, `long long`, `float` and
@@ -546,8 +547,8 @@ builtin suffixes. Vector select, permute, permute-doubleword-immediate, integer
 ordered/equal compares, max, min, average, scalar element
 extract/insert/promote, pack/unpack, merge, checksum, bit counts, the main shift forms, rotations and double
 shifts, the boolean logic forms, floating-point square root, floating
-comparisons, rounding, bit permutation and the 64-bit load-pair form are
-implemented. Vector arithmetic and the remaining
+comparisons, rounding, bit permutation, the 64-bit load-pair form and GF
+multiply-sum are implemented. Vector arithmetic and the remaining
 `__vec_*` builtins are not implemented yet. `__vec_load_bndry_*` accepts the boundary argument
 but uses an unaligned `VL`, which is correct and only loses an alignment
 optimization.
