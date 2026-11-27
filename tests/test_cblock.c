@@ -359,6 +359,18 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VCH %v4,%v8,%v6,2,1");
+    expect("vector negated ordered all/any",
+           "#pragma cblock a\n"
+           "#pragma cin __vector signed int a=%v0, __vector signed int b=%v2\n"
+           "#pragma cout int32_t c=%r2\n"
+           "#pragma cscratch %r3, %r4, %v4, %v6, %v8\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_all_nge(a, b);\n"
+           "c = __vec_any_nlt(a, b);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VCH %v4,%v8,%v6,2,1");
     expect("vector integer multiply-add",
            "#pragma cblock a\n"
            "#pragma cin __vector signed short a=%v0, __vector signed short b=%v2, __vector signed int c0=%v4\n"

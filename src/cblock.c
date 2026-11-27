@@ -1666,10 +1666,14 @@ static CBExpr *parse_primary(Parser *p) {
             !strcmp(name, "__vec_all_gt") || !strcmp(name, "__vec_all_gt_8") ||
             !strcmp(name, "__vec_all_le") || !strcmp(name, "__vec_all_le_8") ||
             !strcmp(name, "__vec_all_lt") || !strcmp(name, "__vec_all_lt_8") ||
+            !strcmp(name, "__vec_all_nge") || !strcmp(name, "__vec_all_ngt") ||
+            !strcmp(name, "__vec_all_nle") || !strcmp(name, "__vec_all_nlt") ||
             !strcmp(name, "__vec_any_ge") || !strcmp(name, "__vec_any_ge_8") ||
             !strcmp(name, "__vec_any_gt") || !strcmp(name, "__vec_any_gt_8") ||
             !strcmp(name, "__vec_any_le") || !strcmp(name, "__vec_any_le_8") ||
-            !strcmp(name, "__vec_any_lt") || !strcmp(name, "__vec_any_lt_8")) {
+            !strcmp(name, "__vec_any_lt") || !strcmp(name, "__vec_any_lt_8") ||
+            !strcmp(name, "__vec_any_nge") || !strcmp(name, "__vec_any_ngt") ||
+            !strcmp(name, "__vec_any_nle") || !strcmp(name, "__vec_any_nlt")) {
             CBExpr *e;
             CBExpr *args[2] = {0, 0};
             e = mk_expr(E_CALL, type_of(32, 0), line, col);
@@ -6033,16 +6037,23 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             !strcmp(e->name, "__vec_all_gt") || !strcmp(e->name, "__vec_all_gt_8") ||
             !strcmp(e->name, "__vec_all_le") || !strcmp(e->name, "__vec_all_le_8") ||
             !strcmp(e->name, "__vec_all_lt") || !strcmp(e->name, "__vec_all_lt_8") ||
+            !strcmp(e->name, "__vec_all_nge") || !strcmp(e->name, "__vec_all_ngt") ||
+            !strcmp(e->name, "__vec_all_nle") || !strcmp(e->name, "__vec_all_nlt") ||
             !strcmp(e->name, "__vec_any_ge") || !strcmp(e->name, "__vec_any_ge_8") ||
             !strcmp(e->name, "__vec_any_gt") || !strcmp(e->name, "__vec_any_gt_8") ||
             !strcmp(e->name, "__vec_any_le") || !strcmp(e->name, "__vec_any_le_8") ||
-            !strcmp(e->name, "__vec_any_lt") || !strcmp(e->name, "__vec_any_lt_8")) {
+            !strcmp(e->name, "__vec_any_lt") || !strcmp(e->name, "__vec_any_lt_8") ||
+            !strcmp(e->name, "__vec_any_nge") || !strcmp(e->name, "__vec_any_ngt") ||
+            !strcmp(e->name, "__vec_any_nle") || !strcmp(e->name, "__vec_any_nlt")) {
             int vr, va, vb;
             int isall = !strncmp(e->name, "__vec_all_", 10);
-            int isge = strstr(e->name, "ge") != NULL;
-            int isle = strstr(e->name, "le") != NULL;
-            int islt = strstr(e->name, "lt") != NULL;
+            int isge = strstr(e->name, "ge") != NULL && !strstr(e->name, "nge");
+            int isle = strstr(e->name, "le") != NULL && !strstr(e->name, "nle");
+            int islt = strstr(e->name, "lt") != NULL && !strstr(e->name, "nlt");
             int target;
+            if (strstr(e->name, "nge")) islt = 1;
+            if (strstr(e->name, "ngt")) isle = 1;
+            if (strstr(e->name, "nlt")) isge = 1;
             char *out;
             if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
             vr = pick_vr4(b, -1, -1, -1, -1);
@@ -6063,7 +6074,7 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
                 else
                     asm_line(b, e->line, "VFCH %%v%d,%%v%d,%%v%d,%d,0,1",
                              vr, islt ? vb : va, islt ? va : vb, fmt);
-                target = (isge || isle) && (isall) ? 3 : 0;
+                target = 0;
             } else {
                 int elem = e->a->type.vbits == 8 ? 0 : e->a->type.vbits == 16 ? 1 :
                            e->a->type.vbits == 32 ? 2 : 3;
@@ -6081,7 +6092,8 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
                 asm_line(b, e->line, "BRCL 7,%s", out);
                 asm_line(b, e->line, "LHI %%r0,1");
             } else {
-                asm_line(b, e->line, "CLFI %%r0,%d", isge || isle ? 0 : 3);
+                asm_line(b, e->line, "CLFI %%r0,%d",
+                         e->a->type.vfloat ? 3 : (isge || isle ? 0 : 3));
                 asm_line(b, e->line, "LHI %%r0,1");
                 asm_line(b, e->line, "BRCL 7,%s", out);
                 asm_line(b, e->line, "LHI %%r0,0");
