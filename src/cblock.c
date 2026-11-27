@@ -1662,6 +1662,37 @@ static CBExpr *parse_primary(Parser *p) {
             } else e->type = type_vec(arg->type.vbits, 1, 0, 0);
             return e;
         }
+        if (!strcmp(name, "__vec_all_ge") || !strcmp(name, "__vec_all_ge_8") ||
+            !strcmp(name, "__vec_all_gt") || !strcmp(name, "__vec_all_gt_8") ||
+            !strcmp(name, "__vec_all_le") || !strcmp(name, "__vec_all_le_8") ||
+            !strcmp(name, "__vec_all_lt") || !strcmp(name, "__vec_all_lt_8") ||
+            !strcmp(name, "__vec_any_ge") || !strcmp(name, "__vec_any_ge_8") ||
+            !strcmp(name, "__vec_any_gt") || !strcmp(name, "__vec_any_gt_8") ||
+            !strcmp(name, "__vec_any_le") || !strcmp(name, "__vec_any_le_8") ||
+            !strcmp(name, "__vec_any_lt") || !strcmp(name, "__vec_any_lt_8")) {
+            CBExpr *e;
+            CBExpr *args[2] = {0, 0};
+            e = mk_expr(E_CALL, type_of(32, 0), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, 2)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1];
+            if (!e->a->type.vec || !e->b->type.vec ||
+                e->a->type.vbits != e->b->type.vbits) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s needs two compatible vector arguments", e->name);
+                p->err = 1;
+            }
+            return e;
+        }
         if (!strcmp(name, "__vec_meadd") || !strcmp(name, "__vec_mhadd") ||
             !strcmp(name, "__vec_mladd") || !strcmp(name, "__vec_moadd")) {
             CBExpr *e;
@@ -5995,6 +6026,70 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             asm_line(b, e->line, "VPOPCT %%v%d,%%v%d,%d", vr, va, elem);
             res = alloc_slots(cg, 2);
             store_vec_slot(b, e->line, res, vr);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_all_ge") || !strcmp(e->name, "__vec_all_ge_8") ||
+            !strcmp(e->name, "__vec_all_gt") || !strcmp(e->name, "__vec_all_gt_8") ||
+            !strcmp(e->name, "__vec_all_le") || !strcmp(e->name, "__vec_all_le_8") ||
+            !strcmp(e->name, "__vec_all_lt") || !strcmp(e->name, "__vec_all_lt_8") ||
+            !strcmp(e->name, "__vec_any_ge") || !strcmp(e->name, "__vec_any_ge_8") ||
+            !strcmp(e->name, "__vec_any_gt") || !strcmp(e->name, "__vec_any_gt_8") ||
+            !strcmp(e->name, "__vec_any_le") || !strcmp(e->name, "__vec_any_le_8") ||
+            !strcmp(e->name, "__vec_any_lt") || !strcmp(e->name, "__vec_any_lt_8")) {
+            int vr, va, vb;
+            int isall = !strncmp(e->name, "__vec_all_", 10);
+            int isge = strstr(e->name, "ge") != NULL;
+            int isle = strstr(e->name, "le") != NULL;
+            int islt = strstr(e->name, "lt") != NULL;
+            int target;
+            char *out;
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            vb = pick_vr4(b, vr, va, -1, -1);
+            if (vr < 0 || va < 0 || vb < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs three cscratch vector registers", e->name);
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            load_vec_slot(b, e->line, sp, vb);
+            if (e->a->type.vfloat) {
+                int fmt = e->a->type.vbits == 32 ? 2 : 3;
+                if (isge || isle)
+                    asm_line(b, e->line, "VFCHE %%v%d,%%v%d,%%v%d,%d,0,1",
+                             vr, isle ? vb : va, isle ? va : vb, fmt);
+                else
+                    asm_line(b, e->line, "VFCH %%v%d,%%v%d,%%v%d,%d,0,1",
+                             vr, islt ? vb : va, islt ? va : vb, fmt);
+                target = (isge || isle) && (isall) ? 3 : 0;
+            } else {
+                int elem = e->a->type.vbits == 8 ? 0 : e->a->type.vbits == 16 ? 1 :
+                           e->a->type.vbits == 32 ? 2 : 3;
+                asm_line(b, e->line, "%s %%v%d,%%v%d,%%v%d,%d,1",
+                         e->a->type.vunsig ? "VCHL" : "VCH", vr,
+                         (isge || islt) ? vb : va, (isge || islt) ? va : vb, elem);
+                target = (isge || isle) && isall ? 3 : 0;
+            }
+            asm_line(b, e->line, "IPM %%r0");
+            asm_line(b, e->line, "SRL %%r0,28");
+            out = new_label(b);
+            if (isall) {
+                asm_line(b, e->line, "CLFI %%r0,%d", target);
+                asm_line(b, e->line, "LHI %%r0,0");
+                asm_line(b, e->line, "BRCL 7,%s", out);
+                asm_line(b, e->line, "LHI %%r0,1");
+            } else {
+                asm_line(b, e->line, "CLFI %%r0,%d", isge || isle ? 0 : 3);
+                asm_line(b, e->line, "LHI %%r0,1");
+                asm_line(b, e->line, "BRCL 7,%s", out);
+                asm_line(b, e->line, "LHI %%r0,0");
+            }
+            emit_label(b, e->line, out);
+            free(out);
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(32, 0), 0);
             *slotp = res;
             return 1;
         }
