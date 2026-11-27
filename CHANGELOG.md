@@ -38,6 +38,11 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
   `__fixbr`,
   `__lpxbr`, `__lnxbr`, `__cfxbr` and `__cgxbr`, plus long double
   arithmetic and comparisons. Long double and hexadecimal float forms are deferred.
+* CBLOCK DFP arithmetic, literals and casts. `_Decimal32`, `_Decimal64`
+  and `_Decimal128` support `+ - * /`, comparisons, unary `+ - !`, `df`/
+  `dd`/`dl` literals, casts between the decimal widths, and casts between
+  decimal and integer values. BFP to DFP and DFP to BFP casts remain
+  unsupported.
 * CBLOCK 16-bit `int16_t`/`uint16_t` scalars and pointers, with `LGH`/`LLGH`
   loads, `STH` stores, integer promotion, typed pointer arithmetic, and
   `__lrvh`/`__strvh`.

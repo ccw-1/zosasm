@@ -92,6 +92,7 @@ typedef struct CBString {
     size_t len;
     int align;
     char *label;
+    char *dc;       /* assembler DC text for a decimal floating literal */
 } CBString;
 
 typedef struct {
@@ -681,9 +682,16 @@ static void lex_next(Lex *l) {
                 j = fend;
                 if (j < l->n && (l->src[j] == 'f' || l->src[j] == 'F')) { suffix = 1; j++; }
                 else if (j < l->n && (l->src[j] == 'l' || l->src[j] == 'L')) { suffix = 2; j++; }
+                else if (j + 1 < l->n && (l->src[j] == 'd' || l->src[j] == 'D')) {
+                    if (l->src[j + 1] == 'f' || l->src[j + 1] == 'F') { suffix = 3; j += 2; }
+                    else if (l->src[j + 1] == 'd' || l->src[j + 1] == 'D') { suffix = 4; j += 2; }
+                    else if (l->src[j + 1] == 'l' || l->src[j + 1] == 'L') { suffix = 5; j += 2; }
+                }
                 l->tok.kind = TK_FP;
                 l->tok.fnum = d;
                 l->tok.op = suffix;
+                l->tok.s = xstrndup(l->src + l->pos, j - l->pos);
+                vec_push(&l->ids, l->tok.s);
                 l->tok.line = line;
                 l->tok.col = col;
                 l->pos = j;
@@ -881,8 +889,14 @@ static CBExpr *parse_primary(Parser *p) {
     }
     if (l->tok.kind == TK_FP) {
         int kind = l->tok.op;
-        e = mk_expr(E_NUM, kind == 2 ? type_fp(64) : type_fp(kind ? 32 : 64), line, col);
+        if (kind >= 3) e = mk_expr(E_NUM, type_dfp(kind == 3 ? 32 : kind == 4 ? 64 : 128), line, col);
+        else e = mk_expr(E_NUM, kind == 2 ? type_fp(64) : type_fp(kind ? 32 : 64), line, col);
         e->fnum = l->tok.fnum;
+        if (kind >= 3 && l->tok.s) {
+            size_t n = strlen(l->tok.s);
+            if (n >= 2) n -= 2;
+            e->str = xstrndup(l->tok.s, n);
+        }
         lex_next(l);
         if (kind == 2) return mk_cast(e, type_fp(128));
         return e;
@@ -4476,6 +4490,22 @@ static char *literal_add(CBlock *b, const char *data, size_t len, int align) {
     l->len = len;
     l->align = align;
     l->label = new_label(b);
+    l->dc = NULL;
+    return l->label;
+}
+
+static char *literal_add_dc(CBlock *b, const char *dc, int align) {
+    CBString *l;
+    if (b->nlits == b->lits_cap) {
+        b->lits_cap = b->lits_cap ? b->lits_cap * 2 : 4;
+        b->lits = xrealloc(b->lits, b->lits_cap * sizeof *b->lits);
+    }
+    l = &b->lits[b->nlits++];
+    l->data = NULL;
+    l->len = 0;
+    l->align = align;
+    l->label = new_label(b);
+    l->dc = xstrdup(dc);
     return l->label;
 }
 
@@ -4489,6 +4519,10 @@ static void emit_literal_data(CBlock *b, int line) {
         else if (l->align == 8) asm_line(b, line, "DS 0D");
         else if (l->align > 8) asm_line(b, line, "CNOP 0,%d", l->align);
         emit_label(b, line, l->label);
+        if (l->dc) {
+            asm_line(b, line, "%s", l->dc);
+            continue;
+        }
         while (at < total) {
             Buf h = {0};
             size_t k = total - at > 16 ? 16 : total - at;
@@ -4560,6 +4594,51 @@ static void load_fp_from_slot(CBlock *b, int line, int slot, CType src, int fpr,
     }
 }
 
+static void dfp_convert(CBlock *b, int line, int fpr, int from, int to) {
+    if (from == to) return;
+    if (from == 32 && to == 64) {
+        asm_line(b, line, "LDETR %%f%d,%%f%d,8", fpr, fpr);
+    } else if (from == 64 && to == 128) {
+        asm_line(b, line, "LXDTR %%f%d,%%f%d,0", fpr, fpr);
+    } else if (from == 32 && to == 128) {
+        asm_line(b, line, "LDETR %%f%d,%%f%d,8", fpr, fpr);
+        asm_line(b, line, "LXDTR %%f%d,%%f%d,0", fpr, fpr);
+    } else if (from == 64 && to == 32) {
+        asm_line(b, line, "LEDTR %%f%d,0,%%f%d,0", fpr, fpr);
+    } else if (from == 128 && to == 64) {
+        asm_line(b, line, "LDXTR %%f%d,0,%%f%d,0", fpr, fpr);
+    } else if (from == 128 && to == 32) {
+        asm_line(b, line, "LDXTR %%f%d,0,%%f%d,0", fpr, fpr);
+        asm_line(b, line, "LEDTR %%f%d,0,%%f%d,0", fpr, fpr);
+    }
+}
+
+static void load_dfp_from_slot(CBlock *b, int line, int slot, CType src, int fpr, int bits) {
+    if (src.dfp) {
+        load_fp_slot(b, line, slot, src, fpr);
+        dfp_convert(b, line, fpr, src.bits, bits);
+        return;
+    }
+    load_slot(b, line, slot, src, 0);
+    if (bits == 128) {
+        if (src.bits == 64) {
+            if (src.unsig) asm_line(b, line, "CXLGTR %%f%d,0,%%r0,0", fpr);
+            else asm_line(b, line, "CXGTR %%f%d,%%r0", fpr);
+        } else {
+            if (src.unsig) asm_line(b, line, "CXLFTR %%f%d,0,%%r0,0", fpr);
+            else asm_line(b, line, "CXFTR %%f%d,0,%%r0,0", fpr);
+        }
+    } else {
+        if (src.bits == 64) {
+            if (src.unsig) asm_line(b, line, "CDLGTR %%f%d,0,%%r0,0", fpr);
+            else asm_line(b, line, "CDGTR %%f%d,%%r0", fpr);
+        } else {
+            if (src.unsig) asm_line(b, line, "CDLFTR %%f%d,0,%%r0,0", fpr);
+            else asm_line(b, line, "CDFTR %%f%d,0,%%r0,0", fpr);
+        }
+    }
+}
+
 static int emit_value_test(Cg *cg, CBExpr *e) {
     CBlock *b = cg->b;
     int slot, fp, zero;
@@ -4567,6 +4646,19 @@ static int emit_value_test(Cg *cg, CBExpr *e) {
         if (!eval(cg, e, &slot)) return 0;
         load_slot(b, e->line, slot, e->type, 0);
         emit_test(b, e->line, e->type);
+        return 1;
+    }
+    if (e->type.dfp) {
+        int abits = e->type.bits == 32 ? 64 : e->type.bits;
+        fp = abits == 128 ? pick_fpr_pair(b, -1, -1) : pick_fpr(b, -1, -1);
+        if (fp < 0) {
+            cb_error(b, e->line, e->col, "ZA5005",
+                     "a decimal condition needs a cscratch FPR");
+            return 0;
+        }
+        if (!eval(cg, e, &slot)) return 0;
+        load_dfp_from_slot(b, e->line, slot, e->type, fp, abits);
+        asm_line(b, e->line, abits == 128 ? "LTXTR %%f%d,%%f%d" : "LTDTR %%f%d,%%f%d", fp, fp);
         return 1;
     }
     if (e->type.bits == 128) {
@@ -4602,8 +4694,63 @@ static int eval_float_bin(Cg *cg, CBExpr *e, int *slotp) {
     int fa, fb, sa, sb, res;
     int isx = ot.bits == 128;
     if (ot.dfp) {
-        cb_error(b, e->line, e->col, "ZA5002", "decimal floating-point arithmetic is not implemented");
-        return 0;
+        int abits = ot.bits == 32 ? 64 : ot.bits;
+        int ax = abits == 128;
+        if ((e->a->type.flt && !e->a->type.dfp) ||
+            (e->b->type.flt && !e->b->type.dfp)) {
+            cb_error(b, e->line, e->col, "ZA5002",
+                     "BFP and DFP operands cannot be mixed");
+            return 0;
+        }
+        if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sb)) return 0;
+        fa = ax ? pick_fpr_pair(b, -1, -1) : pick_fpr(b, -1, -1);
+        fb = ax ? pick_fpr_pair(b, fa, -1) : pick_fpr(b, fa, -1);
+        if (fa < 0 || fb < 0) {
+            cb_error(b, e->line, e->col, "ZA5005",
+                     ax ? "a DFP128 expression needs two cscratch FPR pairs"
+                        : "a decimal expression needs two cscratch FPRs");
+            return 0;
+        }
+        load_dfp_from_slot(b, e->line, sa, e->a->type, fa, abits);
+        load_dfp_from_slot(b, e->line, sb, e->b->type, fb, abits);
+        if (e->op == OP_EQ || e->op == OP_NE || e->op == '<' || e->op == '>' ||
+            e->op == OP_LE || e->op == OP_GE) {
+            char *aval = new_label(b);
+            int mask;
+            asm_line(b, e->line, ax ? "CXTR %%f%d,%%f%d" : "CDTR %%f%d,%%f%d", fa, fb);
+            switch (e->op) {
+            case '<': mask = 4; break;
+            case '>': mask = 2; break;
+            case OP_LE: mask = 12; break;
+            case OP_GE: mask = 10; break;
+            case OP_EQ: mask = 8; break;
+            default: mask = 14; break;
+            }
+            asm_line(b, e->line, "LHI %%r0,1");
+            asm_line(b, e->line, "BRCL %d,%s", mask, aval);
+            asm_line(b, e->line, "LHI %%r0,0");
+            emit_label(b, e->line, aval);
+            free(aval);
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        switch (e->op) {
+        case '+': asm_line(b, e->line, ax ? "AXTR %%f%d,%%f%d,%%f%d" : "ADTR %%f%d,%%f%d,%%f%d", fa, fa, fb); break;
+        case '-': asm_line(b, e->line, ax ? "SXTR %%f%d,%%f%d,%%f%d" : "SDTR %%f%d,%%f%d,%%f%d", fa, fa, fb); break;
+        case '*': asm_line(b, e->line, ax ? "MXTR %%f%d,%%f%d,%%f%d" : "MDTR %%f%d,%%f%d,%%f%d", fa, fa, fb); break;
+        case '/': asm_line(b, e->line, ax ? "DXTR %%f%d,%%f%d,%%f%d" : "DDTR %%f%d,%%f%d,%%f%d", fa, fa, fb); break;
+        default:
+            cb_error(b, e->line, e->col, "ZA5002",
+                     "decimal operator is not implemented (only + - * / and comparisons)");
+            return 0;
+        }
+        if (ot.bits == 32) dfp_convert(b, e->line, fa, 64, 32);
+        res = alloc_slots(cg, ot.bits == 128 ? 2 : 1);
+        store_fp_slot(b, e->line, res, ot, fa);
+        *slotp = res;
+        return 1;
     }
     if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sb)) return 0;
     fa = isx ? pick_fpr_pair(b, -1, -1) : pick_fpr(b, -1, -1);
@@ -4759,6 +4906,37 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
     int s, s0, res;
     switch (e->kind) {
     case E_NUM:
+        if (e->type.dfp) {
+            char dc[96];
+            char *label;
+            int fpr = e->type.bits == 128 ? pick_fpr_pair(b, -1, -1) : pick_fpr(b, -1, -1);
+            int addr;
+            if (fpr < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         e->type.bits == 128 ? "a decimal literal needs a cscratch FPR pair"
+                                             : "a decimal literal needs a cscratch FPR");
+                return 0;
+            }
+            addr = pick_addr(b, 0, 0);
+            if (addr < 0) {
+                cb_error(b, e->line, e->col, "ZA5005", "a decimal literal needs an address register");
+                return 0;
+            }
+            snprintf(dc, sizeof dc, "DC %s'%s'",
+                     e->type.bits == 32 ? "ED" : e->type.bits == 64 ? "DD" : "LD",
+                     e->str ? e->str : "0");
+            label = literal_add_dc(b, dc, e->type.bits == 128 ? 16 : e->type.bits == 64 ? 8 : 4);
+            asm_line(b, e->line, "LARL %%r%d,%s", addr, label);
+            if (e->type.bits == 32) asm_line(b, e->line, "LE %%f%d,0(%%r%d)", fpr, addr);
+            else {
+                asm_line(b, e->line, "LD %%f%d,0(%%r%d)", fpr, addr);
+                if (e->type.bits == 128) asm_line(b, e->line, "LD %%f%d,8(%%r%d)", fpr + 2, addr);
+            }
+            res = alloc_slots(cg, e->type.bits == 128 ? 2 : 1);
+            store_fp_slot(b, e->line, res, e->type, fpr);
+            *slotp = res;
+            return 1;
+        }
         if (e->type.flt) {
             uint64_t u;
             if (e->type.bits == 32) {
@@ -4848,9 +5026,60 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             return 0;
         }
         if (e->type.dfp || e->a->type.dfp) {
-            cb_error(b, e->line, e->col, "ZA5002",
-                     "decimal floating-point conversions are not implemented");
-            return 0;
+            if (e->type.dfp) {
+                int abits = e->type.bits == 32 ? 64 : e->type.bits;
+                int fp = abits == 128 ? pick_fpr_pair(b, -1, -1) : pick_fpr(b, -1, -1);
+                if (fp < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             abits == 128 ? "a DFP128 conversion needs a cscratch FPR pair"
+                                          : "a decimal conversion needs a cscratch FPR");
+                    return 0;
+                }
+                if (e->a->type.flt && !e->a->type.dfp) {
+                    cb_error(b, e->line, e->col, "ZA5002",
+                             "BFP to DFP conversion is not implemented");
+                    return 0;
+                }
+                if (!eval(cg, e->a, &s0)) return 0;
+                load_dfp_from_slot(b, e->line, s0, e->a->type, fp, abits);
+                if (e->type.bits == 32) dfp_convert(b, e->line, fp, 64, 32);
+                res = alloc_slots(cg, e->type.bits == 128 ? 2 : 1);
+                store_fp_slot(b, e->line, res, e->type, fp);
+                *slotp = res;
+                return 1;
+            }
+            if (e->a->type.flt && !e->a->type.dfp) {
+                cb_error(b, e->line, e->col, "ZA5002",
+                         "DFP to BFP conversion is not implemented");
+                return 0;
+            }
+            if (e->a->type.dfp) {
+                int abits = e->a->type.bits == 32 ? 64 : e->a->type.bits;
+                int fp = abits == 128 ? pick_fpr_pair(b, -1, -1) : pick_fpr(b, -1, -1);
+                if (fp < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             abits == 128 ? "a DFP128 conversion needs a cscratch FPR pair"
+                                          : "a decimal conversion needs a cscratch FPR");
+                    return 0;
+                }
+                if (!eval(cg, e->a, &s0)) return 0;
+                load_dfp_from_slot(b, e->line, s0, e->a->type, fp, abits);
+                if (e->type.bits == 64) {
+                    if (e->type.unsig) asm_line(b, e->line, abits == 128 ? "CLGXTR %%r0,9,%%f%d,0" :
+                                                                          "CLGDTR %%r0,9,%%f%d,0", fp);
+                    else asm_line(b, e->line, abits == 128 ? "CGXTR %%r0,9,%%f%d" :
+                                                              "CGDTR %%r0,9,%%f%d", fp);
+                } else {
+                    if (e->type.unsig) asm_line(b, e->line, abits == 128 ? "CLFXTR %%r0,9,%%f%d,0" :
+                                                                          "CLFDTR %%r0,9,%%f%d,0", fp);
+                    else asm_line(b, e->line, abits == 128 ? "CFXTR %%r0,9,%%f%d,0" :
+                                                              "CFDTR %%r0,9,%%f%d,0", fp);
+                }
+                res = alloc_slot(cg);
+                store_slot(b, e->line, res, e->type, 0);
+                *slotp = res;
+                return 1;
+            }
         }
         if (e->type.flt) {
             int fp = e->type.bits == 128 ? pick_fpr_pair(b, -1, -1) : pick_fpr(b, -1, -1);
@@ -4920,9 +5149,36 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
         if (e->a->type.flt) {
             int isx = e->a->type.bits == 128;
             if (e->a->type.dfp) {
-                cb_error(b, e->line, e->col, "ZA5002",
-                         "decimal floating-point unary operators are not implemented");
-                return 0;
+                int abits = e->a->type.bits == 32 ? 64 : e->a->type.bits;
+                int fp = abits == 128 ? pick_fpr_pair(b, -1, -1) : pick_fpr(b, -1, -1);
+                if (fp < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "a decimal unary operator needs a cscratch FPR");
+                    return 0;
+                }
+                if (!eval(cg, e->a, &s0)) return 0;
+                load_dfp_from_slot(b, e->line, s0, e->a->type, fp, abits);
+                if (e->op == '!') {
+                    char *lab = new_label(b);
+                    if (abits == 128) asm_line(b, e->line, "LTXTR %%f%d,%%f%d", fp, fp);
+                    else asm_line(b, e->line, "LTDTR %%f%d,%%f%d", fp, fp);
+                    asm_line(b, e->line, "LHI %%r0,1");
+                    asm_line(b, e->line, "BRCL 8,%s", lab);
+                    asm_line(b, e->line, "LHI %%r0,0");
+                    emit_label(b, e->line, lab);
+                    free(lab);
+                } else if (e->op == '-') {
+                    asm_line(b, e->line, "LCDFR %%f%d,%%f%d", fp, fp);
+                    if (e->a->type.bits == 32) dfp_convert(b, e->line, fp, 64, 32);
+                } else if (e->op != '+') {
+                    cb_error(b, e->line, e->col, "ZA5002",
+                             "decimal unary operator is not implemented");
+                    return 0;
+                }
+                res = alloc_slots(cg, e->a->type.bits == 128 ? 2 : 1);
+                store_fp_slot(b, e->line, res, e->a->type, fp);
+                *slotp = res;
+                return 1;
             }
             int fp = isx ? pick_fpr_pair(b, -1, -1) : pick_fpr(b, -1, -1);
             if (fp < 0) {
@@ -8329,6 +8585,20 @@ static int emit_cond_zero(Cg *cg, CBExpr *e, const char *label) {
             if (!strcmp(call->name, "__strcmp")) return emit_strcmp_cond(cg, call, op, label);
         }
     }
+    if (e->type.dfp) {
+        int fp, abits = e->type.bits == 32 ? 64 : e->type.bits;
+        fp = abits == 128 ? pick_fpr_pair(b, -1, -1) : pick_fpr(b, -1, -1);
+        if (fp < 0) {
+            cb_error(b, e->line, e->col, "ZA5005",
+                     "a decimal condition needs a cscratch FPR");
+            return 0;
+        }
+        if (!eval(cg, e, &s)) return 0;
+        load_dfp_from_slot(b, e->line, s, e->type, fp, abits);
+        asm_line(b, e->line, abits == 128 ? "LTXTR %%f%d,%%f%d" : "LTDTR %%f%d,%%f%d", fp, fp);
+        asm_line(b, e->line, "BRCL 8,%s", label);
+        return 1;
+    }
     if (e->type.flt) {
         int fp, zero = -1;
         if (e->type.bits == 128) {
@@ -8898,6 +9168,7 @@ static void free_block(CBlock *b) {
     for (i = 0; i < b->nlits; i++) {
         free(b->lits[i].data);
         free(b->lits[i].label);
+        free(b->lits[i].dc);
     }
     free(b->lits);
     free(b->lit_end);

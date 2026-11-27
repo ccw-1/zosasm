@@ -998,7 +998,7 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "CDZT %f0,0(5,%r4),0");
-    expect("DFP arithmetic is rejected",
+    expect("DFP arithmetic",
            "#pragma cblock a\n"
            "#pragma cin _Decimal64 a=%f0\n"
            "#pragma cout _Decimal64 c=%f2\n"
@@ -1008,7 +1008,62 @@ static void test_decimal_builtins(void) {
            "c = a + a;\n"
            "#pragma cend\n"
            " END\n",
-           "ZA5002", "");
+           "", "ADTR %f4,%f4,%f6");
+    expect("DFP literals",
+           "#pragma cblock a\n"
+           "#pragma cout _Decimal64 c=%f2\n"
+           "#pragma cscratch %r2, %f0\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "c = 1.5dd;\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "DC DD'1.5'");
+    expect("DFP casts",
+           "#pragma cblock a\n"
+           "#pragma cout int32_t c=%r2\n"
+           "#pragma cscratch %r3, %f0, %f2\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "_Decimal64 d;\n"
+           "d = 3.0dd;\n"
+           "c = (int32_t)d;\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "CFDTR %r0,9,%f0,0");
+    expect("DFP128 arithmetic",
+           "#pragma cblock a\n"
+           "#pragma cin _Decimal128 a=%f0\n"
+           "#pragma cout _Decimal128 c=%f4\n"
+           "#pragma cscratch %r2, %f8, %f10, %f12, %f14\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "c = a + a;\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "AXTR %f8,%f8,%f12");
+    expect("DFP condition",
+           "#pragma cblock a\n"
+           "#pragma cin _Decimal64 a=%f0\n"
+           "#pragma cout int32_t c=%r2\n"
+           "#pragma cscratch %r3, %f4\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "if (a) c = 1; else c = 2;\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "LTDTR %f4,%f4");
+    expect("DFP narrow arithmetic",
+           "#pragma cblock a\n"
+           "#pragma cin _Decimal32 a=%f6\n"
+           "#pragma cout _Decimal32 c=%f2\n"
+           "#pragma cscratch %r2, %f8, %f10\n"
+           "#pragma ctemp %r12, 128, down\n"
+           "#pragma cbegin\n"
+           "c = a + a;\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "LEDTR %f8,0,%f8,0");
     expect("long double binding needs an FPR pair",
            "#pragma cblock a\n"
            "#pragma cin long double a=%f2\n"

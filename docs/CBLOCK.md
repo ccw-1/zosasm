@@ -404,13 +404,19 @@ point and the `-qfloat=hex` forms are not implemented.
 
 ### Decimal floating point
 
-`_Decimal64` and `_Decimal128` values are supported for the conversion
-builtins. `_Decimal64` uses one FPR, `_Decimal128` uses an FPR pair, and
-both can be bound through `%fN`. Decimal arithmetic, casts and literals are
-not implemented.
+`_Decimal32`, `_Decimal64` and `_Decimal128` values are supported.
+`_Decimal32` and `_Decimal64` use one FPR, `_Decimal128` uses an FPR pair,
+and all can be bound through `%fN`. Decimal `+ - * /`, comparisons, unary
+`+`, unary `-` and `!` work. Decimal literals use the `df`, `dd` and `dl`
+suffixes. Casts work between the decimal widths and between decimal and
+integer values. A `_Decimal32` operation is widened to `_Decimal64`, as XL C
+does. Decimal to BFP and BFP to decimal casts are not implemented.
 
 ```c
-_Decimal64  d = __cdzt(p, length, mask);   /* CDZT: zoned to DFP64 */
+_Decimal64  d = 1.25dd;                    /* DD'1.25' */
+_Decimal128 x = (_Decimal128)d;            /* LXDTR */
+int i = (int)d;                            /* CFDTR */
+_Decimal64  z = __cdzt(p, length, mask);   /* CDZT: zoned to DFP64 */
 _Decimal128 x = __cxzt(p, length, mask);   /* CXZT: zoned to DFP128 */
 int cc = __czdt(d, p, length, mask);       /* CZDT: DFP64 to zoned */
 int cc = __czxt(x, p, length, mask);       /* CZXT: DFP128 to zoned */
