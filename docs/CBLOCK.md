@@ -547,6 +547,9 @@ v = __vec_xld2(byte_offset, p);     /* VL at p + byte_offset */
 v = __vec_xlw4(byte_offset, p);
 __vec_xstd2(v, byte_offset, p);     /* VST at p + byte_offset */
 __vec_xstw4(v, byte_offset, p);
+v = __vec_genmask(65535);           /* VGBM */
+v = __vec_genmasks_8(3, 5);        /* VGM */
+flag = __vec_test_mask(v, mask);   /* VTM, condition code as int */
 ```
 
 The element types are `char`, `short`, `int`, `long long`, `float` and
@@ -556,7 +559,7 @@ ordered/equal compares, max, min, average, scalar element
 extract/insert/promote, pack/unpack, merge, checksum, bit counts, the main shift forms, rotations and double
 shifts, the boolean logic forms, floating-point square root, floating
 comparisons, rounding, bit permutation, the 64-bit load-pair form and GF
-multiply-sum, its accumulator form, the sum2/sum4/128-bit sum forms and indexed vector load/store are
+multiply-sum, its accumulator form, the sum2/sum4/128-bit sum forms and indexed vector load/store, mask generation and mask testing are
 implemented. Vector arithmetic and the remaining
 `__vec_*` builtins are not implemented yet. `__vec_load_bndry_*` accepts the boundary argument
 but uses an unaligned `VL`, which is correct and only loses an alignment

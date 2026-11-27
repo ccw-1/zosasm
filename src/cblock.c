@@ -1157,6 +1157,49 @@ static CBExpr *parse_primary(Parser *p) {
             } else e->type = type_vec(e->a->type.vbits * 2, 1, 0, 0);
             return e;
         }
+        if (!strcmp(name, "__vec_genmask") || !strcmp(name, "__vec_genmasks_8") ||
+            !strcmp(name, "__vec_genmasks_16") || !strcmp(name, "__vec_genmasks_32") ||
+            !strcmp(name, "__vec_genmasks_64") || !strcmp(name, "__vec_test_mask")) {
+            CBExpr *e;
+            CBExpr *args[2] = {0, 0};
+            int argc = !strcmp(name, "__vec_genmask") ? 1 :
+                       !strcmp(name, "__vec_test_mask") ? 2 : 2;
+            CType rt = type_of(32, 0);
+            if (!strcmp(name, "__vec_genmask") || !strcmp(name, "__vec_genmasks_8"))
+                rt = type_vec(8, 1, 0, 0);
+            else if (!strcmp(name, "__vec_genmasks_16"))
+                rt = type_vec(16, 1, 0, 0);
+            else if (!strcmp(name, "__vec_genmasks_32"))
+                rt = type_vec(32, 1, 0, 0);
+            else if (!strcmp(name, "__vec_genmasks_64"))
+                rt = type_vec(64, 1, 0, 0);
+            e = mk_expr(E_CALL, rt, line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, argc)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1];
+            if (!strcmp(e->name, "__vec_test_mask")) {
+                if (!e->a->type.vec || !e->b->type.vec) {
+                    cb_error(p->b, line, col, "ZA5003",
+                             "__vec_test_mask needs two vectors");
+                    p->err = 1;
+                }
+            } else if (e->a->type.ptr || e->a->type.flt || e->a->type.vec ||
+                       (e->b && (e->b->type.ptr || e->b->type.flt || e->b->type.vec))) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s needs integer immediates", e->name);
+                p->err = 1;
+            }
+            return e;
+        }
         if (!strcmp(name, "__vec_xld2") || !strcmp(name, "__vec_xlw4") ||
             !strcmp(name, "__vec_xstd2") || !strcmp(name, "__vec_xstw4")) {
             CBExpr *e;
@@ -4873,6 +4916,60 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             load_vec_slot(b, e->line, sc, vacc);
             asm_line(b, e->line, "VGFMA %%v%d,%%v%d,%%v%d,%%v%d,%d",
                      vr, va, vb, vacc, m4);
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_genmask") || !strcmp(e->name, "__vec_genmasks_8") ||
+            !strcmp(e->name, "__vec_genmasks_16") || !strcmp(e->name, "__vec_genmasks_32") ||
+            !strcmp(e->name, "__vec_genmasks_64") || !strcmp(e->name, "__vec_test_mask")) {
+            int vr, va, vb;
+            int64_t x = 0, y = 0;
+            if (!strcmp(e->name, "__vec_test_mask")) {
+                if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+                va = pick_vr4(b, -1, -1, -1, -1);
+                vb = pick_vr4(b, va, -1, -1, -1);
+                if (va < 0 || vb < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "__vec_test_mask needs two cscratch vector registers");
+                    return 0;
+                }
+                load_vec_slot(b, e->line, sa, va);
+                load_vec_slot(b, e->line, sp, vb);
+                asm_line(b, e->line, "VTM %%v%d,%%v%d", va, vb);
+                asm_line(b, e->line, "IPM %%r0");
+                asm_line(b, e->line, "SRL %%r0,28");
+                res = alloc_slot(cg);
+                store_slot(b, e->line, res, type_of(32, 0), 0);
+                *slotp = res;
+                return 1;
+            }
+            if (!const_eval(e->a, &x) || x < 0 ||
+                (!strcmp(e->name, "__vec_genmask") ? x > 65535 : x > 255)) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs a constant immediate", e->name);
+                return 0;
+            }
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            if (vr < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs a cscratch vector register", e->name);
+                return 0;
+            }
+            if (!strcmp(e->name, "__vec_genmask"))
+                asm_line(b, e->line, "VGBM %%v%d,%lld", vr, (long long)x);
+            else {
+                if (!const_eval(e->b, &y) || y < 0 || y > 255) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "%s needs two byte immediates", e->name);
+                    return 0;
+                }
+                asm_line(b, e->line, "VGM %%v%d,%lld,%lld,%d", vr, (long long)x,
+                         (long long)y, !strcmp(e->name, "__vec_genmasks_8") ? 0 :
+                                         !strcmp(e->name, "__vec_genmasks_16") ? 1 :
+                                         !strcmp(e->name, "__vec_genmasks_32") ? 2 : 3);
+            }
             res = alloc_slots(cg, 2);
             store_vec_slot(b, e->line, res, vr);
             *slotp = res;

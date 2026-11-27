@@ -324,6 +324,19 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VSEL %v8,%v10,%v12,%v14");
+    expect("vector mask generation and test",
+           "#pragma cblock a\n"
+           "#pragma cin __vector unsigned char m=%v0\n"
+           "#pragma cout __vector unsigned char c=%v2, int32_t r=%r2\n"
+           "#pragma cscratch %r3, %r4, %v4, %v6\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_genmask(65535);\n"
+           "c = __vec_genmasks_8(3, 5);\n"
+           "r = __vec_test_mask(c, m);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VGBM %v4,65535");
     expect("vector indexed load and store",
            "#pragma cblock a\n"
            "#pragma cin int64_t x=%r2, uint32_t *p=%r3\n"
