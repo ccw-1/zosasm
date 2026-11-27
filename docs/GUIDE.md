@@ -3245,6 +3245,33 @@ The reference for the pragmas, types, error codes and current limits is
 
 ---
 
+## 23. Converting old OBJ and XOBJ objects: `obj2goff`
+
+`obj2goff` reads fixed 80-byte object modules with the `X'02'` record prefix
+and writes GOFF. It accepts ordinary OBJ modules and extended object modules
+(XOBJ), including the XSD records that an XOBJ subfile uses.
+
+```text
+obj2goff [-o FILE] [-no-sym] [-dwarf] FILE.obj
+```
+
+`obj2goff old.obj` writes `old.obj.goff.o`. `-dwarf` also writes
+`old.obj.goff.o.dbg` and appends the GOFF link module that names it.
+
+The converter maps sections, elements, labels, external references, parts,
+text, relocations, IDR, deferred lengths and END records. An XOBJ file with
+several subfiles becomes several GOFF modules in one output file.
+
+SYM records have no GOFF equivalent. The converter preserves their raw payload
+in the unloaded class `C_OBJSYM`. With `-dwarf`, it also reads the ESD labels
+and the symbol names and addresses it can recover from SYM and writes a
+best-effort DWARF `.dbg` file. It does not create source line rows, and it
+cannot recover XPLINK or other attributes that OBJ cannot express.
+
+The complete mapping and limits are in `docs/OBJ2GOFF.md`.
+
+---
+
 ## 24. Editing GOFF through JSON: `goffedit`
 
 `goffedit` converts GOFF to JSON. `goffedit -r` converts the JSON back to GOFF.

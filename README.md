@@ -21,6 +21,7 @@ make                              # build zosasm,hlasm2za,zafmt,zosasm-mcp
 
 build/hlasm2za old.asm            # HLASM source -> old.za (zosasm source)
 build/zosasm -o old.o old.za      # assemble old.za -> GOFF object
+build/obj2goff -o old.goff.o old.obj  # OBJ/XOBJ -> GOFF
 build/zosasm -dump old.o          # print GOFF HDR/ESD/TXT/RLD/LEN/END, IDRL
 build/zosasm -disasm old.o -o back.za   # GOFF object -> zosasm source
 ```
@@ -270,6 +271,7 @@ the object and writes no `.dbg` file.
 * `DESIGN.md` - design, source syntax, GOFF mapping, instruction table
   (section 5), diagnostics, tests.
 * `docs/CBLOCK.md` - inline C blocks (`#pragma cblock`), experimental.
+* `docs/OBJ2GOFF.md` - convert older OBJ and XOBJ objects to GOFF.
 * `PLAN.md` - status and open work.
 * `CBLOCK-DESIGN.md` - original CBLOCK design plan.
 
