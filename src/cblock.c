@@ -972,7 +972,7 @@ static CBExpr *parse_primary(Parser *p) {
                 cblock_expr_free(e); p->err = 1; return NULL;
             }
             e->a = args[0]; e->b = args[1];
-            if (!strcmp(e->name, "__stfle")) {
+        if (!strcmp(e->name, "__stfle")) {
                 if (!e->a->type.ptr) {
                     cb_error(p->b, line, col, "ZA5003", "__stfle needs a storage pointer");
                     p->err = 1;
@@ -988,6 +988,32 @@ static CBExpr *parse_primary(Parser *p) {
                     cb_error(p->b, line, col, "ZA5003", "%s needs an integer bit number", e->name);
                     p->err = 1;
                 }
+            }
+            return e;
+        }
+        if (!strcmp(name, "__edmk") || !strcmp(name, "__trt") || !strcmp(name, "__trtr")) {
+            CBExpr *e;
+            CBExpr *args[5] = {0, 0, 0, 0, 0};
+            int argc = !strcmp(name, "__edmk") ? 4 : 5;
+            e = mk_expr(E_CALL, type_of(32, 0), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, argc)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1]; e->c = args[2];
+            e->d = args[3]; e->arg5 = args[4];
+            if (!e->a->type.ptr || !e->b->type.ptr || e->c->type.ptr ||
+                !e->d->type.ptr || (argc == 5 && !e->arg5->type.ptr)) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s needs pointers and an integer length", e->name);
+                p->err = 1;
             }
             return e;
         }
@@ -4364,6 +4390,7 @@ static int pick_vr4(CBlock *b, int u1, int u2, int u3, int u4);
 static int pick_addr(CBlock *b, int used1, int used2);
 static int pick_addr3(CBlock *b, int used1, int used2, int used3);
 static int pick_addr4(CBlock *b, int used1, int used2, int used3, int used4);
+static int pick_addr5(CBlock *b, int u1, int u2, int u3, int u4, int u5);
 static int pick_pair(CBlock *b, int used1, int used2, int *second);
 static int eval(Cg *cg, CBExpr *e, int *slotp);
 
@@ -5006,6 +5033,62 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             res = alloc_slot(cg);
             store_slot(b, e->line, res, type_of(32, 0), 0);
             *slotp = res;
+            return 1;
+        }
+            if (!strcmp(e->name, "__edmk") || !strcmp(e->name, "__trt") || !strcmp(e->name, "__trtr")) {
+            int ra, rb, rl, ro, rc = -1;
+            char *templ = new_label(b), *end = new_label(b);
+            int has1 = 0, has2 = 0, i;
+            for (i = 0; i < b->nscratch; i++) {
+                if (b->scratch[i] == 1) has1 = 1;
+                if (b->scratch[i] == 2) has2 = 1;
+            }
+            if (!has1 || !has2) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs %%r1 and %%r2 in cscratch", e->name);
+                free(templ); free(end);
+                return 0;
+            }
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp) ||
+                !eval(cg, e->c, &sl) || !eval(cg, e->d, &sd) ||
+                (strcmp(e->name, "__edmk") && !eval(cg, e->arg5, &sc))) {
+                free(templ); free(end);
+                return 0;
+            }
+            ra = pick_addr(b, 1, 2);
+            rb = pick_addr(b, ra, 2);
+            rl = pick_addr3(b, ra, rb, 2);
+            ro = pick_addr4(b, ra, rb, rl, 2);
+            if (strcmp(e->name, "__edmk")) rc = pick_addr5(b, ra, rb, rl, ro, 2);
+            if (ra < 0 || rb < 0 || rl < 0 || ro < 0 ||
+                (strcmp(e->name, "__edmk") && rc < 0)) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs enough cscratch registers", e->name);
+                free(templ); free(end);
+                return 0;
+            }
+            load_slot(b, e->line, sa, type_ptr(), ra);
+            load_slot(b, e->line, sp, type_ptr(), rb);
+            load_slot(b, e->line, sl, e->c->type, rl);
+            load_slot(b, e->line, sd, type_ptr(), ro);
+            if (strcmp(e->name, "__edmk")) load_slot(b, e->line, sc, type_ptr(), rc);
+            asm_line(b, e->line, "BRCL 15,%s", end);
+            emit_label(b, e->line, templ);
+            if (!strcmp(e->name, "__edmk")) asm_line(b, e->line, "EDMK 0(1,%%r%d),0(%%r%d)", ra, rb);
+            else if (!strcmp(e->name, "__trt")) asm_line(b, e->line, "TRT 0(1,%%r%d),0(%%r%d)", ra, rb);
+            else asm_line(b, e->line, "TRTR 0(1,%%r%d),0(%%r%d)", ra, rb);
+            emit_label(b, e->line, end);
+            if (!strcmp(e->name, "__edmk")) asm_line(b, e->line, "LGR %%r1,%%r%d", ra);
+            asm_line(b, e->line, "EXRL %%r%d,%s", rl, templ);
+            asm_line(b, e->line, "STG %%r1,0(%%r%d)", ro);
+            if (!strcmp(e->name, "__trt")) asm_line(b, e->line, "STC %%r2,0(%%r%d)", rc);
+            if (!strcmp(e->name, "__trtr")) asm_line(b, e->line, "STC %%r2,0(%%r%d)", rc);
+            asm_line(b, e->line, "IPM %%r0");
+            asm_line(b, e->line, "SRL %%r0,28");
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            free(templ); free(end);
             return 1;
         }
         if (!strcmp(e->name, "__strlen")) {
@@ -8045,6 +8128,15 @@ static int pick_vr4(CBlock *b, int u1, int u2, int u3, int u4) {
     for (i = 0; i < b->nvscratch; i++) {
         int r = b->vscratch[i];
         if (r != u1 && r != u2 && r != u3 && r != u4) return r;
+    }
+    return -1;
+}
+
+static int pick_addr5(CBlock *b, int u1, int u2, int u3, int u4, int u5) {
+    int i;
+    for (i = 0; i < b->nscratch; i++) {
+        int r = b->scratch[i];
+        if (r != 0 && r != u1 && r != u2 && r != u3 && r != u4 && r != u5) return r;
     }
     return -1;
 }

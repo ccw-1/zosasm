@@ -347,6 +347,17 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VREP %v4,%v6,1,2");
+    expect("runtime-length TRT EXRL",
+           "#pragma cblock a\n"
+           "#pragma cin char *a=%r4, char *b=%r5, int32_t n=%r6, char **out=%r7\n"
+           "#pragma cout int32_t c=%r3\n"
+           "#pragma cscratch %r1, %r2, %r8, %r9, %r10, %r11\n"
+           "#pragma ctemp %r12, 1024, down\n"
+           "#pragma cbegin\n"
+           "c = __trt(a, b, n, a, out);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "EXRL %r9,");
     expect("vector string search",
            "#pragma cblock a\n"
            "#pragma cin __vector bool char a=%v0, __vector bool char b=%v2, __vector unsigned char c0=%v4\n"
