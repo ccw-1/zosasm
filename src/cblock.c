@@ -1049,6 +1049,31 @@ static CBExpr *parse_primary(Parser *p) {
             else e->type = type_of(32, 0);
             return e;
         }
+        if (!strcmp(name, "__vec_sll") || !strcmp(name, "__vec_srl") ||
+            !strcmp(name, "__vec_sral") || !strcmp(name, "__vec_slb") ||
+            !strcmp(name, "__vec_srab")) {
+            CBExpr *e;
+            CBExpr *args[2] = {0, 0};
+            e = mk_expr(E_CALL, type_of(128, 1), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, 2)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1];
+            if (!e->a->type.vec || !e->b->type.vec) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s needs two vector arguments", e->name);
+                p->err = 1;
+            } else e->type = e->a->type;
+            return e;
+        }
         if (!strcmp(name, "__vec_mergeh") || !strcmp(name, "__vec_mergeh_8") ||
             !strcmp(name, "__vec_mergel") || !strcmp(name, "__vec_mergel_8") ||
             !strcmp(name, "__vec_checksum") ||
@@ -4418,6 +4443,33 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             res = alloc_slot(cg);
             asm_line(b, e->line, "LGHI %%r0,0");
             store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_sll") || !strcmp(e->name, "__vec_srl") ||
+            !strcmp(e->name, "__vec_sral") || !strcmp(e->name, "__vec_slb") ||
+            !strcmp(e->name, "__vec_srab")) {
+            int vr, va, vb;
+            const char *op;
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            vb = pick_vr4(b, vr, va, -1, -1);
+            if (vr < 0 || va < 0 || vb < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs three cscratch vector registers", e->name);
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            load_vec_slot(b, e->line, sp, vb);
+            if (!strcmp(e->name, "__vec_sll")) op = "VSL";
+            else if (!strcmp(e->name, "__vec_srl")) op = "VSRL";
+            else if (!strcmp(e->name, "__vec_sral")) op = "VSRA";
+            else if (!strcmp(e->name, "__vec_slb")) op = "VSLB";
+            else op = "VSRAB";
+            asm_line(b, e->line, "%s %%v%d,%%v%d,%%v%d", op, vr, va, vb);
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
             *slotp = res;
             return 1;
         }

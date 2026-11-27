@@ -324,6 +324,22 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VSEL %v8,%v10,%v12,%v14");
+    expect("vector shifts",
+           "#pragma cblock a\n"
+           "#pragma cin __vector unsigned int a=%v0, __vector unsigned int b=%v2\n"
+           "#pragma cin __vector unsigned char n=%v4\n"
+           "#pragma cout __vector unsigned int c=%v6\n"
+           "#pragma cscratch %r2, %r3, %v8, %v10, %v12\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_sll(a, n);\n"
+           "c = __vec_srl(a, n);\n"
+           "c = __vec_sral(a, n);\n"
+           "c = __vec_slb(a, n);\n"
+           "c = __vec_srab(a, n);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VSRAB %v8,%v10,%v12");
     expect("vector merge, checksum and bit counts",
            "#pragma cblock a\n"
            "#pragma cin __vector unsigned int a=%v0, __vector unsigned int b=%v2\n"
