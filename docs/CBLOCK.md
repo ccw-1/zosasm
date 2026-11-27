@@ -490,12 +490,15 @@ cb = __vec_cmpge(a, b);              /* VCH/VCHL plus VNO */
 cb = __vec_cmpgt(a, b);
 cb = __vec_cmple(a, b);
 cb = __vec_cmplt(a, b);
+v = __vec_max(a, b);                 /* VMX/VMXL/VMXF/VMXG */
+v = __vec_min(a, b);                 /* VMN/VMNL/VMNF/VMNG */
+v = __vec_avg(a, b);                 /* VAVG/VAVGL/VAVGF/VAVGG */
 ```
 
 The element types are `char`, `short`, `int`, `long long`, `float` and
 `double`, with `signed`, `unsigned`, `bool` and the `s1/u1/s2/u2/s4/u4/s8/u8/f4/f8`
-builtin suffixes. Vector select, permute, permute-doubleword-immediate and integer
-ordered/equal compares are implemented. Vector arithmetic and the remaining
+builtin suffixes. Vector select, permute, permute-doubleword-immediate, integer
+ordered/equal compares, max, min and average are implemented. Vector arithmetic and the remaining
 `__vec_*` builtins are not implemented yet. `__vec_load_bndry_*` accepts the boundary argument
 but uses an unaligned `VL`, which is correct and only loses an alignment
 optimization.
