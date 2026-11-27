@@ -563,6 +563,32 @@ int dbg_build(Module *m, const uint8_t *obj, size_t objlen, const DbgOptions *o,
     return build_mod2(g, r, err, errsz);
 }
 
+int dbg_build_state(void *dbg, DbgResult *r, char *err, size_t errsz) {
+    Dbg *g = dbg;
+    Md5 c;
+    size_t i;
+    static const char hex[] = "0123456789ABCDEF";
+    if (!g || !g->o) { snprintf(err, errsz, "no debug state"); return 0; }
+    if (g->sects.n == 0) { snprintf(err, errsz, "no control section to describe"); return 0; }
+    if (strlen(g->o->dbg_path) > 200) {
+        snprintf(err, errsz, "the path of the .dbg file is too long");
+        return 0;
+    }
+    dbg_dwarf(g);
+    md5_init(&c);
+    for (i = 0; i < SEC_COUNT; i++)
+        if (g->have[i]) md5_update(&c, g->sec[i].d.p, g->sec[i].d.len);
+    md5_final(&c, g->sig);
+    g->sig_hex = xmalloc(33);
+    for (i = 0; i < 16; i++) {
+        g->sig_hex[2 * i] = hex[g->sig[i] >> 4];
+        g->sig_hex[2 * i + 1] = hex[g->sig[i] & 15];
+    }
+    g->sig_hex[32] = 0;
+    r->elf = dbg_elf(g, &r->elf_len);
+    return build_mod2(g, r, err, errsz);
+}
+
 /* ---- the ELF form (-elf -g) --------------------------------------------------- */
 
 int dbg_build_elf(Module *m, const DbgOptions *o, DbgElfSec **out, size_t *nout, char *err, size_t errsz) {

@@ -242,11 +242,12 @@ static void decode_idrl(GoffModule *m) {
             idr.esdid = t->esdid;
             idr.format = fmt;
             idr.length = (int)n;
-            if (fmt == 1 && n >= 19) {
+            if ((fmt == 0 || fmt == 1) && n >= 19) {
                 copy_trim(idr.translator, sizeof idr.translator, d, 10);
                 copy_trim(idr.version, sizeof idr.version, d + 10, 2);
                 copy_trim(idr.release, sizeof idr.release, d + 12, 2);
                 copy_trim(idr.date, sizeof idr.date, d + 14, 5);
+                if (fmt == 0) idr.format = 1;
             } else if (fmt == 3 && n >= 30) {
                 copy_trim(idr.translator, sizeof idr.translator, d, 10);
                 copy_trim(idr.version, sizeof idr.version, d + 10, 2);

@@ -6,6 +6,12 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 
 ## Unreleased
 
+* `obj2goff` converts fixed 80-byte OBJ and XOBJ modules to GOFF: sections,
+  elements, labels, external references, parts, text, relocations, IDR, LEN
+  and END. SYM payloads are preserved in `C_OBJSYM`; `-dwarf` adds a
+  best-effort `.dbg` with ESD and SYM label names.
+
+
 * `XATTR RENAME(YES|NO)` sets the GOFF ESD renameable flag (bit 41.2).
   `-disasm` writes it back and `-dump-readable` shows it.
 * `-dump` reads HDR module properties, structured `B_IDRL` translator
