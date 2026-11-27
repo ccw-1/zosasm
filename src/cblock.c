@@ -1253,6 +1253,42 @@ static CBExpr *parse_primary(Parser *p) {
             }
             return e;
         }
+        if (!strcmp(name, "__vec_double") || !strcmp(name, "__vec_float") ||
+            !strcmp(name, "__vec_signed") || !strcmp(name, "__vec_unsigned")) {
+            CBExpr *e;
+            CBExpr *arg;
+            CType rt;
+            int outbits, vfloat, in_flt;
+            if (!strcmp(name, "__vec_double")) { outbits = 64; vfloat = 1; }
+            else if (!strcmp(name, "__vec_float")) { outbits = 32; vfloat = 1; }
+            else if (!strcmp(name, "__vec_signed")) { outbits = 64; vfloat = 0; }
+            else { outbits = 64; vfloat = 0; }
+            in_flt = !strcmp(name, "__vec_signed") || !strcmp(name, "__vec_unsigned");
+            rt = type_vec(outbits, !strcmp(name, "__vec_unsigned"), vfloat, 0);
+            e = mk_expr(E_CALL, rt, line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            arg = parse_assignment(p);
+            if (!arg || !tok_is(l, ')')) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            e->a = arg;
+            if (!arg->type.vec ||
+                (in_flt ? !arg->type.vfloat : arg->type.vfloat) ||
+                (outbits == 32 ? arg->type.vbits != 32 : arg->type.vbits != 64)) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s has the wrong vector type", e->name);
+                p->err = 1;
+            }
+            return e;
+        }
         if (!strcmp(name, "__vec_doublee") || !strcmp(name, "__vec_floate")) {
             CBExpr *e;
             CBExpr *arg;
@@ -5196,6 +5232,31 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
                    e->type.vbits == 32 ? 2 : 3;
             asm_line(b, e->line, "VREP %%v%d,%%v%d,%lld,%d", vr, va,
                      (long long)idx, elem);
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_double") || !strcmp(e->name, "__vec_float") ||
+            !strcmp(e->name, "__vec_signed") || !strcmp(e->name, "__vec_unsigned")) {
+            int vr, va;
+            if (!eval(cg, e->a, &sa)) return 0;
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            if (vr < 0 || va < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs two cscratch vector registers", e->name);
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            if (!strcmp(e->name, "__vec_double"))
+                asm_line(b, e->line, "VCDG %%v%d,%%v%d,3,0,0", vr, va);
+            else if (!strcmp(e->name, "__vec_float"))
+                asm_line(b, e->line, "VCEFB %%v%d,%%v%d,0,0", vr, va);
+            else if (!strcmp(e->name, "__vec_signed"))
+                asm_line(b, e->line, "VCGD %%v%d,%%v%d,3,0,0", vr, va);
+            else
+                asm_line(b, e->line, "VCLGD %%v%d,%%v%d,3,0,0", vr, va);
             res = alloc_slots(cg, 2);
             store_vec_slot(b, e->line, res, vr);
             *slotp = res;

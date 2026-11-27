@@ -347,6 +347,24 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VREP %v4,%v6,1,2");
+    expect("vector integer/float conversion",
+           "#pragma cblock a\n"
+           "#pragma cin __vector signed long long a=%v0, __vector signed int b=%v2\n"
+           "#pragma cin __vector double d=%v4\n"
+           "#pragma cout __vector double c=%v6\n"
+           "#pragma cout __vector float f=%v8\n"
+           "#pragma cout __vector signed long long s=%v10\n"
+           "#pragma cout __vector unsigned long long u=%v12\n"
+           "#pragma cscratch %r2, %r3, %v13, %v14\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_double(a);\n"
+           "f = __vec_float(b);\n"
+           "s = __vec_signed(d);\n"
+           "u = __vec_unsigned(d);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VCDG %v13,%v14,3,0,0");
     expect("vector float/double conversion",
            "#pragma cblock a\n"
            "#pragma cin __vector float a=%v0\n"
