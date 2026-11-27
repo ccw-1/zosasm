@@ -1049,6 +1049,60 @@ static CBExpr *parse_primary(Parser *p) {
             else e->type = type_of(32, 0);
             return e;
         }
+        if (!strcmp(name, "__vec_pack") || !strcmp(name, "__vec_pack_8") ||
+            !strcmp(name, "__vec_packs") || !strcmp(name, "__vec_packs_8") ||
+            !strcmp(name, "__vec_packs_cc") || !strcmp(name, "__vec_packsu") ||
+            !strcmp(name, "__vec_packsu_8") || !strcmp(name, "__vec_packsu_cc") ||
+            !strncmp(name, "__vec_unpackh_", 14) ||
+            !strncmp(name, "__vec_unpackl_", 14)) {
+            CBExpr *e;
+            CBExpr *args[3] = {0, 0, 0};
+            CType rt;
+            int unpack = !strncmp(name, "__vec_unpackh_", 14) ||
+                         !strncmp(name, "__vec_unpackl_", 14);
+            int argc = unpack ? 1 :
+                       (!strcmp(name, "__vec_packs_cc") ||
+                        !strcmp(name, "__vec_packsu_cc")) ? 3 : 2;
+            if (unpack) {
+                const char *suffix = name + 14;
+                int outbits = !strncmp(suffix + 1, "2", 1) ? 16 :
+                              !strncmp(suffix + 1, "4", 1) ? 32 : 64;
+                rt = type_vec(outbits, suffix[0] == 'u', 0, 0);
+            } else {
+                argc = (!strcmp(name, "__vec_packs_cc") ||
+                        !strcmp(name, "__vec_packsu_cc")) ? 3 : 2;
+                rt = type_of(128, 1);
+            }
+            e = mk_expr(E_CALL, rt, line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, argc)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1]; e->c = args[2];
+            if (!e->a->type.vec || (!unpack && !e->b->type.vec) ||
+                (unpack ? e->a->type.vfloat : e->a->type.vfloat || e->b->type.vfloat)) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s needs integer vector arguments", e->name);
+                p->err = 1;
+            }
+            if (!unpack) {
+                e->type = type_vec(e->a->type.vbits / 2, e->a->type.vunsig, 0,
+                                   e->a->type.vbool);
+                if (e->c && !e->c->type.ptr) {
+                    cb_error(p->b, line, col, "ZA5003",
+                             "%s needs a condition-code pointer", e->name);
+                    p->err = 1;
+                }
+            }
+            return e;
+        }
         if (!strncmp(name, "__vec_extract_", 14) ||
             !strncmp(name, "__vec_insert_and_zero_", 22) ||
             !strncmp(name, "__vec_insert_", 13) ||
@@ -4324,6 +4378,65 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             res = alloc_slot(cg);
             asm_line(b, e->line, "LGHI %%r0,0");
             store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_pack") || !strcmp(e->name, "__vec_pack_8") ||
+            !strcmp(e->name, "__vec_packs") || !strcmp(e->name, "__vec_packs_8") ||
+            !strcmp(e->name, "__vec_packs_cc") || !strcmp(e->name, "__vec_packsu") ||
+            !strcmp(e->name, "__vec_packsu_8") || !strcmp(e->name, "__vec_packsu_cc") ||
+            !strncmp(e->name, "__vec_unpackh_", 14) ||
+            !strncmp(e->name, "__vec_unpackl_", 14)) {
+            int vr, va, vb, addr;
+            int unpack = !strncmp(e->name, "__vec_unpackh_", 14) ||
+                         !strncmp(e->name, "__vec_unpackl_", 14);
+            int m4 = e->a->type.vbits == 16 ? 1 : e->a->type.vbits == 32 ? 2 : 3;
+            if (!eval(cg, e->a, &sa) || (!unpack && !eval(cg, e->b, &sp))) return 0;
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            vb = pick_vr4(b, vr, va, -1, -1);
+            if (vr < 0 || va < 0 || vb < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs three cscratch vector registers", e->name);
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            if (unpack) {
+                int isl = !strncmp(e->name, "__vec_unpackl_", 14);
+                int isu = e->name[14] == 'u';
+                int srcbits = e->a->type.vbits;
+                int sm4 = srcbits == 8 ? 0 : srcbits == 16 ? 1 : 2;
+                asm_line(b, e->line, "%s %%v%d,%%v%d,%d",
+                         isu ? (isl ? "VUPLL" : "VUPLH") : (isl ? "VUPL" : "VUPH"),
+                         vr, va, sm4);
+            } else {
+                load_vec_slot(b, e->line, sp, vb);
+                if (!strcmp(e->name, "__vec_pack") || !strcmp(e->name, "__vec_pack_8"))
+                    asm_line(b, e->line, "VPK %%v%d,%%v%d,%%v%d,%d", vr, va, vb, m4);
+                else if (!strcmp(e->name, "__vec_packsu") || !strcmp(e->name, "__vec_packsu_8"))
+                    asm_line(b, e->line, "VPKLS %%v%d,%%v%d,%%v%d,%d,0", vr, va, vb, m4);
+                else if (!strcmp(e->name, "__vec_packsu_cc"))
+                    asm_line(b, e->line, "VPKLS %%v%d,%%v%d,%%v%d,%d,1", vr, va, vb, m4);
+                else if (!strcmp(e->name, "__vec_packs_cc"))
+                    asm_line(b, e->line, "VPKS %%v%d,%%v%d,%%v%d,%d,1", vr, va, vb, m4);
+                else
+                    asm_line(b, e->line, "VPKS %%v%d,%%v%d,%%v%d,%d,0", vr, va, vb, m4);
+            }
+            if (e->c) {
+                if (!eval(cg, e->c, &sc)) return 0;
+                addr = pick_addr(b, 0, 0);
+                if (addr < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "%s needs an address register", e->name);
+                    return 0;
+                }
+                load_slot(b, e->line, sc, type_ptr(), addr);
+                asm_line(b, e->line, "IPM %%r0");
+                asm_line(b, e->line, "SRL %%r0,28");
+                asm_line(b, e->line, "ST %%r0,0(%%r%d)", addr);
+            }
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
             *slotp = res;
             return 1;
         }

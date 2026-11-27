@@ -324,6 +324,23 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VSEL %v8,%v10,%v12,%v14");
+    expect("vector pack and unpack",
+           "#pragma cblock a\n"
+           "#pragma cin __vector signed short a=%v0, __vector signed short b=%v2\n"
+           "#pragma cin __vector signed char c0=%v4\n"
+           "#pragma cout __vector signed char c=%v6\n"
+           "#pragma cout __vector signed short d=%v8\n"
+           "#pragma cscratch %r2, %r3, %v10, %v12, %v14\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_pack(a, b);\n"
+           "c = __vec_packs(a, b);\n"
+           "c = __vec_packsu(a, b);\n"
+           "d = __vec_unpackh_s2(c0);\n"
+           "d = __vec_unpackl_s2(c0);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VPK %v10,%v12,%v14,1");
     expect("vector element extract, insert and promote",
            "#pragma cblock a\n"
            "#pragma cin __vector signed int a=%v0, int32_t x=%r2\n"

@@ -497,13 +497,18 @@ x = __vec_extract_s4(v, 3);          /* VSTEF; index is a constant */
 v = __vec_insert_s4(x, v, 1);        /* VLEF */
 v = __vec_promote_s4(x, 2);          /* VGBM plus VLEF */
 v = __vec_insert_and_zero_s4(p);     /* VLLEZ */
+c = __vec_pack(a, b);                /* VPK */
+c = __vec_packs(a, b);               /* VPKS */
+c = __vec_packsu(a, b);              /* VPKLS */
+d = __vec_unpackh_s2(c);             /* VUPH */
+d = __vec_unpackl_u2(c);             /* VUPLL */
 ```
 
 The element types are `char`, `short`, `int`, `long long`, `float` and
 `double`, with `signed`, `unsigned`, `bool` and the `s1/u1/s2/u2/s4/u4/s8/u8/f4/f8`
 builtin suffixes. Vector select, permute, permute-doubleword-immediate, integer
-ordered/equal compares, max, min, average, and scalar element
-extract/insert/promote are implemented. Vector arithmetic and the remaining
+ordered/equal compares, max, min, average, scalar element
+extract/insert/promote, and pack/unpack are implemented. Vector arithmetic and the remaining
 `__vec_*` builtins are not implemented yet. `__vec_load_bndry_*` accepts the boundary argument
 but uses an unaligned `VL`, which is correct and only loses an alignment
 optimization.
