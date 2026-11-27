@@ -347,6 +347,19 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VREP %v4,%v6,1,2");
+    expect("vector string search",
+           "#pragma cblock a\n"
+           "#pragma cin __vector bool char a=%v0, __vector bool char b=%v2, __vector unsigned char c0=%v4\n"
+           "#pragma cout __vector unsigned char c=%v6, int32_t cc=%r2\n"
+           "#pragma cscratch %r3, %r4, %v8, %v10, %v12\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "int32_t cc0;\n"
+           "c = __vec_search_string_ccb16(a, b, c0, &cc0);\n"
+           "c = __vec_search_string_until_zero_ccb16(a, b, c0, &cc0);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VSTRSB %v8,%v8,%v10,%v12,0");
     expect("vector ordered all/any comparisons",
            "#pragma cblock a\n"
            "#pragma cin __vector signed int a=%v0, __vector signed int b=%v2\n"
