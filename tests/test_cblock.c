@@ -347,6 +347,17 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VREP %v4,%v6,1,2");
+    expect("vector population count",
+           "#pragma cblock a\n"
+           "#pragma cin __vector unsigned int a=%v0\n"
+           "#pragma cout __vector unsigned int c=%v2\n"
+           "#pragma cscratch %r2, %r3, %v4, %v6\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_popcnt(a);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VPOPCT %v4,%v6,2");
     expect("vector FP multiply-add/subtract",
            "#pragma cblock a\n"
            "#pragma cin __vector float a=%v0, __vector float b=%v2, __vector float c0=%v4\n"

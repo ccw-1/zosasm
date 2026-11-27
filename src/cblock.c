@@ -1606,6 +1606,30 @@ static CBExpr *parse_primary(Parser *p) {
             }
             return e;
         }
+        if (!strcmp(name, "__vec_popcnt")) {
+            CBExpr *e;
+            CBExpr *arg;
+            e = mk_expr(E_CALL, type_of(128, 1), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            arg = parse_assignment(p);
+            if (!arg || !tok_is(l, ')')) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            e->a = arg;
+            if (!arg->type.vec || arg->type.vfloat) {
+                cb_error(p->b, line, col, "ZA5003", "__vec_popcnt needs an integer vector");
+                p->err = 1;
+            } else e->type = type_vec(arg->type.vbits, 1, 0, 0);
+            return e;
+        }
         if (!strcmp(name, "__vec_madd") || !strcmp(name, "__vec_msub") ||
             !strcmp(name, "__vec_nmadd") || !strcmp(name, "__vec_nmsub")) {
             CBExpr *e;
@@ -5867,6 +5891,25 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
                      !strcmp(e->name, "__vec_ctd") ? "VCDG" :
                      !strcmp(e->name, "__vec_ctsl") ? "VCGD" : "VCLGD",
                      vr, va, (long long)mode);
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_popcnt")) {
+            int vr, va, elem;
+            if (!eval(cg, e->a, &sa)) return 0;
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            if (vr < 0 || va < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "__vec_popcnt needs two cscratch vector registers");
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            elem = e->a->type.vbits == 8 ? 0 : e->a->type.vbits == 16 ? 1 :
+                   e->a->type.vbits == 32 ? 2 : 3;
+            asm_line(b, e->line, "VPOPCT %%v%d,%%v%d,%d", vr, va, elem);
             res = alloc_slots(cg, 2);
             store_vec_slot(b, e->line, res, vr);
             *slotp = res;
