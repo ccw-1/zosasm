@@ -668,7 +668,8 @@ if (__trng_available()) {
 `__trng_available`, `__rng_bytes` and `__prno` first check facility bit 57,
 message-security-assist extension 5. On z/OS GOFF output they test byte 207
 (the facility list at real location 200), mask `0x40`. With `-elf` they
-execute `STFLE` into the CBLOCK temporary area and test the same bit. If bit 57 is clear, they return 0 for
+execute `STFLE` into the CBLOCK temporary area and test the same bit. ELF
+code never reads location 200. If bit 57 is clear, they return 0 for
 `__trng_available` and 2 for the operation builtins without executing
 `PRNO`. Only then does `__trng_available` issue the PRNO-Query and test
 function bit 114. The raw `__prno_query` form makes the same facility check.
