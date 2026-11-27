@@ -11,12 +11,12 @@ WARN    ?= -Wall -Wextra -pedantic
 STD     ?= -std=c99
 CFLAGS_ALL = $(STD) $(WARN) $(CFLAGS) -MMD -MP
 
-LIBSRC := $(filter-out src/main.c src/hlasm2za.c src/mcp.c src/zafmt.c,$(wildcard src/*.c))
+LIBSRC := $(filter-out src/main.c src/hlasm2za.c src/mcp.c src/zafmt.c src/goffedit.c,$(wildcard src/*.c))
 OBJ    := $(LIBSRC:src/%.c=build/%.o)
 TESTS  := $(patsubst tests/%.c,build/%,$(filter-out tests/test_threads.c,$(wildcard tests/test_*.c)))
 
 .PHONY: all test test-maclib test-mcp-asan test-free-asan test-cblock-runtime test-threads clean isa isa-check ebcdic-check pdf
-all: build/zosasm build/hlasm2za build/zafmt build/zosasm-mcp
+all: build/zosasm build/hlasm2za build/zafmt build/zosasm-mcp build/goffedit
 
 build:
 	mkdir -p build
@@ -46,10 +46,13 @@ build/zafmt: build/zafmt.o build/libzosasm.a build/flags.stamp
 build/zosasm-mcp: build/mcp.o build/util.o build/flags.stamp
 	$(CC) $(CFLAGS_ALL) -o $@ build/mcp.o build/util.o -lm
 
+build/goffedit: build/goffedit.o build/libzosasm.a build/flags.stamp
+	$(CC) $(CFLAGS_ALL) -o $@ build/goffedit.o build/libzosasm.a -lm
+
 build/test_%: tests/test_%.c build/libzosasm.a build/flags.stamp
 	$(CC) $(CFLAGS_ALL) -Isrc -MF $(@:%=%.d) -o $@ $< build/libzosasm.a -lm
 
-test: build/zosasm build/hlasm2za build/zafmt build/zosasm-mcp $(TESTS)
+test: build/zosasm build/hlasm2za build/zafmt build/zosasm-mcp build/goffedit $(TESTS)
 	@fail=0; for t in $(TESTS); do ./$$t || fail=1; done; \
 	if [ -x tests/run_cli_tests.sh ]; then tests/run_cli_tests.sh || fail=1; fi; \
 	$(MAKE) isa-check || fail=1; \

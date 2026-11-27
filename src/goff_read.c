@@ -242,11 +242,12 @@ static void decode_idrl(GoffModule *m) {
             idr.esdid = t->esdid;
             idr.format = fmt;
             idr.length = (int)n;
-            if (fmt == 1 && n >= 19) {
+            if ((fmt == 0 || fmt == 1) && n >= 19) {
                 copy_trim(idr.translator, sizeof idr.translator, d, 10);
                 copy_trim(idr.version, sizeof idr.version, d + 10, 2);
                 copy_trim(idr.release, sizeof idr.release, d + 12, 2);
                 copy_trim(idr.date, sizeof idr.date, d + 14, 5);
+                if (fmt == 0) idr.format = 1;
             } else if (fmt == 3 && n >= 30) {
                 copy_trim(idr.translator, sizeof idr.translator, d, 10);
                 copy_trim(idr.version, sizeof idr.version, d + 10, 2);
@@ -321,7 +322,7 @@ GoffModule *goff_parse(const uint8_t *b, size_t len, const char **err) {
     }
     /* HLASM writes the ESD records of an object out of ESDID order (LD entries
      * after the ERs); the table is indexed by ESDID - 1 */
-    qsort(m->esds.v, m->esds.n, sizeof m->esds.v[0], esd_cmp);
+    if (m->esds.n) qsort(m->esds.v, m->esds.n, sizeof m->esds.v[0], esd_cmp);
     for (i = 0; i < m->esds.n; i++) {
         if (m->esds.v[i]->id != i + 1) {
             *err = fail("ESDID %d missing or duplicated", (int)i + 1, 0);
@@ -335,6 +336,27 @@ GoffModule *goff_parse(const uint8_t *b, size_t len, const char **err) {
         return NULL;
     }
     return m;
+}
+
+GoffFile *goff_parse_all(const uint8_t *b, size_t n, const char **err) {
+    GoffFile *f = xcalloc(sizeof *f);
+    size_t off = 0;
+    while (off < n) {
+        GoffModule *m = goff_parse(b + off, n - off, err);
+        if (!m) { goff_file_free(f); return NULL; }
+        vec_push(&f->modules, m);
+        if (m->bytes == 0 || off + m->bytes > n) break;
+        off += m->bytes;
+    }
+    return f;
+}
+
+void goff_file_free(GoffFile *f) {
+    size_t i;
+    if (!f) return;
+    for (i = 0; i < f->modules.n; i++) goff_free(f->modules.v[i]);
+    free(f->modules.v);
+    free(f);
 }
 
 const GoffESD *goff_module_esd(const GoffModule *m, uint32_t id) {

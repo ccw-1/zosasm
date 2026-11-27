@@ -55,15 +55,24 @@ void goff_behavior_unpack(const uint8_t o[10], GoffBehavior *b) {
 
 /* ---- writer ---------------------------------------------------------- */
 
-GoffWriter *goff_writer_new(uint32_t arch_level) {
+GoffWriter *goff_writer_new_header(uint32_t arch_level, uint8_t version,
+                                   const uint8_t *props, size_t nprops) {
     GoffWriter *w = xcalloc(sizeof *w);
     uint8_t r[GOFF_RECORD_LEN] = {0};
     r[0] = 0x03;
     r[1] = (uint8_t)(GOFF_T_HDR << 4);
+    r[2] = version;
     put32(r + 48, arch_level);
+    if (nprops > 20) nprops = 20;
+    put16(r + 52, (uint32_t)nprops);
+    if (nprops) memcpy(r + 60, props, nprops);
     buf_write(&w->buf, r, sizeof r);
     w->logical++;
     return w;
+}
+
+GoffWriter *goff_writer_new(uint32_t arch_level) {
+    return goff_writer_new_header(arch_level, 0, NULL, 0);
 }
 
 void goff_writer_free(GoffWriter *w) {
@@ -157,8 +166,9 @@ const char *goff_write_esd(GoffWriter *w, GoffESD *e) {
     return NULL;
 }
 
-const char *goff_write_text(GoffWriter *w, uint32_t esdid, uint32_t offset, uint8_t style,
-                            const uint8_t *data, size_t n) {
+const char *goff_write_text_full(GoffWriter *w, uint32_t esdid, uint32_t offset, uint8_t style,
+                                 uint16_t encoding, uint32_t true_len,
+                                 const uint8_t *data, size_t n) {
     if (w->ended) return "goff: write after END";
     while (n > 0) {
         size_t k = n > GOFF_MAX_TEXT ? GOFF_MAX_TEXT : n;
@@ -167,13 +177,21 @@ const char *goff_write_text(GoffWriter *w, uint32_t esdid, uint32_t offset, uint
         h[0] = style & 0xF;
         put32(h + (4 - 3), esdid);
         put32(h + (12 - 3), offset);
+        put32(h + (16 - 3), true_len);
+        put16(h + (20 - 3), encoding);
         put16(h + (22 - 3), (uint32_t)k);
         emit(w, GOFF_T_TXT, h, sizeof h, data, k);
         data += k;
         n -= k;
         offset += (uint32_t)k;
+        true_len = 0; /* only the first record carries the total length */
     }
     return NULL;
+}
+
+const char *goff_write_text(GoffWriter *w, uint32_t esdid, uint32_t offset, uint8_t style,
+                            const uint8_t *data, size_t n) {
+    return goff_write_text_full(w, esdid, offset, style, 0, 0, data, n);
 }
 
 /* encode one RLD item; sequencing bits compare against prev */

@@ -3242,3 +3242,29 @@ qemu-s390x ./cblock-linux
 
 The reference for the pragmas, types, error codes and current limits is
 `docs/CBLOCK.md`. The design record is `CBLOCK-DESIGN.md`.
+
+---
+
+## 24. Editing GOFF through JSON: `goffedit`
+
+`goffedit` converts GOFF to JSON. `goffedit -r` converts the JSON back to GOFF.
+
+```text
+goffedit [-r] [-o FILE] [--compact] [--check] FILE
+```
+
+The JSON stores names, bytes and symbolic ESD keys. It does not store record
+byte counts or numeric ESDIDs. The reverse converter derives name lengths,
+text lengths, ED and PR lengths, END record counts and final ESDIDs.
+
+Use it to inspect a GOFF object, edit text or names, and rebuild it:
+
+```sh
+goffedit -o old.json old.goff.o
+# edit old.json
+goffedit -r -o old.new.o old.json
+```
+
+Text is a sequence of hex segments. `length: "auto"` makes an element length
+follow its text. Anchors name positions in text and can be used by offsets.
+See `docs/GOFFEDIT.md` for the schema and editing rules.

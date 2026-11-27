@@ -6,6 +6,11 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 
 ## Unreleased
 
+* `goffedit` converts GOFF to semantic JSON and back with `-r`. It uses ESD
+  keys, auto element lengths, text segments, structured IDRs and writer
+  computed record counts. It reads all modules in a file.
+
+
 * `XATTR RENAME(YES|NO)` sets the GOFF ESD renameable flag (bit 41.2).
   `-disasm` writes it back and `-dump-readable` shows it.
 * `-dump` reads HDR module properties, structured `B_IDRL` translator
