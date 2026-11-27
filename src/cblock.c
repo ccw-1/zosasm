@@ -1426,6 +1426,43 @@ static CBExpr *parse_primary(Parser *p) {
             }
             return e;
         }
+        if (!strcmp(name, "__vec_ctd") || !strcmp(name, "__vec_ctsl") ||
+            !strcmp(name, "__vec_ctul")) {
+            CBExpr *e;
+            CBExpr *args[2] = {0, 0};
+            CType rt = !strcmp(name, "__vec_ctd") ? type_vec(64, 0, 1, 0) :
+                       type_vec(64, !strcmp(name, "__vec_ctul"), 0, 0);
+            e = mk_expr(E_CALL, rt, line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, 2)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1];
+            if (!e->a->type.vec || e->b->type.ptr || e->b->type.flt ||
+                e->b->type.vec) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s needs a vector and an integer rounding mode", e->name);
+                p->err = 1;
+            } else if (!strcmp(e->name, "__vec_ctd")) {
+                if (e->a->type.vfloat || e->a->type.vbits != 64) {
+                    cb_error(p->b, line, col, "ZA5003",
+                             "__vec_ctd needs a 64-bit integer vector");
+                    p->err = 1;
+                }
+            } else if (!e->a->type.vfloat || e->a->type.vbits != 64) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s needs a double vector", e->name);
+                p->err = 1;
+            }
+            return e;
+        }
         if (!strcmp(name, "__vec_addc") || !strcmp(name, "__vec_subc")) {
             CBExpr *e;
             CBExpr *args[2] = {0, 0};
@@ -5430,6 +5467,33 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
                 asm_line(b, e->line, "LGHI %%r0,0");
                 store_slot(b, e->line, res, type_of(32, 0), 0);
             }
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_ctd") || !strcmp(e->name, "__vec_ctsl") ||
+            !strcmp(e->name, "__vec_ctul")) {
+            int vr, va;
+            int64_t mode;
+            if (!eval(cg, e->a, &sa)) return 0;
+            if (!const_eval(e->b, &mode) || mode < 0 || mode > 7) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs a constant rounding mode 0 to 7", e->name);
+                return 0;
+            }
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            if (vr < 0 || va < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs two cscratch vector registers", e->name);
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            asm_line(b, e->line, "%s %%v%d,%%v%d,3,%lld,0",
+                     !strcmp(e->name, "__vec_ctd") ? "VCDG" :
+                     !strcmp(e->name, "__vec_ctsl") ? "VCGD" : "VCLGD",
+                     vr, va, (long long)mode);
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
             *slotp = res;
             return 1;
         }

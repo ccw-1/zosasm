@@ -347,6 +347,19 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VREP %v4,%v6,1,2");
+    expect("vector rounding conversions",
+           "#pragma cblock a\n"
+           "#pragma cin __vector signed long long a=%v0, __vector double d=%v2\n"
+           "#pragma cout __vector double c=%v4, __vector signed long long s=%v6, __vector unsigned long long u=%v8\n"
+           "#pragma cscratch %r2, %r3, %v10, %v12\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_ctd(a, 5);\n"
+           "s = __vec_ctsl(d, 5);\n"
+           "u = __vec_ctul(d, 5);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VCDG %v10,%v12,3,5,0");
     expect("vector add/subtract compute carry",
            "#pragma cblock a\n"
            "#pragma cin __vector unsigned int a=%v0, __vector unsigned int b=%v2\n"
