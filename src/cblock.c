@@ -1049,6 +1049,69 @@ static CBExpr *parse_primary(Parser *p) {
             else e->type = type_of(32, 0);
             return e;
         }
+        if (!strcmp(name, "__vec_sld") || !strcmp(name, "__vec_sldb")) {
+            CBExpr *e;
+            CBExpr *args[3] = {0, 0, 0};
+            e = mk_expr(E_CALL, type_of(128, 1), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, 3)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1]; e->c = args[2];
+            if (!e->a->type.vec || !e->b->type.vec ||
+                e->c->type.ptr || e->c->type.flt || e->c->type.vec) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s needs two vectors and an integer count", e->name);
+                p->err = 1;
+            } else e->type = e->a->type;
+            return e;
+        }
+        if (!strcmp(name, "__vec_rl") || !strcmp(name, "__vec_rl_8") ||
+            !strcmp(name, "__vec_rli") || !strcmp(name, "__vec_rl_mask")) {
+            CBExpr *e;
+            CBExpr *args[3] = {0, 0, 0};
+            int argc = !strcmp(name, "__vec_rl_mask") ? 3 :
+                       !strcmp(name, "__vec_rli") ? 2 : 2;
+            e = mk_expr(E_CALL, type_of(128, 1), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, argc)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1]; e->c = args[2];
+            if (!e->a->type.vec) {
+                cb_error(p->b, line, col, "ZA5003", "%s needs a vector", e->name);
+                p->err = 1;
+            } else if (!strcmp(e->name, "__vec_rli")) {
+                if (e->b->type.ptr || e->b->type.flt || e->b->type.vec) {
+                    cb_error(p->b, line, col, "ZA5003", "__vec_rli needs an integer count");
+                    p->err = 1;
+                }
+            } else if (!e->b->type.vec) {
+                cb_error(p->b, line, col, "ZA5003", "%s needs a vector count", e->name);
+                p->err = 1;
+            }
+            if (!strcmp(e->name, "__vec_rl_mask") &&
+                (e->c->type.ptr || e->c->type.flt || e->c->type.vec)) {
+                cb_error(p->b, line, col, "ZA5003", "__vec_rl_mask needs an integer mask");
+                p->err = 1;
+            }
+            e->type = e->a->type;
+            return e;
+        }
         if (!strcmp(name, "__vec_sll") || !strcmp(name, "__vec_srl") ||
             !strcmp(name, "__vec_sral") || !strcmp(name, "__vec_slb") ||
             !strcmp(name, "__vec_srab")) {
@@ -4443,6 +4506,77 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             res = alloc_slot(cg);
             asm_line(b, e->line, "LGHI %%r0,0");
             store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_sld") || !strcmp(e->name, "__vec_sldb")) {
+            int vr, va, vb;
+            int64_t imm;
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+            if (!const_eval(e->c, &imm) || imm < 0 ||
+                (!strcmp(e->name, "__vec_sld") ? imm > 127 : imm > 15)) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs a constant count in range", e->name);
+                return 0;
+            }
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            vb = pick_vr4(b, vr, va, -1, -1);
+            if (vr < 0 || va < 0 || vb < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs three cscratch vector registers", e->name);
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            load_vec_slot(b, e->line, sp, vb);
+            asm_line(b, e->line, !strcmp(e->name, "__vec_sld") ? "VSLD %%v%d,%%v%d,%%v%d,%lld" :
+                                                              "VSLDB %%v%d,%%v%d,%%v%d,%lld",
+                     vr, va, vb, (long long)imm);
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_rl") || !strcmp(e->name, "__vec_rl_8") ||
+            !strcmp(e->name, "__vec_rli") || !strcmp(e->name, "__vec_rl_mask")) {
+            int vr, va, vb;
+            int elem;
+            int64_t imm = 0;
+            if (!eval(cg, e->a, &sa)) return 0;
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            vb = pick_vr4(b, vr, va, -1, -1);
+            if (vr < 0 || va < 0 || vb < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs three cscratch vector registers", e->name);
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            elem = e->a->type.vbits == 8 ? 0 : e->a->type.vbits == 16 ? 1 :
+                   e->a->type.vbits == 32 ? 2 : 3;
+            if (!strcmp(e->name, "__vec_rli")) {
+                if (!const_eval(e->b, &imm) || imm < 0 || imm > 255) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "__vec_rli needs a constant count 0 to 255");
+                    return 0;
+                }
+                asm_line(b, e->line, "VERLL %%v%d,%%v%d,%lld,%d", vr, va,
+                         (long long)imm, elem);
+            } else {
+                if (!eval(cg, e->b, &sp)) return 0;
+                load_vec_slot(b, e->line, sp, vb);
+                if (!strcmp(e->name, "__vec_rl_mask")) {
+                    if (!const_eval(e->c, &imm) || imm < 0 || imm > 255) {
+                        cb_error(b, e->line, e->col, "ZA5005",
+                                 "__vec_rl_mask needs a constant mask 0 to 255");
+                        return 0;
+                    }
+                    asm_line(b, e->line, "VERIM %%v%d,%%v%d,%%v%d,%lld,%d",
+                             vr, va, vb, (long long)imm, elem);
+                } else asm_line(b, e->line, "VERLLV %%v%d,%%v%d,%%v%d,%d", vr, va, vb, elem);
+            }
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
             *slotp = res;
             return 1;
         }

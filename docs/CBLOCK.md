@@ -512,13 +512,19 @@ v = __vec_srl(a, n);                /* VSRL */
 v = __vec_sral(a, n);               /* VSRA */
 v = __vec_slb(a, n);                /* VSLB */
 v = __vec_srab(a, n);               /* VSRAB */
+v = __vec_rl(a, n);                 /* VERLLV */
+v = __vec_rli(a, 3);                /* VERLL */
+v = __vec_rl_mask(a, n, 15);        /* VERIM */
+v = __vec_sld(a, b, 4);             /* VSLD */
+v = __vec_sldb(a, b, 4);            /* VSLDB */
 ```
 
 The element types are `char`, `short`, `int`, `long long`, `float` and
 `double`, with `signed`, `unsigned`, `bool` and the `s1/u1/s2/u2/s4/u4/s8/u8/f4/f8`
 builtin suffixes. Vector select, permute, permute-doubleword-immediate, integer
 ordered/equal compares, max, min, average, scalar element
-extract/insert/promote, pack/unpack, merge, checksum, bit counts and the main shift forms are implemented. Vector arithmetic and the remaining
+extract/insert/promote, pack/unpack, merge, checksum, bit counts, the main shift forms, rotations and double
+shifts are implemented. Vector arithmetic and the remaining
 `__vec_*` builtins are not implemented yet. `__vec_load_bndry_*` accepts the boundary argument
 but uses an unaligned `VL`, which is correct and only loses an alignment
 optimization.
