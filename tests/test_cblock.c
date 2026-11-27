@@ -324,6 +324,21 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VSEL %v8,%v10,%v12,%v14");
+    expect("vector boolean logic",
+           "#pragma cblock a\n"
+           "#pragma cin __vector unsigned int a=%v0, __vector unsigned int b=%v2\n"
+           "#pragma cout __vector unsigned int c=%v4\n"
+           "#pragma cscratch %r2, %r3, %v6, %v8, %v10\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_andc(a, b);\n"
+           "c = __vec_nand(a, b);\n"
+           "c = __vec_nor(a, b);\n"
+           "c = __vec_orc(a, b);\n"
+           "c = __vec_eqv(a, b);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VNX %v6,%v8,%v10");
     expect("vector rotations and double shifts",
            "#pragma cblock a\n"
            "#pragma cin __vector unsigned int a=%v0, __vector unsigned int n=%v2\n"
