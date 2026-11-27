@@ -1426,6 +1426,33 @@ static CBExpr *parse_primary(Parser *p) {
             }
             return e;
         }
+        if (!strcmp(name, "__vec_extend_s64")) {
+            CBExpr *e;
+            CBExpr *arg;
+            e = mk_expr(E_CALL, type_vec(64, 0, 0, 0), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            arg = parse_assignment(p);
+            if (!arg || !tok_is(l, ')')) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            e->a = arg;
+            if (!arg->type.vec || arg->type.vfloat || arg->type.vbool ||
+                (arg->type.vbits != 8 && arg->type.vbits != 16 &&
+                 arg->type.vbits != 32)) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "__vec_extend_s64 needs a signed byte, halfword or word vector");
+                p->err = 1;
+            }
+            return e;
+        }
         if (!strcmp(name, "__vec_ctd") || !strcmp(name, "__vec_ctsl") ||
             !strcmp(name, "__vec_ctul")) {
             CBExpr *e;
@@ -5467,6 +5494,34 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
                 asm_line(b, e->line, "LGHI %%r0,0");
                 store_slot(b, e->line, res, type_of(32, 0), 0);
             }
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_extend_s64")) {
+            int vr, va, tmp;
+            int srcbits = e->a->type.vbits;
+            if (!eval(cg, e->a, &sa)) return 0;
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            tmp = pick_vr4(b, vr, va, -1, -1);
+            if (vr < 0 || va < 0 || (srcbits != 32 && tmp < 0)) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "__vec_extend_s64 needs enough cscratch vector registers");
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            if (srcbits == 8) {
+                asm_line(b, e->line, "VUPH %%v%d,%%v%d,0", tmp, va);
+                asm_line(b, e->line, "VUPH %%v%d,%%v%d,1", vr, tmp);
+                asm_line(b, e->line, "VUPH %%v%d,%%v%d,2", vr, vr);
+            } else if (srcbits == 16) {
+                asm_line(b, e->line, "VUPH %%v%d,%%v%d,1", vr, va);
+                asm_line(b, e->line, "VUPH %%v%d,%%v%d,2", vr, vr);
+            } else {
+                asm_line(b, e->line, "VUPH %%v%d,%%v%d,2", vr, va);
+            }
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
             *slotp = res;
             return 1;
         }

@@ -347,6 +347,17 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VREP %v4,%v6,1,2");
+    expect("vector sign extend to 64",
+           "#pragma cblock a\n"
+           "#pragma cin __vector signed char a=%v0\n"
+           "#pragma cout __vector signed long long c=%v2\n"
+           "#pragma cscratch %r2, %r3, %v4, %v6, %v8\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_extend_s64(a);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VUPH %v8,%v6,0");
     expect("vector rounding conversions",
            "#pragma cblock a\n"
            "#pragma cin __vector signed long long a=%v0, __vector double d=%v2\n"
