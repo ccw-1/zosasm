@@ -113,6 +113,7 @@ typedef struct {
     size_t nlits, lits_cap;
     char *lit_end; /* branch target after the literal tables */
     int temp_reg;
+    int elf;           /* -elf: use STFLE, else read the z/OS facility list at 200 */
     long temp_size;
     int temp_down;
     int save_r0, save_r1;
@@ -4741,6 +4742,25 @@ static int emit_value_test(Cg *cg, CBExpr *e) {
     return 1;
 }
 
+/* Check message-security-assist extension 5, facility bit 57. On MVS the
+ * z/OS facility list at real location 200 has it; on ELF use STFLE. */
+static int emit_msa5_check(Cg *cg, int line, const char *absent, int *tmpout) {
+    CBlock *b = cg->b;
+    int tmp = alloc_slots(cg, 4);
+    if (b->elf) {
+        asm_line(b, line, "LA %%r1,%ld(%%r%d)", slot_off(b, tmp), b->temp_reg);
+        asm_line(b, line, "LGHI %%r0,3");
+        asm_line(b, line, "STFLE 0(%%r1)");
+        asm_line(b, line, "LG %%r0,0(%%r1)");
+    } else {
+        asm_line(b, line, "LG %%r0,200(%%r0)");
+    }
+    asm_line(b, line, "NILF %%r0,64");
+    asm_line(b, line, "BRC 8,%s", absent);
+    if (tmpout) *tmpout = tmp;
+    return 1;
+}
+
 static int eval_float_bin(Cg *cg, CBExpr *e, int *slotp) {
     CBlock *b = cg->b;
     CType ot = type_usual(e->a->type, e->b->type);
@@ -5561,6 +5581,7 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
         }
         if (!strcmp(e->name, "__trng_available") || !strcmp(e->name, "__rng_available")) {
             int tmp, res, i, ok = 1;
+            char *absent = new_label(b), *done = new_label(b);
             for (i = 0; i < 3; i++) {
                 int j, hit = 0;
                 for (j = 0; j < b->nscratch; j++) if (b->scratch[j] == i) hit = 1;
@@ -5569,22 +5590,29 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             if (!ok) {
                 cb_error(b, e->line, e->col, "ZA5005",
                          "%s needs %%r0, %%r1 and %%r2 in cscratch", e->name);
+                free(absent); free(done);
                 return 0;
             }
-            tmp = alloc_slots(cg, 2);
+            emit_msa5_check(cg, e->line, absent, &tmp);
             asm_line(b, e->line, "LA %%r1,%ld(%%r%d)", slot_off(b, tmp), b->temp_reg);
             asm_line(b, e->line, "LGHI %%r0,0");
             asm_line(b, e->line, "PRNO %%r2,%%r2");
             asm_line(b, e->line, "LLGC %%r0,14(%%r1)");
             asm_line(b, e->line, "NILF %%r0,32");
             asm_line(b, e->line, "SRL %%r0,5");
+            asm_line(b, e->line, "BRCL 15,%s", done);
+            emit_label(b, e->line, absent);
+            asm_line(b, e->line, "LGHI %%r0,0");
+            emit_label(b, e->line, done);
+            free(absent); free(done);
             res = alloc_slot(cg);
             store_slot(b, e->line, res, type_of(32, 0), 0);
             *slotp = res;
             return 1;
         }
         if (!strcmp(e->name, "__prno_query")) {
-            int i, ok = 1;
+            int i, res, ok = 1;
+            char *absent = new_label(b), *done = new_label(b);
             for (i = 0; i < 2; i++) {
                 int j, hit = 0;
                 for (j = 0; j < b->nscratch; j++) if (b->scratch[j] == i) hit = 1;
@@ -5593,31 +5621,45 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             if (!ok) {
                 cb_error(b, e->line, e->col, "ZA5005",
                          "%s needs %%r0 and %%r1 in cscratch", e->name);
+                free(absent); free(done);
                 return 0;
             }
-            if (!eval(cg, e->a, &sa)) return 0;
+            emit_msa5_check(cg, e->line, absent, NULL);
+            if (!eval(cg, e->a, &sa)) { free(absent); free(done); return 0; }
             load_slot(b, e->line, sa, type_ptr(), 1);
             asm_line(b, e->line, "LGHI %%r0,0");
             asm_line(b, e->line, "PRNO %%r2,%%r2");
             asm_line(b, e->line, "IPM %%r0");
             asm_line(b, e->line, "SRL %%r0,28");
+            asm_line(b, e->line, "BRCL 15,%s", done);
+            emit_label(b, e->line, absent);
+            asm_line(b, e->line, "LGHI %%r0,2");
+            emit_label(b, e->line, done);
+            free(absent); free(done);
             res = alloc_slot(cg);
             store_slot(b, e->line, res, type_of(32, 0), 0);
             *slotp = res;
             return 1;
         }
         if (!strcmp(e->name, "__prno_trng") || !strcmp(e->name, "__rng_bytes")) {
-            int need[5] = {0, 2, 3, 8, 9}, i;
-            for (i = 0; i < 5; i++) {
+            int need[6] = {0, 1, 2, 3, 8, 9}, i, res;
+            char *absent = new_label(b), *done = new_label(b);
+            for (i = 0; i < 6; i++) {
                 int j, hit = 0;
                 for (j = 0; j < b->nscratch; j++) if (b->scratch[j] == need[i]) hit = 1;
                 if (!hit) {
                     cb_error(b, e->line, e->col, "ZA5005",
-                             "%s needs %%r0, %%r2, %%r3, %%r8 and %%r9 in cscratch", e->name);
+                             "%s needs %%r0, %%r1, %%r2, %%r3, %%r8 and %%r9 in cscratch",
+                             e->name);
+                    free(absent); free(done);
                     return 0;
                 }
             }
-            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+            emit_msa5_check(cg, e->line, absent, NULL);
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) {
+                free(absent); free(done);
+                return 0;
+            }
             load_slot(b, e->line, sa, type_ptr(), 2);
             load_slot(b, e->line, sp, e->b->type, 3);
             asm_line(b, e->line, "LGHI %%r8,0");
@@ -5627,26 +5669,37 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             asm_line(b, e->line, "BRC 3,*-4");
             asm_line(b, e->line, "IPM %%r0");
             asm_line(b, e->line, "SRL %%r0,28");
+            asm_line(b, e->line, "BRCL 15,%s", done);
+            emit_label(b, e->line, absent);
+            asm_line(b, e->line, "LGHI %%r0,2");
+            emit_label(b, e->line, done);
+            free(absent); free(done);
             res = alloc_slot(cg);
             store_slot(b, e->line, res, type_of(32, 0), 0);
             *slotp = res;
             return 1;
         }
         if (!strcmp(e->name, "__prno")) {
-            int need[6] = {0, 1, 2, 3, 8, 9}, i;
+            int need[6] = {0, 1, 2, 3, 8, 9}, i, res;
             int ss[6];
+            char *absent = new_label(b), *done = new_label(b);
             for (i = 0; i < 6; i++) {
                 int j, hit = 0;
                 for (j = 0; j < b->nscratch; j++) if (b->scratch[j] == need[i]) hit = 1;
                 if (!hit) {
                     cb_error(b, e->line, e->col, "ZA5005",
                              "%s needs %%r0, %%r1, %%r2, %%r3, %%r8 and %%r9 in cscratch", e->name);
+                    free(absent); free(done);
                     return 0;
                 }
             }
+            emit_msa5_check(cg, e->line, absent, NULL);
             if (!eval(cg, e->a, &ss[0]) || !eval(cg, e->b, &ss[1]) ||
                 !eval(cg, e->c, &ss[2]) || !eval(cg, e->d, &ss[3]) ||
-                !eval(cg, e->arg5, &ss[4]) || !eval(cg, e->arg6, &ss[5])) return 0;
+                !eval(cg, e->arg5, &ss[4]) || !eval(cg, e->arg6, &ss[5])) {
+                free(absent); free(done);
+                return 0;
+            }
             load_slot(b, e->line, ss[0], e->a->type, 0);
             load_slot(b, e->line, ss[1], e->b->type, 1);
             load_slot(b, e->line, ss[2], e->c->type, 2);
@@ -5657,6 +5710,11 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             asm_line(b, e->line, "BRC 3,*-4");
             asm_line(b, e->line, "IPM %%r0");
             asm_line(b, e->line, "SRL %%r0,28");
+            asm_line(b, e->line, "BRCL 15,%s", done);
+            emit_label(b, e->line, absent);
+            asm_line(b, e->line, "LGHI %%r0,2");
+            emit_label(b, e->line, done);
+            free(absent); free(done);
             res = alloc_slot(cg);
             store_slot(b, e->line, res, type_of(32, 0), 0);
             *slotp = res;
@@ -9350,7 +9408,7 @@ void cblock_debug_free(CBlockDebugVec *v) {
 
 int cblock_compile(const char *file, int line, const char *head, const CBlockLine *body,
                    size_t n, Reporter *rep, SrcVec *out, int *label_counter,
-                   CBlockDebugVec *debug) {
+                   CBlockDebugVec *debug, int elf) {
     CBlock b;
     Parser p;
     CBStmtVec stmts = {0};
@@ -9366,6 +9424,7 @@ int cblock_compile(const char *file, int line, const char *head, const CBlockLin
     b.body = body;
     b.body_n = n;
     b.temp_reg = -1;
+    b.elf = elf;
     b.name = xstrdup(head && *head ? head : "cblock");
     b.temp_down = 1;
     b.debug = debug;

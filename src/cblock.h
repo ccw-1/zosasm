@@ -20,6 +20,6 @@ typedef Vec(CBlockLine) CBlockLineVec;
  * appended to out. Returns 0 on success, nonzero after reporting an error. */
 int cblock_compile(const char *file, int line, const char *head, const CBlockLine *body,
                    size_t n, Reporter *rep, SrcVec *out, int *label_counter,
-                   CBlockDebugVec *debug);
+                   CBlockDebugVec *debug, int elf);
 
 #endif

@@ -665,9 +665,14 @@ if (__trng_available()) {
 }
 ```
 
-The PRNO query assumes that the PRNO instruction itself is installed. A
-processor without message-security-assist extension 5 raises an illegal
-instruction exception before the query can report the feature bitmap.
+`__trng_available`, `__rng_bytes` and `__prno` first check facility bit 57,
+message-security-assist extension 5. On z/OS GOFF output they read the
+facility list at real location 200. With `-elf` they execute `STFLE` into
+the CBLOCK temporary area. If bit 57 is clear, they return 0 for
+`__trng_available` and 2 for the operation builtins without executing
+`PRNO`. Only then does `__trng_available` issue the PRNO-Query and test
+function bit 114. The raw `__prno_query` form makes the same facility check.
+
 The caller supplies writable storage and must keep it valid for the whole
 operation.
 

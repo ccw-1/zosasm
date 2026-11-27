@@ -1731,7 +1731,7 @@ static void pp_file(Pp *pp, const char *file, const char *text, size_t len) {
                     vec_push(&body, l);
                 }
                 cblock_compile(file, ln, head, body.v, body.n, pp->rep, pp->out, &pp->cblock_label,
-                               pp->opt->cblock_debug);
+                               pp->opt->cblock_debug, pp->opt->elf);
                 free(body.v);
                 if (pp->opt->events) {
                     size_t q;

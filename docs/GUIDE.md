@@ -3012,10 +3012,12 @@ floating-point groups are not implemented in CBLOCK yet. `__lpd*` requires
 both registers of an even-odd pair in `cscratch`; decimal lengths must be
 compile-time constants.
 
-Random numbers use the `PRNO` instruction. `__trng_available()` returns 1
-when PRNO function code 114 is installed, and `__rng_bytes()` fills a caller
-buffer with conditioned entropy. The CBLOCK reserves the fixed PRNO
-registers in `cscratch`:
+Random numbers use the `PRNO` instruction. `__trng_available()` checks
+message-security-assist extension 5 and then the PRNO feature bitmap. It
+returns 1 when PRNO function code 114 is installed, and `__rng_bytes()`
+fills a caller buffer with conditioned entropy. The facility check reads
+location 200 in GOFF output and uses `STFLE` in ELF output. The CBLOCK
+reserves the fixed PRNO registers in `cscratch`:
 
 ```c
 #pragma cblock rng
