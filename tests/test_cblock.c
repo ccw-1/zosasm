@@ -347,6 +347,20 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VREP %v4,%v6,1,2");
+    expect("CLCL and extended long strings",
+           "#pragma cblock a\n"
+           "#pragma cin char *a=%r11, int64_t n=%r12, int32_t pad=%r10, char *d=%r8, int64_t m=%r9\n"
+           "#pragma cout int32_t c=%r14\n"
+           "#pragma cscratch %r2, %r3, %r4, %r5, %r6, %r7\n"
+           "#pragma ctemp %r15, 1024, down\n"
+           "#pragma cbegin\n"
+           "c = __clcle(a, n, pad, d, m);\n"
+           "c = __clclu(a, n, pad, d, m);\n"
+           "c = __mvcle(a, n, pad, d, m);\n"
+           "c = __mvclu(a, n, pad, d, m);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "CLCLE %r2,%r4,0(%r6)");
     expect("TRE/SRSTU/TRxx runtime strings",
            "#pragma cblock a\n"
            "#pragma cin char *a=%r4, char *b=%r9, int32_t n=%r11, char **out=%r7\n"

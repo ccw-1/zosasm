@@ -991,6 +991,51 @@ static CBExpr *parse_primary(Parser *p) {
             }
             return e;
         }
+        if (!strcmp(name, "__clcle") || !strcmp(name, "__clclu") ||
+            !strcmp(name, "__mvcle") || !strcmp(name, "__mvclu")) {
+            CBExpr *e;
+            CBExpr *args[5] = {0, 0, 0, 0, 0};
+            e = mk_expr(E_CALL, type_of(32, 0), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, 5)) { cblock_expr_free(e); p->err = 1; return NULL; }
+            e->a = args[0]; e->b = args[1]; e->c = args[2]; e->d = args[3]; e->arg5 = args[4];
+            if (!e->a->type.ptr || e->b->type.ptr || e->c->type.ptr ||
+                !e->d->type.ptr || e->arg5->type.ptr) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s needs a pointer, length, pad, pointer and length", e->name);
+                p->err = 1;
+            }
+            return e;
+        }
+        if (!strcmp(name, "__clcl")) {
+            CBExpr *e;
+            CBExpr *args[5] = {0, 0, 0, 0, 0};
+            e = mk_expr(E_CALL, type_of(32, 0), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, 5)) { cblock_expr_free(e); p->err = 1; return NULL; }
+            e->a = args[0]; e->b = args[1]; e->c = args[2]; e->d = args[3]; e->arg5 = args[4];
+            if (!e->a->type.ptr || !e->b->type.ptr || !e->c->type.ptr || !e->d->type.ptr ||
+                e->arg5->type.ptr) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "__clcl needs two pointers, two length pointers and a pad byte");
+                p->err = 1;
+            }
+            return e;
+        }
         if (!strcmp(name, "__tre") || !strcmp(name, "__srstu") ||
             !strcmp(name, "__troo") || !strcmp(name, "__trot") ||
             !strcmp(name, "__trto") || !strcmp(name, "__trtt")) {
@@ -5077,7 +5122,82 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             *slotp = res;
             return 1;
         }
-            if (!strcmp(e->name, "__tre") || !strcmp(e->name, "__srstu") ||
+            if (!strcmp(e->name, "__clcle") || !strcmp(e->name, "__clclu") ||
+            !strcmp(e->name, "__mvcle") || !strcmp(e->name, "__mvclu")) {
+            int p1, s1, p2, s2, rpad, rval, tmp;
+            int wide = !strcmp(e->name, "__clclu") || !strcmp(e->name, "__mvclu");
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sl) ||
+                !eval(cg, e->c, &sc) || !eval(cg, e->d, &sd) ||
+                !eval(cg, e->arg5, &sp)) return 0;
+            p1 = pick_pair(b, 0, 0, &s1);
+            p2 = pick_pair(b, p1, s1, &s2);
+            rpad = pick_addr4(b, p1, s1, p2, s2);
+            rval = pick_addr5(b, p1, s1, p2, s2, rpad);
+            if (p1 < 0 || p2 < 0 || rpad < 0 || rval < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs two even-odd cscratch pairs and two scratch registers",
+                         e->name);
+                return 0;
+            }
+            tmp = alloc_slot(cg);
+            load_slot(b, e->line, sa, type_ptr(), p1);
+            load_slot(b, e->line, sl, e->b->type, s1);
+            asm_line(b, e->line, "NILF %%r%d,16777215", s1);
+            load_slot(b, e->line, sd, type_ptr(), p2);
+            load_slot(b, e->line, sp, e->arg5->type, s2);
+            asm_line(b, e->line, "NILF %%r%d,16777215", s2);
+            load_slot(b, e->line, sc, e->c->type, rval);
+            asm_line(b, e->line, "LA %%r%d,%ld(%%r%d)", rpad, slot_off(b, tmp), b->temp_reg);
+            asm_line(b, e->line, wide ? "STH %%r%d,0(%%r%d)" : "STC %%r%d,0(%%r%d)", rval, rpad);
+            if (!strcmp(e->name, "__clcle")) asm_line(b, e->line, "CLCLE %%r%d,%%r%d,0(%%r%d)", p1, p2, rpad);
+            else if (!strcmp(e->name, "__clclu")) asm_line(b, e->line, "CLCLU %%r%d,%%r%d,0(%%r%d)", p1, p2, rpad);
+            else if (!strcmp(e->name, "__mvcle")) asm_line(b, e->line, "MVCLE %%r%d,%%r%d,0(%%r%d)", p1, p2, rpad);
+            else asm_line(b, e->line, "MVCLU %%r%d,%%r%d,0(%%r%d)", p1, p2, rpad);
+            asm_line(b, e->line, "IPM %%r0");
+            asm_line(b, e->line, "SRL %%r0,28");
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__clcl")) {
+            int p1, s1, p2, s2, rt;
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp) ||
+                !eval(cg, e->c, &sl) || !eval(cg, e->d, &sd) ||
+                !eval(cg, e->arg5, &sc)) return 0;
+            p1 = pick_pair(b, 0, 0, &s1);
+            p2 = pick_pair(b, p1, s1, &s2);
+            rt = pick_addr4(b, p1, s1, p2, s2);
+            if (p1 < 0 || p2 < 0 || rt < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "__clcl needs two even-odd cscratch pairs and a scratch register");
+                return 0;
+            }
+            load_slot(b, e->line, sa, type_ptr(), p1);
+            load_slot(b, e->line, sp, type_ptr(), p2);
+            load_slot(b, e->line, sl, type_ptr(), rt);
+            asm_line(b, e->line, "L %%r%d,0(%%r%d)", s1, rt);
+            asm_line(b, e->line, "NILF %%r%d,16777215", s1);
+            load_slot(b, e->line, sd, type_ptr(), rt);
+            asm_line(b, e->line, "L %%r%d,0(%%r%d)", s2, rt);
+            asm_line(b, e->line, "NILF %%r%d,16777215", s2);
+            load_slot(b, e->line, sc, e->arg5->type, rt);
+            asm_line(b, e->line, "SLL %%r%d,24", rt);
+            asm_line(b, e->line, "OR %%r%d,%%r%d", s2, rt);
+            asm_line(b, e->line, "CLCL %%r%d,%%r%d", p1, p2);
+            load_slot(b, e->line, sl, type_ptr(), rt);
+            asm_line(b, e->line, "ST %%r%d,0(%%r%d)", s1, rt);
+            load_slot(b, e->line, sd, type_ptr(), rt);
+            asm_line(b, e->line, "NILF %%r%d,16777215", s2);
+            asm_line(b, e->line, "ST %%r%d,0(%%r%d)", s2, rt);
+            asm_line(b, e->line, "IPM %%r0");
+            asm_line(b, e->line, "SRL %%r0,28");
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__tre") || !strcmp(e->name, "__srstu") ||
             !strcmp(e->name, "__troo") || !strcmp(e->name, "__trot") ||
             !strcmp(e->name, "__trto") || !strcmp(e->name, "__trtt")) {
             int need[4] = {0, 0, 0, 0}, nneed = 4, i;
