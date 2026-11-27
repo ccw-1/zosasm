@@ -98,10 +98,19 @@ static Anchor *anchor_add(Anchor **ap, size_t *np, uint32_t esd, uint32_t abs) {
     snprintf(x->name, sizeof x->name, "a%lu", (unsigned long)*np);
     return x;
 }
+static Anchor *anchor_find_abs(Anchor *a, size_t n, uint32_t abs) {
+    size_t i;
+    for (i = 0; i < n; i++) if (a[i].visible && a[i].abs == abs) return &a[i];
+    return NULL;
+}
 static void emit_offset(Buf *b, int *first, const char *k, KMap *km, size_t nk, Anchor *a, size_t na,
                         uint32_t esd, uint32_t off) {
-    (void)km; (void)nk; (void)a; (void)na; (void)esd;
-    jnum(b, first, k, (long)off);
+    Anchor *x = anchor_find_abs(a, na, off);
+    (void)km; (void)nk; (void)esd;
+    if (x) {
+        jk(b, first, k); buf_puts(b, "{\"anchor\":"); json_put_cstr(b, x->name);
+        buf_printf(b, ",\"number\":%ld}", (long)off);
+    } else jnum(b, first, k, (long)off);
 }
 
 static int printable_name(const char *s) {
@@ -111,7 +120,7 @@ static int printable_name(const char *s) {
 }
 
 static char *module_json(const GoffModule *m) {
-    Buf b = {0};
+    Buf b = {0}, tb = {0};
     KMap *km; size_t nk, i, na = 0;
     Anchor *a = NULL;
     int f = 1;
@@ -151,12 +160,62 @@ static char *module_json(const GoffModule *m) {
         for (j = 0; j < na; j++)
             if (a[j].esd == t->esdid && a[j].abs >= lo && a[j].abs <= hi) a[j].visible = 1;
     }
+    /* text, generated first so anchors are visible before ESD/RLD offsets */
+    buf_putc(&tb, '[');
+    { int af = 1; uint32_t last[1024]; int seen[1024]; size_t q;
+      memset(last, 0, sizeof last); memset(seen, 0, sizeof seen);
+      for (i = 0; i < m->texts.n; i++) {
+        const GoffText *t = &m->texts.v[i];
+        const char *ek = key_of(km, nk, t->esdid);
+        int tf = 1, skip = 0;
+        for (q = 0; q < m->idrs.n; q++) if (m->idrs.v[q].esdid == t->esdid) skip = 1;
+        if (skip || !ek) continue;
+        jc(&tb, &af); buf_putc(&tb, '{');
+        jstr(&tb, &tf, "esd", ek);
+        jstr(&tb, &tf, "style", style_name(t->style));
+        jnum(&tb, &tf, "encoding", t->encoding);
+        if (t->encoding == 0 && t->true_len == t->len) { jk(&tb, &tf, "true_length"); buf_puts(&tb, "\"auto\""); }
+        else jnum(&tb, &tf, "true_length", (long)t->true_len);
+        if (t->esdid < 1024 && seen[t->esdid] && last[t->esdid] == t->offset) {
+            /* contiguous: omit offset */
+        } else jnum(&tb, &tf, "offset", (long)t->offset);
+        jk(&tb, &tf, "segments"); buf_putc(&tb, '[');
+        { int sf = 1; uint32_t pos = t->offset, end = t->offset + (uint32_t)t->len; size_t x;
+          for (x = 0; x < na; x++) {
+            Anchor *an = &a[x];
+            if (an->esd != t->esdid || an->abs < pos || an->abs > end) continue;
+            if (an->abs > pos) {
+                int hf = 1;
+                jc(&tb, &sf); buf_putc(&tb, '{');
+                jhex(&tb, &hf, "hex", t->data + (pos - t->offset), an->abs - pos);
+                buf_putc(&tb, '}');
+            }
+            jc(&tb, &sf); buf_putc(&tb, '{'); { int zf = 1; jstr(&tb, &zf, "anchor", an->name); an->visible = 1; } buf_putc(&tb, '}');
+            pos = an->abs;
+          }
+          if (pos < end) {
+              int hf = 1;
+              jc(&tb, &sf); buf_putc(&tb, '{');
+              jhex(&tb, &hf, "hex", t->data + (pos - t->offset), end - pos);
+              buf_putc(&tb, '}');
+          }
+        }
+        buf_putc(&tb, ']');
+        if (t->esdid < 1024) { seen[t->esdid] = 1; last[t->esdid] = t->offset + (uint32_t)t->len; }
+        buf_putc(&tb, '}');
+      }
+    }
+    buf_putc(&tb, ']');
+
+    buf_putc(&tb, 0);
     buf_putc(&b, '{');
     jnum(&b, &f, "format_version", 1);
     jk(&b, &f, "header"); buf_puts(&b, "{");
     { int hf = 1; jnum(&b, &hf, "architecture_level", m->arch_level); jnum(&b, &hf, "version", m->hdr_version);
       jhex(&b, &hf, "properties", m->props, m->props_len); }
     buf_putc(&b, '}');
+
+    jk(&b, &f, "text"); buf_puts(&b, tb.p);
 
     /* ESDs; omit the B_IDRL items when structured idrs are emitted */
     jk(&b, &f, "esds"); buf_putc(&b, '[');
@@ -222,53 +281,6 @@ static char *module_json(const GoffModule *m) {
     }
     buf_putc(&b, ']');
 
-    /* text */
-    jk(&b, &f, "text"); buf_putc(&b, '[');
-    { int af = 1; uint32_t last[1024]; int seen[1024]; size_t q;
-      memset(last, 0, sizeof last); memset(seen, 0, sizeof seen);
-      for (i = 0; i < m->texts.n; i++) {
-        const GoffText *t = &m->texts.v[i];
-        const char *ek = key_of(km, nk, t->esdid);
-        int tf = 1, skip = 0;
-        for (q = 0; q < m->idrs.n; q++) if (m->idrs.v[q].esdid == t->esdid) skip = 1;
-        if (skip || !ek) continue;
-        jc(&b, &af); buf_putc(&b, '{');
-        jstr(&b, &tf, "esd", ek);
-        jstr(&b, &tf, "style", style_name(t->style));
-        jnum(&b, &tf, "encoding", t->encoding);
-        if (t->encoding == 0 && t->true_len == t->len) { jk(&b, &tf, "true_length"); buf_puts(&b, "\"auto\""); }
-        else jnum(&b, &tf, "true_length", (long)t->true_len);
-        if (t->esdid < 1024 && seen[t->esdid] && last[t->esdid] == t->offset) {
-            /* contiguous: omit offset */
-        } else jnum(&b, &tf, "offset", (long)t->offset);
-        jk(&b, &tf, "segments"); buf_putc(&b, '[');
-        { int sf = 1; uint32_t pos = t->offset, end = t->offset + (uint32_t)t->len; size_t x;
-          for (x = 0; x < na; x++) {
-            Anchor *an = &a[x];
-            if (an->esd != t->esdid || an->abs < pos || an->abs > end) continue;
-            if (an->abs > pos) {
-                int hf = 1;
-                jc(&b, &sf); buf_putc(&b, '{');
-                jhex(&b, &hf, "hex", t->data + (pos - t->offset), an->abs - pos);
-                buf_putc(&b, '}');
-            }
-            jc(&b, &sf); buf_putc(&b, '{'); { int zf = 1; jstr(&b, &zf, "anchor", an->name); } buf_putc(&b, '}');
-            pos = an->abs;
-          }
-          if (pos < end) {
-              int hf = 1;
-              jc(&b, &sf); buf_putc(&b, '{');
-              jhex(&b, &hf, "hex", t->data + (pos - t->offset), end - pos);
-              buf_putc(&b, '}');
-          }
-        }
-        buf_putc(&b, ']');
-        if (t->esdid < 1024) { seen[t->esdid] = 1; last[t->esdid] = t->offset + (uint32_t)t->len; }
-        buf_putc(&b, '}');
-      }
-    }
-    buf_putc(&b, ']');
-
     /* relocations */
     jk(&b, &f, "relocs"); buf_putc(&b, '[');
     { int af = 1;
@@ -319,14 +331,14 @@ static char *module_json(const GoffModule *m) {
     buf_putc(&b, '}');
 
     for (i = 0; i < nk; i++) free(km[i].key);
-    free(km); free(a);
+    free(km); free(a); free(tb.p);
     buf_putc(&b, 0);
     return b.p;
 }
 
 /* ---- reverse helpers ---------------------------------------------------- */
 
-typedef struct { char *key; uint32_t id; const Json *j; } RMap;
+typedef struct { char *key; uint32_t id; uint32_t length; const Json *j; } RMap;
 typedef struct { char *key; uint32_t offset; int has_offset; uint8_t style; uint16_t enc; uint32_t true_len;
                  int true_auto; Buf data; Vec(char *) aname; Vec(uint32_t) aoff; } RText;
 
@@ -456,6 +468,7 @@ static const char *reverse_module(const Json *jm, Buf *out, char *err, size_t er
                 int ok = 0; uint32_t a = anchor_offset(&tx[q], an, &ok);
                 if (ok) { off = tx[q].offset + a; break; }
             }
+            if (!off) off = (uint32_t)json_int(oj, "number", 0);
         }
         esd.offset = off;
         { Json *lj = json_get(ejson, "length"); size_t q;
@@ -463,6 +476,7 @@ static const char *reverse_module(const Json *jm, Buf *out, char *err, size_t er
               uint32_t max = 0; for (q = 0; q < nt; q++) if (!strcmp(tx[q].key, map[i].key) && tx[q].offset + tx[q].data.len > max) max = tx[q].offset + (uint32_t)tx[q].data.len;
               esd.length = max;
           } else esd.length = (uint32_t)json_int(ejson, "length", 0);
+          map[i].length = esd.length;
         }
         { Json *bh = json_get(ejson, "behavior"); int bf = 1;
           if (bh && bh->type == JSON_OBJ) {
@@ -507,13 +521,17 @@ static const char *reverse_module(const Json *jm, Buf *out, char *err, size_t er
             memset(&rl[i], 0, sizeof rl[i]);
             rl[i].rid = rid(map, nm, rk); rl[i].pid = rid(map, nm, pk);
             if (json_get(r, "offset")) { off_value(r, "offset", map, nm, &off, &isa);
-                if (isa) { const char *an = json_str(json_get(r, "offset"), "anchor"); int ok = 0; size_t q;
+                if (isa) {
+                    Json *oj = json_get(r, "offset");
+                    const char *an = json_str(oj, "anchor");
+                    int ok = 0;
+                    size_t q;
                     for (q = 0; q < nt; q++) {
                         uint32_t a = anchor_offset(&tx[q], an, &ok);
                         if (ok) { off = tx[q].offset + a; break; }
                     }
-                    if (!ok) { size_t z; fprintf(stderr, "UNRESOLVED %s\n", an); for (z=0; z<nt; z++) { size_t w; for (w=0; w<tx[z].aname.n; w++) if (!strcmp(tx[z].aname.v[w], an)) fprintf(stderr, "  found in tx %lu key=%s off=%u aoff=%u\n", (unsigned long)z, tx[z].key, tx[z].offset, tx[z].aoff.v[w]); } }
-                    }
+                    if (!ok) off = (uint32_t)json_int(oj, "number", 0);
+                }
                 rl[i].offset = off; }
             rl[i].reference = (uint8_t)ref_value(rr); rl[i].referent = (uint8_t)refent_value(re);
             rl[i].action = !strcmp(rtype(r, "action", "add"), "sub") ? GOFF_ACTION_SUB : GOFF_ACTION_ADD;
@@ -527,8 +545,13 @@ static const char *reverse_module(const Json *jm, Buf *out, char *err, size_t er
     /* LEN */
     if (lens && lens->type == JSON_ARR && lens->n) {
         GoffDeferredLen *dl = xcalloc(lens->n * sizeof *dl);
-        for (i = 0; i < lens->n; i++) { Json *x = lens->v[i]; const char *k = json_str(x, "esd");
-            dl[i].esdid = rid(map, nm, k); dl[i].length = (uint32_t)json_int(x, "length", 0); }
+        for (i = 0; i < lens->n; i++) {
+            Json *x = lens->v[i]; const char *k = json_str(x, "esd"); Json *lj = json_get(x, "length");
+            dl[i].esdid = rid(map, nm, k);
+            if (lj && lj->type == JSON_STR && !strcmp(lj->str, "auto") && dl[i].esdid <= nm)
+                dl[i].length = map[dl[i].esdid - 1].length;
+            else dl[i].length = (uint32_t)json_int(x, "length", 0);
+        }
         e = goff_write_len(w, dl, lens->n); free(dl);
         if (e) { snprintf(err, errsz, "%s", e); return "write LEN"; }
     }
@@ -571,10 +594,12 @@ static const char *reverse_module(const Json *jm, Buf *out, char *err, size_t er
             Json *oj = json_get(end, "offset");
             const char *an = oj && oj->type == JSON_OBJ ? json_str(oj, "anchor") : NULL;
             if (an) { size_t q;
+                int ok_any = 0;
                 for (q = 0; q < nt; q++) {
                     int ok = 0; uint32_t a = anchor_offset(&tx[q], an, &ok);
-                    if (ok) { eo = tx[q].offset + a; break; }
+                    if (ok) { eo = tx[q].offset + a; ok_any = 1; break; }
                 }
+                if (!ok_any) eo = (uint32_t)json_int(oj, "number", 0);
             }
             ge.kind = GOFF_ENTRY_BYID; ge.esdid = rid(map, nm, json_str(end, "esd")); ge.offset = eo;
         }
@@ -602,13 +627,13 @@ static const char *reverse_file(const Json *root, Buf *out, char *err, size_t er
 
 #ifndef GOFFEDIT_NO_MAIN
 int main(int argc, char **argv) {
-    const char *in = NULL, *outname = NULL; int rev = 0, check = 0, i;
+    const char *in = NULL, *outname = NULL; int rev = 0, check = 0, compact = 0, i;
     size_t n = 0; char *data; Buf out = {0}; const char *e;
     for (i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-r")) { rev = 1; continue; }
         if (!strcmp(argv[i], "-o") && i + 1 < argc) { outname = argv[++i]; continue; }
         if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { fprintf(stdout, "usage: goffedit [-r] [-o FILE] FILE\n"); return 0; }
-        if (!strcmp(argv[i], "--compact")) continue;
+        if (!strcmp(argv[i], "--compact")) { compact = 1; continue; }
         if (!strcmp(argv[i], "--check")) { check = 1; continue; }
         if (argv[i][0] == '-') { fprintf(stderr, "goffedit: unknown option %s\n", argv[i]); return 2; }
         if (in) { fprintf(stderr, "goffedit: more than one input\n"); return 2; }
@@ -632,6 +657,12 @@ int main(int argc, char **argv) {
         for (i = 0; i < (int)f->modules.n; i++) { char *mj = module_json(f->modules.v[i]); if (i) buf_putc(&out, ','); buf_write(&out, mj, strlen(mj)); free(mj); }
         buf_puts(&out, "]}\n");
         goff_file_free(f);
+        if (!compact) {
+            Json *j = json_parse(out.p, out.len, &pe);
+            if (!j) { fprintf(stderr, "goffedit: generated invalid JSON: %s\n", pe ? pe : "?"); free(data); free(out.p); return 1; }
+            { Buf pretty = {0}; json_write(&pretty, j, 1); buf_putc(&pretty, '\n'); free(out.p); out = pretty; }
+            json_free(j);
+        }
     }
     if (check) {
         fprintf(stderr, "goffedit: check ok (%lu bytes)\n", (unsigned long)out.len);

@@ -110,14 +110,18 @@ true length and `length: "auto"` element length are recomputed.
 An `offset` object can use a text anchor:
 
 ```json
-{ "offset": { "anchor": "a2" } }
+{ "offset": { "anchor": "a2", "number": 8 } }
 ```
 
-Anchors are named positions between segments. A user can add an anchor and
-point a label, relocation or entry point at it. The implemented forward
-converter emits text anchors; the current offset fields are emitted as numeric
-offsets so that the first round trip is exact. Add an anchor reference by hand
-when an edit must move a location with the text.
+Anchors are named positions between segments. The forward converter splits
+text at every ESD, relocation and END offset that falls inside it. It writes an
+anchor reference when an anchor is present. The `number` field is a fallback
+for an offset that cannot be anchored, and it also keeps the first round trip
+exact. When an anchor resolves, the reverse converter uses the anchor and
+ignores `number`.
+
+A user can add an anchor and point a label, relocation or entry point at it.
+Inserting bytes before the anchor moves the reference.
 
 ## RLD and LEN
 

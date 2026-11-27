@@ -140,3 +140,41 @@ static void wstr(Buf *b, const char *s, size_t n) {
 }
 void json_put_str(Buf *b, const char *s, size_t n) { wstr(b, s, n); }
 void json_put_cstr(Buf *b, const char *s) { wstr(b, s, s ? strlen(s) : 0); }
+
+static void jw(Buf *b, const Json *j, int pretty, int depth) {
+    size_t i;
+    if (!j) { buf_puts(b, "null"); return; }
+    switch (j->type) {
+    case JSON_NULL: buf_puts(b, "null"); break;
+    case JSON_BOOL: buf_puts(b, j->b ? "true" : "false"); break;
+    case JSON_NUM:
+        if (j->num == (double)(long long)j->num) buf_printf(b, "%lld", (long long)j->num);
+        else buf_printf(b, "%.17g", j->num);
+        break;
+    case JSON_STR: wstr(b, j->str, j->n); break;
+    case JSON_ARR:
+        buf_putc(b, '[');
+        for (i = 0; i < j->n; i++) {
+            if (i) buf_putc(b, ',');
+            if (pretty) { int k; buf_putc(b, '\n'); for (k = 0; k <= depth; k++) buf_puts(b, "  "); }
+            jw(b, j->v[i], pretty, depth + 1);
+        }
+        if (pretty && j->n) { int k; buf_putc(b, '\n'); for (k = 0; k < depth; k++) buf_puts(b, "  "); }
+        buf_putc(b, ']');
+        break;
+    case JSON_OBJ:
+        buf_putc(b, '{');
+        for (i = 0; i < j->n; i++) {
+            int k;
+            if (i) buf_putc(b, ',');
+            if (pretty) { buf_putc(b, '\n'); for (k = 0; k <= depth; k++) buf_puts(b, "  "); }
+            json_put_cstr(b, j->k[i]); buf_putc(b, ':'); if (pretty) buf_putc(b, ' ');
+            jw(b, j->v[i], pretty, depth + 1);
+        }
+        if (pretty && j->n) { int k; buf_putc(b, '\n'); for (k = 0; k < depth; k++) buf_puts(b, "  "); }
+        buf_putc(b, '}');
+        break;
+    }
+}
+
+void json_write(Buf *b, const Json *j, int pretty) { jw(b, j, pretty, 0); }

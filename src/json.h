@@ -22,3 +22,4 @@ int json_bool(const Json *o, const char *key, int def);
 void json_put_str(Buf *b, const char *s, size_t n);
 void json_put_cstr(Buf *b, const char *s);
 #endif
+void json_write(Buf *b, const Json *j, int pretty);

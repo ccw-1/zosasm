@@ -3292,6 +3292,8 @@ goffedit -o old.json old.goff.o
 goffedit -r -o old.new.o old.json
 ```
 
-Text is a sequence of hex segments. `length: "auto"` makes an element length
-follow its text. Anchors name positions in text and can be used by offsets.
-See `docs/GOFFEDIT.md` for the schema and editing rules.
+Text is a sequence of hex segments. The forward converter splits text at
+referenced offsets and emits anchors. A label, relocation or entry point uses
+the anchor, so inserting bytes before it moves the location. `length: "auto"`
+makes an element length follow its text. See `docs/GOFFEDIT.md` for the schema
+and editing rules.

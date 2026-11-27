@@ -7,8 +7,9 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 ## Unreleased
 
 * `goffedit` converts GOFF to semantic JSON and back with `-r`. It uses ESD
-  keys, auto element lengths, text segments, structured IDRs and writer
-  computed record counts. It reads all modules in a file.
+  keys, auto element lengths, editable text anchors, structured IDRs and writer
+  computed record counts. It reads all modules in a file and writes pretty
+  JSON by default.
 * `obj2goff` converts fixed 80-byte OBJ and XOBJ modules to GOFF: sections,
   elements, labels, external references, parts, text, relocations, IDR, LEN
   and END. SYM payloads are preserved in `C_OBJSYM`; `-dwarf` adds a
