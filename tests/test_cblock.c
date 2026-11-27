@@ -387,6 +387,20 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "TRE %r2,%r1");
+    expect("PRNO random builtins",
+           "#pragma cblock a\n"
+           "#pragma cin char *p=%r5, int64_t n=%r6, char *q=%r7\n"
+           "#pragma cout int32_t c=%r4\n"
+           "#pragma cscratch %r0, %r1, %r2, %r3, %r8, %r9\n"
+           "#pragma ctemp %r12, 256, down\n"
+           "#pragma cbegin\n"
+           "c = __trng_available();\n"
+           "c = __prno_query(q);\n"
+           "c = __rng_bytes(p, n);\n"
+           "c = __prno(0x83, q, 0, 0, p, n);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "PRNO %r2,%r8");
     expect("runtime-length TRT EXRL",
            "#pragma cblock a\n"
            "#pragma cin char *a=%r4, char *b=%r5, int32_t n=%r6, char **out=%r7\n"

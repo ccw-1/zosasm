@@ -49,6 +49,10 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
   `dd`/`dl` literals, casts between the decimal widths, and casts between
   decimal and integer values. BFP to DFP and DFP to BFP casts remain
   unsupported.
+* CBLOCK PRNO random-number builtins: `__prno_query`, `__trng_available`,
+  `__prno_trng`, `__rng_available`, `__rng_bytes` and the general
+  `__prno(fc, parm, op1, op1len, op2, op2len)` operation. Function code
+  114 uses the true random number generator.
 * CBLOCK 16-bit `int16_t`/`uint16_t` scalars and pointers, with `LGH`/`LLGH`
   loads, `STH` stores, integer promotion, typed pointer arithmetic, and
   `__lrvh`/`__strvh`.

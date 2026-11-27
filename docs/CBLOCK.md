@@ -617,6 +617,65 @@ concatenated, and the table always ends with a zero byte.
 * Addresses are caller-supplied values. The caller is responsible for AMODE
   and for keeping the ranges valid and writable.
 
+### Random numbers and PRNO
+
+The z/Architecture `PRNO` instruction provides the true random number
+generator (TRNG) function code 114. CBLOCK exposes the raw operation and two
+convenience forms:
+
+| builtin | operation |
+|---|---|
+| `__prno_query(features)` | `PRNO` function code 0; stores the 16-byte feature bitmap |
+| `__trng_available()` | queries PRNO and returns 1 when function code 114 is installed |
+| `__rng_available()` | alias for `__trng_available()` |
+| `__prno_trng(buf, len)` | `PRNO` function code 114; fills `buf` with conditioned entropy |
+| `__rng_bytes(buf, len)` | alias for `__prno_trng()` |
+| `__prno(fc, parm, op1, op1len, op2, op2len)` | general PRNO operation |
+
+`__prno_query`, `__trng_available`, `__rng_bytes` and `__prno` return the
+instruction condition code. Function code 0 returns 0. Function code 114
+returns 0 after a complete fill, 2 when the function is not available, and
+the convenience form retries condition code 3 until the fill completes.
+A pointer argument may be the integer constant `0` when the operation does not
+use that operand.
+
+The builtins use fixed registers, so the CBLOCK must reserve them:
+
+```c
+#pragma cblock rng
+#pragma cin char *buf=%r4, uint64_t len=%r5, char *features=%r6
+#pragma cout int32_t status=%r7
+#pragma cscratch %r0, %r1, %r2, %r3, %r8, %r9
+#pragma ctemp %r12, 256, down
+#pragma cbegin
+    status = __prno_query(features);        /* 16-byte feature bitmap */
+    if (features[14] & 0x20) {              /* function code 114 */
+        status = __rng_bytes(buf, len);     /* fill with TRNG output */
+    } else {
+        status = -1;                        /* TRNG is not installed */
+    }
+#pragma cend
+```
+
+Use `__trng_available()` when the feature bitmap is not otherwise needed:
+
+```c
+if (__trng_available()) {
+    status = __rng_bytes(buf, len);
+}
+```
+
+`__trng_available`, `__rng_bytes` and `__prno` first check facility bit 57,
+message-security-assist extension 5. On z/OS GOFF output they test byte 207
+(the facility list at real location 200), mask `0x40`. With `-elf` they
+execute `STFLE` into the CBLOCK temporary area and test the same bit. If bit 57 is clear, they return 0 for
+`__trng_available` and 2 for the operation builtins without executing
+`PRNO`. Only then does `__trng_available` issue the PRNO-Query and test
+function bit 114. The raw `__prno_query` form makes the same facility check.
+
+The caller supplies writable storage and must keep it valid for the whole
+operation.
+
 ## Debug information
 
 With `-g`, each CBLOCK emits a lexical block and a DWARF variable for every
