@@ -324,6 +324,24 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VSEL %v8,%v10,%v12,%v14");
+    expect("vector floating-point rounding",
+           "#pragma cblock a\n"
+           "#pragma cin __vector double a=%v0\n"
+           "#pragma cout __vector double c=%v2\n"
+           "#pragma cscratch %r2, %r3, %v4, %v6\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_round(a);\n"
+           "c = __vec_roundc(a);\n"
+           "c = __vec_roundm(a);\n"
+           "c = __vec_roundp(a);\n"
+           "c = __vec_roundz(a);\n"
+           "c = __vec_trunc(a);\n"
+           "c = __vec_ceil(a);\n"
+           "c = __vec_floor(a);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VFI %v4,%v6,3,0,1");
     expect("vector float comparisons",
            "#pragma cblock a\n"
            "#pragma cin __vector float a=%v0, __vector float b=%v2\n"

@@ -1049,6 +1049,35 @@ static CBExpr *parse_primary(Parser *p) {
             else e->type = type_of(32, 0);
             return e;
         }
+        if (!strcmp(name, "__vec_round") || !strcmp(name, "__vec_roundc") ||
+            !strcmp(name, "__vec_roundm") || !strcmp(name, "__vec_roundp") ||
+            !strcmp(name, "__vec_roundz") || !strcmp(name, "__vec_trunc") ||
+            !strcmp(name, "__vec_ceil") || !strcmp(name, "__vec_floor")) {
+            CBExpr *e;
+            CBExpr *arg;
+            e = mk_expr(E_CALL, type_of(128, 1), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            arg = parse_assignment(p);
+            if (!arg || !tok_is(l, ')')) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            e->a = arg;
+            if (!arg->type.vec || !arg->type.vfloat ||
+                (arg->type.vbits != 32 && arg->type.vbits != 64)) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s needs a float or double vector", e->name);
+                p->err = 1;
+            } else e->type = arg->type;
+            return e;
+        }
         if (!strcmp(name, "__vec_sqrt")) {
             CBExpr *e;
             CBExpr *arg = NULL;
@@ -4557,6 +4586,32 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             res = alloc_slot(cg);
             asm_line(b, e->line, "LGHI %%r0,0");
             store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_round") || !strcmp(e->name, "__vec_roundc") ||
+            !strcmp(e->name, "__vec_roundm") || !strcmp(e->name, "__vec_roundp") ||
+            !strcmp(e->name, "__vec_roundz") || !strcmp(e->name, "__vec_trunc") ||
+            !strcmp(e->name, "__vec_ceil") || !strcmp(e->name, "__vec_floor")) {
+            int vr, va, mode;
+            if (!eval(cg, e->a, &sa)) return 0;
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            if (vr < 0 || va < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs two cscratch vector registers", e->name);
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            if (!strcmp(e->name, "__vec_round")) mode = 1;
+            else if (!strcmp(e->name, "__vec_roundc")) mode = 0;
+            else if (!strcmp(e->name, "__vec_roundm") || !strcmp(e->name, "__vec_floor")) mode = 7;
+            else if (!strcmp(e->name, "__vec_roundp") || !strcmp(e->name, "__vec_ceil")) mode = 6;
+            else mode = 5;
+            asm_line(b, e->line, "VFI %%v%d,%%v%d,%d,0,%d", vr, va,
+                     e->a->type.vbits == 32 ? 2 : 3, mode);
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
             *slotp = res;
             return 1;
         }
