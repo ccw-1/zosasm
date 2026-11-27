@@ -231,6 +231,12 @@ static CType vec_scalar_type(const char *suffix) {
     return type_of(32, 0);
 }
 
+static int vec_element_type(const char *suffix, CType *t) {
+    if (!strcmp(suffix, "b4")) { *t = type_vec(32, 0, 0, 1); return 1; }
+    if (!strcmp(suffix, "b8")) { *t = type_vec(64, 0, 0, 1); return 1; }
+    return vec_suffix_type(suffix, t);
+}
+
 static int vec_suffix_code(const char *suffix) {
     if (!strcmp(suffix, "s1") || !strcmp(suffix, "u1")) return 0;
     if (!strcmp(suffix, "s2") || !strcmp(suffix, "u2")) return 1;
@@ -1076,6 +1082,39 @@ static CBExpr *parse_primary(Parser *p) {
                          "%s needs a float or double vector", e->name);
                 p->err = 1;
             } else e->type = arg->type;
+            return e;
+        }
+        if (!strncmp(name, "__vec_gather_element_", 21) ||
+            !strncmp(name, "__vec_scatter_element_", 22)) {
+            CBExpr *e;
+            CBExpr *args[4] = {0, 0, 0, 0};
+            const char *suffix;
+            CType vt;
+            int gather = !strncmp(name, "__vec_gather_element_", 21);
+            suffix = gather ? name + 21 : name + 22;
+            if (!vec_element_type(suffix, &vt)) {
+                cb_error(p->b, line, col, "ZA5002", "unsupported gather/scatter suffix");
+                p->err = 1; free(name); return NULL;
+            }
+            e = mk_expr(E_CALL, gather ? vt : type_of(32, 0), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, 4)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1]; e->c = args[2]; e->d = args[3];
+            if (!e->a->type.vec || !e->b->type.vec || !e->c->type.ptr ||
+                e->d->type.ptr || e->d->type.flt || e->d->type.vec) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s needs a vector, an index vector, a pointer and a constant mask", e->name);
+                p->err = 1;
+            }
             return e;
         }
         if (!strcmp(name, "__vec_msum_u128")) {
@@ -4926,6 +4965,47 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
                      e->a->type.vbits == 32 ? 2 : 3, mode);
             res = alloc_slots(cg, 2);
             store_vec_slot(b, e->line, res, vr);
+            *slotp = res;
+            return 1;
+        }
+        if (!strncmp(e->name, "__vec_gather_element_", 21) ||
+            !strncmp(e->name, "__vec_scatter_element_", 22)) {
+            int vr, vi, ra;
+            int64_t mask;
+            int gather = !strncmp(e->name, "__vec_gather_element_", 21);
+            int is64 = strstr(e->name, "_s8") || strstr(e->name, "_u8") ||
+                       strstr(e->name, "_b8") || strstr(e->name, "_f8");
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp) || !eval(cg, e->c, &sc))
+                return 0;
+            if (!const_eval(e->d, &mask) || mask < 0 || mask > 3) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs a constant mask 0 to 3", e->name);
+                return 0;
+            }
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            vi = pick_vr4(b, vr, -1, -1, -1);
+            ra = pick_addr(b, 0, 0);
+            if (vr < 0 || vi < 0 || ra < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs two vector and one address register", e->name);
+                return 0;
+            }
+            load_vec_slot(b, e->line, sp, vi);
+            load_slot(b, e->line, sc, type_ptr(), ra);
+            if (gather) {
+                load_vec_slot(b, e->line, sa, vr);
+                asm_line(b, e->line, "%s %%v%d,0(%%v%d,%%r%d),%lld",
+                         is64 ? "VGEG" : "VGEF", vr, vi, ra, (long long)mask);
+                res = alloc_slots(cg, 2);
+                store_vec_slot(b, e->line, res, vr);
+            } else {
+                load_vec_slot(b, e->line, sa, vr);
+                asm_line(b, e->line, "%s %%v%d,0(%%v%d,%%r%d),%lld",
+                         is64 ? "VSCEG" : "VSCEF", vr, vi, ra, (long long)mask);
+                res = alloc_slot(cg);
+                asm_line(b, e->line, "LGHI %%r0,0");
+                store_slot(b, e->line, res, type_of(32, 0), 0);
+            }
             *slotp = res;
             return 1;
         }

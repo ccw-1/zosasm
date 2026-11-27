@@ -324,6 +324,18 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VSEL %v8,%v10,%v12,%v14");
+    expect("vector gather and scatter element",
+           "#pragma cblock a\n"
+           "#pragma cin __vector signed int a=%v0, __vector unsigned int idx=%v2, int32_t *p=%r2\n"
+           "#pragma cout __vector signed int c=%v4\n"
+           "#pragma cscratch %r3, %r4, %v6, %v8\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_gather_element_s4(a, idx, p, 0);\n"
+           "__vec_scatter_element_s4(c, idx, p, 1);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VGEF %v6,0(%v8,%r3),0");
     expect("vector FP test data class",
            "#pragma cblock a\n"
            "#pragma cin __vector double a=%v0\n"
