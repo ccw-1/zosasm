@@ -347,6 +347,16 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VREP %v4,%v6,1,2");
+    expect("vector immediate splat",
+           "#pragma cblock a\n"
+           "#pragma cout __vector unsigned int c=%v0\n"
+           "#pragma cscratch %r2, %r3, %v2\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_splat_u32_(7);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VREPI %v2,7,2");
     expect("vector population count",
            "#pragma cblock a\n"
            "#pragma cin __vector unsigned int a=%v0\n"

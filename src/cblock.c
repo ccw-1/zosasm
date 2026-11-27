@@ -1606,6 +1606,38 @@ static CBExpr *parse_primary(Parser *p) {
             }
             return e;
         }
+        if (!strcmp(name, "__vec_splat_s8_") || !strcmp(name, "__vec_splat_s16_") ||
+            !strcmp(name, "__vec_splat_s32_") || !strcmp(name, "__vec_splat_s64_") ||
+            !strcmp(name, "__vec_splat_u8_") || !strcmp(name, "__vec_splat_u16_") ||
+            !strcmp(name, "__vec_splat_u32_") || !strcmp(name, "__vec_splat_u64_")) {
+            CBExpr *e;
+            CBExpr *arg;
+            int bits = strstr(name, "s8_") || strstr(name, "u8_") ? 8 :
+                       strstr(name, "s16_") || strstr(name, "u16_") ? 16 :
+                       strstr(name, "s32_") || strstr(name, "u32_") ? 32 : 64;
+            int unsig = strstr(name, "_u") != NULL;
+            e = mk_expr(E_CALL, type_vec(bits, unsig, 0, 0), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            arg = parse_assignment(p);
+            if (!arg || !tok_is(l, ')')) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            e->a = arg;
+            if (arg->type.ptr || arg->type.flt || arg->type.vec) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s needs an integer immediate", e->name);
+                p->err = 1;
+            }
+            return e;
+        }
         if (!strcmp(name, "__vec_popcnt")) {
             CBExpr *e;
             CBExpr *arg;
@@ -5891,6 +5923,31 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
                      !strcmp(e->name, "__vec_ctd") ? "VCDG" :
                      !strcmp(e->name, "__vec_ctsl") ? "VCGD" : "VCLGD",
                      vr, va, (long long)mode);
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_splat_s8_") || !strcmp(e->name, "__vec_splat_s16_") ||
+            !strcmp(e->name, "__vec_splat_s32_") || !strcmp(e->name, "__vec_splat_s64_") ||
+            !strcmp(e->name, "__vec_splat_u8_") || !strcmp(e->name, "__vec_splat_u16_") ||
+            !strcmp(e->name, "__vec_splat_u32_") || !strcmp(e->name, "__vec_splat_u64_")) {
+            int vr, elem;
+            int64_t imm;
+            if (!const_eval(e->a, &imm) || imm < -32768 || imm > 65535) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs a constant immediate", e->name);
+                return 0;
+            }
+            elem = e->type.vbits == 8 ? 0 : e->type.vbits == 16 ? 1 :
+                   e->type.vbits == 32 ? 2 : 3;
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            if (vr < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs a cscratch vector register", e->name);
+                return 0;
+            }
+            asm_line(b, e->line, "VREPI %%v%d,%lld,%d", vr, (long long)imm, elem);
             res = alloc_slots(cg, 2);
             store_vec_slot(b, e->line, res, vr);
             *slotp = res;
