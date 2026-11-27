@@ -324,6 +324,17 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VSEL %v8,%v10,%v12,%v14");
+    expect("vector 128-bit sum",
+           "#pragma cblock a\n"
+           "#pragma cin __vector unsigned int a=%v0, __vector unsigned int b=%v2\n"
+           "#pragma cout __vector unsigned char c=%v4\n"
+           "#pragma cscratch %r2, %r3, %v6, %v8, %v10\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_sum_u128(a, b);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VSUMQ %v6,%v8,%v10,2");
     expect("vector sum across elements",
            "#pragma cblock a\n"
            "#pragma cin __vector unsigned short a=%v0, __vector unsigned short b=%v2\n"
