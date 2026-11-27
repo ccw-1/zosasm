@@ -2584,6 +2584,15 @@ when there are errors, but the listing and the diagnostics are returned.
 **`zosasm_dump`** prints the records of a GOFF object (`-dump`). Arguments:
 `path` or `object_base64`. Result: `dump`. ELF objects are not read.
 
+**`zosasm_obj2goff`** converts an OBJ or XOBJ module to GOFF. Arguments:
+`path` or `object_base64`, `no_sym`. Result: `object_base64`, `size`,
+`diagnostics`.
+
+**`zosasm_goffedit`** converts GOFF to editable JSON, or JSON back to GOFF
+with `reverse: true`. Arguments: `path` or `object_base64` for forward mode,
+`json` for reverse mode, `compact`. Result: `json` or `object_base64`, plus
+`diagnostics`.
+
 **`zosasm_disasm`** turns a GOFF object back into source (`-disasm`).
 Arguments: `path` or `object_base64`, `generic` (`-generic`),
 `strict_registers`. Result: `source`, `diagnostics`.

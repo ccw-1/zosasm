@@ -226,6 +226,8 @@ AI agents can generate z/OS object files (GOFF, or ELF64 s390x for Linux on Z) f
 * assemble zosasm (`.za`) source into a GOFF object (`zosasm_assemble`),
 * preprocess source (`zosasm_preprocess`),
 * dump the structure of a GOFF object (`zosasm_dump`),
+* convert older OBJ/XOBJ objects to GOFF (`zosasm_obj2goff`),
+* convert GOFF to editable JSON and back (`zosasm_goffedit`),
 * turn a GOFF object back into source (`zosasm_disasm`),
 * convert existing HLASM source (`.asm`) to zosasm source (`zosasm_convert_hlasm`),
 * read the user's guide (`zosasm_guide`, `zosasm://guide` resource).
