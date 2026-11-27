@@ -21,7 +21,7 @@ make                              # build zosasm,hlasm2za,zafmt,zosasm-mcp
 
 build/hlasm2za old.asm            # HLASM source -> old.za (zosasm source)
 build/zosasm -o old.o old.za      # assemble old.za -> GOFF object
-build/zosasm -dump old.o          # print the GOFF structure (ESD/TXT/RLD/END)
+build/zosasm -dump old.o          # print GOFF HDR/ESD/TXT/RLD/LEN/END, IDRL
 build/zosasm -disasm old.o -o back.za   # GOFF object -> zosasm source
 ```
 
@@ -106,7 +106,7 @@ Guide: `docs/GUIDE.md` section 16; `DESIGN.md` section 16.
 
 ```sh
 build/zosasm -o hello.o testdata/hello.za   # assemble
-build/zosasm -dump hello.o                  # machine-readable GOFF structure
+build/zosasm -dump hello.o                  # machine-readable GOFF structure, IDRL and attributes
 build/zosasm -dump-readable -insn hello.o   # readable hex + instructions
 build/zosasm -disasm hello.o -o back.za     # GOFF object -> zosasm source
 build/zosasm -E prog.za                     # show the preprocessed source

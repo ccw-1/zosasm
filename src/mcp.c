@@ -1924,8 +1924,9 @@ static const char *tools_json(void) {
     /* zosasm_dump */
     buf_puts(&b,
         "{\"name\":\"zosasm_dump\",\"title\":\"Print the structure of a GOFF object\","
-        "\"description\":\"Print the records of a z/OS GOFF object file (zosasm -dump): ESD items "
-        "(sections, classes, labels, external references) with their attributes, text, relocations and "
+        "\"description\":\"Print the records of a z/OS GOFF object file (zosasm -dump): HDR "
+        "properties, ESD items (sections, classes, labels, external references) with all behavioral "
+        "attributes, text with style and encoding, translator IDs, relocations, deferred lengths and "
         "the END record. INPUT: exactly one of 'path' (an object file) or 'object_base64' (the bytes of "
         "an object, for example from zosasm_assemble). OUTPUT: 'dump' (text). Only GOFF is read, not ELF "
         "(use readelf for that). Guide section 12.1 (@GUIDE@).\","
