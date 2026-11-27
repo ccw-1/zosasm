@@ -324,6 +324,17 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VSEL %v8,%v10,%v12,%v14");
+    expect("vector load pair",
+           "#pragma cblock a\n"
+           "#pragma cin int64_t x=%r2, int64_t y=%r3\n"
+           "#pragma cout __vector signed long long c=%v0\n"
+           "#pragma cscratch %r4, %r5, %v2, %v4\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_load_pair_s8(x, y);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VL %v2,");
     expect("vector bit permute",
            "#pragma cblock a\n"
            "#pragma cin __vector unsigned char a=%v0, __vector unsigned char b=%v2\n"

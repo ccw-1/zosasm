@@ -1078,6 +1078,30 @@ static CBExpr *parse_primary(Parser *p) {
             } else e->type = arg->type;
             return e;
         }
+        if (!strcmp(name, "__vec_load_pair_s8") || !strcmp(name, "__vec_load_pair_u8")) {
+            CBExpr *e;
+            CBExpr *args[2] = {0, 0};
+            e = mk_expr(E_CALL, type_vec(64, name[strlen(name) - 2] == 'u', 0, 0), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, 2)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1];
+            if (e->a->type.ptr || e->a->type.vec || e->a->type.flt ||
+                e->b->type.ptr || e->b->type.vec || e->b->type.flt) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s needs two integer scalars", e->name);
+                p->err = 1;
+            }
+            return e;
+        }
         if (!strcmp(name, "__vec_bperm")) {
             CBExpr *e;
             CBExpr *args[2] = {0, 0};
@@ -4634,6 +4658,26 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             else mode = 5;
             asm_line(b, e->line, "VFI %%v%d,%%v%d,%d,0,%d", vr, va,
                      e->a->type.vbits == 32 ? 2 : 3, mode);
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_load_pair_s8") || !strcmp(e->name, "__vec_load_pair_u8")) {
+            int vr, tmp;
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            tmp = alloc_slots(cg, 2);
+            if (vr < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs a vector register", e->name);
+                return 0;
+            }
+            load_slot(b, e->line, sa, e->a->type, 0);
+            asm_line(b, e->line, "STG %%r0,%ld(%%r%d)", slot_off(b, tmp), b->temp_reg);
+            load_slot(b, e->line, sp, e->b->type, 0);
+            asm_line(b, e->line, "STG %%r0,%ld(%%r%d)", slot_off(b, tmp + 1), b->temp_reg);
+            asm_line(b, e->line, "VL %%v%d,%ld(%%r%d)", vr, slot_off(b, tmp), b->temp_reg);
             res = alloc_slots(cg, 2);
             store_vec_slot(b, e->line, res, vr);
             *slotp = res;
