@@ -559,7 +559,7 @@ The element types are `char`, `short`, `int`, `long long`, `float` and
 builtin suffixes. Vector select, permute, permute-doubleword-immediate, integer
 ordered/equal compares, max, min, average, scalar element
 extract/insert/promote, pack/unpack, merge, checksum, bit counts, the main shift forms, rotations and double
-shifts including word-count double shifts, floating data-class tests, gather/scatter elements, element splats, float/double and integer conversions, carry/borrow vectors, rounding conversions, sign extension, absolute values, 128-bit add/subtract and carry results, all/any equality reductions, multiply even/odd/high,
+shifts including word-count double shifts, floating data-class tests, gather/scatter elements, element splats, float/double and integer conversions, carry/borrow vectors, rounding conversions, sign extension, absolute values, 128-bit add/subtract and carry results, all/any equality reductions, multiply even/odd/high, FP multiply-add/subtract,
 the boolean logic forms, floating-point square root, floating
 comparisons, rounding, bit permutation, the 64-bit load-pair form and GF
 multiply-sum, its accumulator form, the sum2/sum4/128-bit sum forms and indexed vector load/store, mask generation/testing the GF-128 forms and VMSL 128-bit multiply-sum are implemented. Vector arithmetic and the remaining

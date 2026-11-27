@@ -347,6 +347,20 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VREP %v4,%v6,1,2");
+    expect("vector FP multiply-add/subtract",
+           "#pragma cblock a\n"
+           "#pragma cin __vector float a=%v0, __vector float b=%v2, __vector float c0=%v4\n"
+           "#pragma cout __vector float c=%v6\n"
+           "#pragma cscratch %r2, %r3, %v8, %v10, %v12, %v14\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_madd(a, b, c0);\n"
+           "c = __vec_msub(a, b, c0);\n"
+           "c = __vec_nmadd(a, b, c0);\n"
+           "c = __vec_nmsub(a, b, c0);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VFMA %v8,%v10,%v12,%v14,0,2");
     expect("vector multiply even/high/odd",
            "#pragma cblock a\n"
            "#pragma cin __vector unsigned short a=%v0, __vector unsigned short b=%v2\n"
