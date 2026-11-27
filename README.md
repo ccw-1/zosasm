@@ -17,11 +17,13 @@ Three workflows are supported:
 ## Quick start: convert HLASM to a GOFF object
 
 ```sh
-make                              # build zosasm,hlasm2za,zafmt,zosasm-mcp
+make                              # build all tools
 
 build/hlasm2za old.asm            # HLASM source -> old.za (zosasm source)
 build/zosasm -o old.o old.za      # assemble old.za -> GOFF object
 build/obj2goff -o old.goff.o old.obj  # OBJ/XOBJ -> GOFF
+build/goffedit -o old.json old.goff.o  # GOFF -> editable JSON
+build/goffedit -r -o old.goff.o old.json  # JSON -> GOFF
 build/zosasm -dump old.o          # print GOFF HDR/ESD/TXT/RLD/LEN/END, IDRL
 build/zosasm -disasm old.o -o back.za   # GOFF object -> zosasm source
 ```
@@ -272,6 +274,7 @@ the object and writes no `.dbg` file.
   (section 5), diagnostics, tests.
 * `docs/CBLOCK.md` - inline C blocks (`#pragma cblock`), experimental.
 * `docs/OBJ2GOFF.md` - convert older OBJ and XOBJ objects to GOFF.
+* `docs/GOFFEDIT.md` - edit GOFF through semantic JSON.
 * `PLAN.md` - status and open work.
 * `CBLOCK-DESIGN.md` - original CBLOCK design plan.
 
