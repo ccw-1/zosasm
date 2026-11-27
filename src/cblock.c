@@ -991,6 +991,48 @@ static CBExpr *parse_primary(Parser *p) {
             }
             return e;
         }
+        if (!strcmp(name, "__tre") || !strcmp(name, "__srstu") ||
+            !strcmp(name, "__troo") || !strcmp(name, "__trot") ||
+            !strcmp(name, "__trto") || !strcmp(name, "__trtt")) {
+            CBExpr *e;
+            CBExpr *args[6] = {0, 0, 0, 0, 0, 0};
+            int is_tr = strcmp(name, "__tre") && strcmp(name, "__srstu");
+            int is_tre = !strcmp(name, "__tre");
+            int argc = is_tr ? 6 : 4;
+            e = mk_expr(E_CALL, type_of(32, 0), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, argc)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1]; e->c = args[2]; e->d = args[3];
+            if (is_tr) { e->arg5 = args[4]; e->num = args[5]->num; cblock_expr_free(args[5]); }
+            {
+                int bad = 0;
+                if (is_tre) {
+                    if (!e->a->type.ptr || e->b->type.ptr || !e->c->type.ptr || e->d->type.ptr) bad = 1;
+                } else if (!strcmp(e->name, "__srstu")) {
+                    if (!e->a->type.ptr || !e->b->type.ptr || e->c->type.ptr || !e->d->type.ptr) bad = 1;
+                } else {
+                    if (!e->a->type.ptr || !e->b->type.ptr || e->c->type.ptr ||
+                        !e->d->type.ptr || e->arg5->type.ptr || e->arg5->type.flt ||
+                        e->num < 0 || e->num > 15) bad = 1;
+                }
+                if (bad) {
+                    cb_error(p->b, line, col, "ZA5003",
+                             "%s needs string pointers, an integer length%s", e->name,
+                             is_tr ? ", a test character and a constant mask 0..15" : "");
+                    p->err = 1;
+                }
+            }
+            return e;
+        }
         if (!strcmp(name, "__edmk") || !strcmp(name, "__trt") || !strcmp(name, "__trtr")) {
             CBExpr *e;
             CBExpr *args[5] = {0, 0, 0, 0, 0};
@@ -5035,7 +5077,65 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             *slotp = res;
             return 1;
         }
-            if (!strcmp(e->name, "__edmk") || !strcmp(e->name, "__trt") || !strcmp(e->name, "__trtr")) {
+            if (!strcmp(e->name, "__tre") || !strcmp(e->name, "__srstu") ||
+            !strcmp(e->name, "__troo") || !strcmp(e->name, "__trot") ||
+            !strcmp(e->name, "__trto") || !strcmp(e->name, "__trtt")) {
+            int need[4] = {0, 0, 0, 0}, nneed = 4, i;
+            const char *ins = NULL;
+            int is_tre = !strcmp(e->name, "__tre");
+            int is_srstu = !strcmp(e->name, "__srstu");
+            if (is_tre) { need[0]=0; need[1]=1; need[2]=2; need[3]=3; ins="TRE"; }
+            else if (is_srstu) { need[0]=2; need[1]=3; need[2]=0; need[3]=1; ins="SRSTU"; }
+            else { need[0]=0; need[1]=1; need[2]=2; need[3]=5; }
+            for (i = 0; i < nneed; i++) {
+                int j, ok = 0;
+                for (j = 0; j < b->nscratch; j++) if (b->scratch[j] == need[i]) ok = 1;
+                if (!ok) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "%s needs %%r%d in cscratch", e->name, need[i]);
+                    return 0;
+                }
+            }
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp) ||
+                !eval(cg, e->c, &sl) || !eval(cg, e->d, &sd) ||
+                (!is_tre && !is_srstu && !eval(cg, e->arg5, &sc))) return 0;
+            if (is_tre) {
+                load_slot(b, e->line, sa, type_ptr(), 2);
+                load_slot(b, e->line, sp, e->b->type, 3);
+                load_slot(b, e->line, sl, type_ptr(), 1);
+                load_slot(b, e->line, sd, e->d->type, 0);
+                asm_line(b, e->line, "TRE %%r2,%%r1");
+            } else if (is_srstu) {
+                load_slot(b, e->line, sa, type_ptr(), 2);
+                load_slot(b, e->line, sp, type_ptr(), 3);
+                load_slot(b, e->line, sl, e->c->type, 0);
+                load_slot(b, e->line, sd, type_ptr(), 1);
+                asm_line(b, e->line, "SRSTU %%r2,%%r3");
+            } else {
+                load_slot(b, e->line, sa, type_ptr(), 2);
+                load_slot(b, e->line, sp, type_ptr(), 5);
+                load_slot(b, e->line, sl, e->c->type, 3);
+                load_slot(b, e->line, sd, type_ptr(), 1);
+                load_slot(b, e->line, sc, e->arg5->type, 0);
+                if (!strcmp(e->name, "__troo")) ins = "TROO";
+                else if (!strcmp(e->name, "__trot")) ins = "TROT";
+                else if (!strcmp(e->name, "__trto")) ins = "TRTO";
+                else ins = "TRTT";
+                asm_line(b, e->line, "%s %%r2,%%r5,%d", ins, (int)e->num);
+            }
+            asm_line(b, e->line, "BRO *-4");
+            if (is_srstu) {
+                asm_line(b, e->line, "LGR %%r0,%%r2");
+                asm_line(b, e->line, "STG %%r0,0(%%r1)");
+            }
+            asm_line(b, e->line, "IPM %%r0");
+            asm_line(b, e->line, "SRL %%r0,28");
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__edmk") || !strcmp(e->name, "__trt") || !strcmp(e->name, "__trtr")) {
             int ra, rb, rl, ro, rc = -1;
             char *templ = new_label(b), *end = new_label(b);
             int has1 = 0, has2 = 0, i;

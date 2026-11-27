@@ -347,6 +347,19 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VREP %v4,%v6,1,2");
+    expect("TRE/SRSTU/TRxx runtime strings",
+           "#pragma cblock a\n"
+           "#pragma cin char *a=%r4, char *b=%r9, int32_t n=%r11, char **out=%r7\n"
+           "#pragma cout int32_t c=%r6\n"
+           "#pragma cscratch %r0, %r1, %r2, %r3, %r5\n"
+           "#pragma ctemp %r12, 1024, down\n"
+           "#pragma cbegin\n"
+           "c = __tre(a, n, b, 0);\n"
+           "c = __srstu(a, b, 65, out);\n"
+           "c = __troo(a, b, n, a, 1, 0);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "TRE %r2,%r1");
     expect("runtime-length TRT EXRL",
            "#pragma cblock a\n"
            "#pragma cin char *a=%r4, char *b=%r5, int32_t n=%r6, char **out=%r7\n"
