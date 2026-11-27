@@ -12,7 +12,7 @@ typedef struct {
     Reporter *rep;
 } Out;
 
-static Out run_pp(const char *src) {
+static Out run_pp_mode(const char *src, int elf) {
     PpOptions o;
     SrcVec lines = {0};
     Reporter *rep = rep_new(0);
@@ -20,6 +20,7 @@ static Out run_pp(const char *src) {
     size_t i;
     Out out;
     memset(&o, 0, sizeof o);
+    o.elf = elf;
     rep_add_source(rep, "t.za", src, strlen(src));
     pp_run("t.za", src, strlen(src), &o, rep, &lines);
     for (i = 0; i < lines.n; i++) {
@@ -36,6 +37,9 @@ static Out run_pp(const char *src) {
     return out;
 }
 
+static Out run_pp(const char *src) { return run_pp_mode(src, 0); }
+static Out run_pp_elf(const char *src) { return run_pp_mode(src, 1); }
+
 static void expect(const char *name, const char *src, const char *want_codes, const char *needle) {
     Out o = run_pp(src);
     CHECK_MSG(!strcmp(o.codes, want_codes), "%s: codes \"%s\", want \"%s\"", name, o.codes,
@@ -47,6 +51,26 @@ static void expect(const char *name, const char *src, const char *want_codes, co
     rep_free(o.rep);
 }
 
+
+static void test_prno_elf(void) {
+    const char *src =
+        "#pragma cblock rng\n"
+        "#pragma cout int32_t c=%r4\n"
+        "#pragma cscratch %r0, %r1, %r2, %r3, %r8, %r9\n"
+        "#pragma ctemp %r12, 256, down\n"
+        "#pragma cbegin\n"
+        "c = __trng_available();\n"
+        "#pragma cend\n"
+        " END\n";
+    Out o = run_pp_elf(src);
+    CHECK_STR(o.codes, "");
+    CHECK_MSG(strstr(o.text, "STFLE 0(%r1)") != NULL, "ELF check does not use STFLE: %s", o.text);
+    CHECK_MSG(strstr(o.text, "TM 7(%r1),64") != NULL, "ELF check does not test facility bit: %s", o.text);
+    CHECK_MSG(strstr(o.text, "TM 207,64") == NULL, "ELF check uses the MVS location 200 shortcut: %s", o.text);
+    free(o.text);
+    free(o.codes);
+    rep_free(o.rep);
+}
 
 static void test_arch_builtins(void) {
     const char *src =
@@ -1418,6 +1442,7 @@ int main(void) {
            "#pragma cbegin\n"
            " END\n",
            "ZA5001", NULL);
+    test_prno_elf();
     test_arch_builtins();
     test_atomic_builtins();
     test_decimal_builtins();
