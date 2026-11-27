@@ -364,6 +364,17 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VGFMG %v8,%v10,%v12");
+    expect("vector multiply sum logical 128-bit",
+           "#pragma cblock a\n"
+           "#pragma cin __vector unsigned long long a=%v0, __vector unsigned long long b=%v2, __vector unsigned char c0=%v4\n"
+           "#pragma cout __vector unsigned char c=%v6\n"
+           "#pragma cscratch %r2, %r3, %v8, %v10, %v12, %v14\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_msum_u128(a, b, c0, 1);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VMSL %v8,%v10,%v12,%v14,3,1");
     expect("vector 128-bit sum",
            "#pragma cblock a\n"
            "#pragma cin __vector unsigned int a=%v0, __vector unsigned int b=%v2\n"

@@ -1078,6 +1078,32 @@ static CBExpr *parse_primary(Parser *p) {
             } else e->type = arg->type;
             return e;
         }
+        if (!strcmp(name, "__vec_msum_u128")) {
+            CBExpr *e;
+            CBExpr *args[4] = {0, 0, 0, 0};
+            e = mk_expr(E_CALL, type_vec(8, 1, 0, 0), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, 4)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1]; e->c = args[2]; e->d = args[3];
+            if (!e->a->type.vec || !e->b->type.vec || !e->c->type.vec ||
+                e->a->type.vbits != 64 || e->b->type.vbits != 64 ||
+                e->c->type.vbits != 8 || e->d->type.ptr ||
+                e->d->type.flt || e->d->type.vec) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "__vec_msum_u128 needs two 64-bit vectors, a byte accumulator and a mask");
+                p->err = 1;
+            }
+            return e;
+        }
         if (!strcmp(name, "__vec_sum_u128")) {
             CBExpr *e;
             CBExpr *args[2] = {0, 0};
@@ -4848,6 +4874,35 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             else mode = 5;
             asm_line(b, e->line, "VFI %%v%d,%%v%d,%d,0,%d", vr, va,
                      e->a->type.vbits == 32 ? 2 : 3, mode);
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_msum_u128")) {
+            int vr, va, vb, vacc;
+            int64_t mask;
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp) ||
+                !eval(cg, e->c, &sc)) return 0;
+            if (!const_eval(e->d, &mask) || mask < 0 || mask > 3) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "__vec_msum_u128 needs a constant mask 0 to 3");
+                return 0;
+            }
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            vb = pick_vr4(b, vr, va, -1, -1);
+            vacc = pick_vr4(b, vr, va, vb, -1);
+            if (vr < 0 || va < 0 || vb < 0 || vacc < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "__vec_msum_u128 needs four cscratch vector registers");
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            load_vec_slot(b, e->line, sp, vb);
+            load_vec_slot(b, e->line, sc, vacc);
+            asm_line(b, e->line, "VMSL %%v%d,%%v%d,%%v%d,%%v%d,3,%lld",
+                     vr, va, vb, vacc, (long long)mask);
             res = alloc_slots(cg, 2);
             store_vec_slot(b, e->line, res, vr);
             *slotp = res;
