@@ -28,6 +28,17 @@ build/zosasm -dump old.o          # print GOFF HDR/ESD/TXT/RLD/LEN/END, IDRL
 build/zosasm -disasm old.o -o back.za   # GOFF object -> zosasm source
 ```
 
+### goffedit caveats
+
+`goffedit` is a semantic editor, not a byte-for-byte recorder. ESDIDs and
+physical record order are regenerated, and a no-edit round trip preserves the
+object semantics rather than the original byte stream. Offset anchors have a
+numeric fallback. Unknown reserved fields, RLD extension data, IDR format 2
+and an explicit END record count are not yet fully preserved. The JSON reader
+and writer hold the complete document in memory, and text is stored as hex.
+See `docs/GOFFEDIT.md` and `docs/GOFFEDIT-DESIGN.md` for the full caveats and
+future-work list.
+
 ## Building
 
 ```sh
