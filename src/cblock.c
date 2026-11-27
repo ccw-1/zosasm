@@ -1037,6 +1037,35 @@ static CBExpr *parse_primary(Parser *p) {
             else e->type = type_of(32, 0);
             return e;
         }
+        if (!strcmp(name, "__vec_cmpge") || !strcmp(name, "__vec_cmpge_8") ||
+            !strcmp(name, "__vec_cmpgt") || !strcmp(name, "__vec_cmpgt_8") ||
+            !strcmp(name, "__vec_cmple") || !strcmp(name, "__vec_cmple_8") ||
+            !strcmp(name, "__vec_cmplt") || !strcmp(name, "__vec_cmplt_8")) {
+            CBExpr *e;
+            CBExpr *args[2] = {0, 0};
+            e = mk_expr(E_CALL, type_of(128, 1), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, 2)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1];
+            if (!e->a->type.vec || !e->b->type.vec || e->a->type.vfloat ||
+                e->a->type.vbool) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s needs two integer vector arguments", e->name);
+                p->err = 1;
+            } else {
+                e->type = type_vec(e->a->type.vbits, 0, 0, 1);
+            }
+            return e;
+        }
         if (!strcmp(name, "__vec_cmpeq") || !strcmp(name, "__vec_cmpeq_8")) {
             CBExpr *e;
             CBExpr *args[2] = {0, 0};
@@ -4196,6 +4225,42 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             res = alloc_slot(cg);
             asm_line(b, e->line, "LGHI %%r0,0");
             store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_cmpge") || !strcmp(e->name, "__vec_cmpge_8") ||
+            !strcmp(e->name, "__vec_cmpgt") || !strcmp(e->name, "__vec_cmpgt_8") ||
+            !strcmp(e->name, "__vec_cmple") || !strcmp(e->name, "__vec_cmple_8") ||
+            !strcmp(e->name, "__vec_cmplt") || !strcmp(e->name, "__vec_cmplt_8")) {
+            int vr, va, vb, vzero;
+            int elem, invert, swap;
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            vb = pick_vr4(b, vr, va, -1, -1);
+            vzero = pick_vr4(b, vr, va, vb, -1);
+            if (vr < 0 || va < 0 || vb < 0 || vzero < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs four cscratch vector registers", e->name);
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            load_vec_slot(b, e->line, sp, vb);
+            elem = e->a->type.vbits == 8 ? 0 : e->a->type.vbits == 16 ? 1 :
+                   e->a->type.vbits == 32 ? 2 : 3;
+            invert = !strcmp(e->name, "__vec_cmpge") || !strcmp(e->name, "__vec_cmpge_8") ||
+                     !strcmp(e->name, "__vec_cmple") || !strcmp(e->name, "__vec_cmple_8");
+            swap = !strcmp(e->name, "__vec_cmplt") || !strcmp(e->name, "__vec_cmplt_8") ||
+                   !strcmp(e->name, "__vec_cmpge") || !strcmp(e->name, "__vec_cmpge_8");
+            asm_line(b, e->line, "%s %%v%d,%%v%d,%%v%d,%d,0",
+                     e->a->type.vunsig ? "VCHL" : "VCH", vr,
+                     swap ? vb : va, swap ? va : vb, elem);
+            if (invert) {
+                asm_line(b, e->line, "VGBM %%v%d,0", vzero);
+                asm_line(b, e->line, "VNO %%v%d,%%v%d,%%v%d", vr, vr, vzero);
+            }
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
             *slotp = res;
             return 1;
         }
