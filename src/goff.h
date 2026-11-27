@@ -128,10 +128,15 @@ typedef struct {
 } GoffWriter;
 
 GoffWriter *goff_writer_new(uint32_t arch_level);
+GoffWriter *goff_writer_new_header(uint32_t arch_level, uint8_t version,
+                                   const uint8_t *props, size_t nprops);
 /* assigns e->id */
 const char *goff_write_esd(GoffWriter *w, GoffESD *e);
 const char *goff_write_text(GoffWriter *w, uint32_t esdid, uint32_t offset, uint8_t style,
                             const uint8_t *data, size_t n);
+const char *goff_write_text_full(GoffWriter *w, uint32_t esdid, uint32_t offset, uint8_t style,
+                                 uint16_t encoding, uint32_t true_len,
+                                 const uint8_t *data, size_t n);
 const char *goff_write_rld(GoffWriter *w, const GoffReloc *items, size_t n);
 const char *goff_write_len(GoffWriter *w, const GoffDeferredLen *items, size_t n);
 /* finishes the object; the result is owned by the writer */
@@ -181,6 +186,10 @@ typedef struct {
 
 /* Parse an object; returns NULL and sets *err on failure. */
 GoffModule *goff_parse(const uint8_t *b, size_t n, const char **err);
+/* Parse every module in a GOFF file (a file may hold several). */
+typedef struct { Vec(GoffModule *) modules; } GoffFile;
+GoffFile *goff_parse_all(const uint8_t *b, size_t n, const char **err);
+void goff_file_free(GoffFile *f);
 const GoffESD *goff_module_esd(const GoffModule *m, uint32_t id);
 /* Same ESDs, text, relocations, lengths and END? The nskip ESD items of a from
  * skip_a on (skip_a 0 = none) and their text are left out of the comparison. */

@@ -33,6 +33,9 @@ char *dbg_host_path(const DbgOptions *o, const char *path);
  * Returns 1, or 0 and describes the problem in err. */
 int dbg_build(Module *m, const uint8_t *obj, size_t objlen, const DbgOptions *o, DbgResult *r, char *err,
               size_t errsz);
+/* Build the .dbg and its GOFF link module from a caller-filled Dbg state
+ * (used by obj2goff for OBJ SYM/ESD labels). */
+int dbg_build_state(void *dbg, DbgResult *r, char *err, size_t errsz);
 
 /* ELF form (-elf -g): the DWARF sections, to be added to the ELF object as sections of their own.
  * A relocation refers to the section of a class (cls) or to another DWARF section (sec, an index

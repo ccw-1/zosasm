@@ -2584,6 +2584,15 @@ when there are errors, but the listing and the diagnostics are returned.
 **`zosasm_dump`** prints the records of a GOFF object (`-dump`). Arguments:
 `path` or `object_base64`. Result: `dump`. ELF objects are not read.
 
+**`zosasm_obj2goff`** converts an OBJ or XOBJ module to GOFF. Arguments:
+`path` or `object_base64`, `no_sym`. Result: `object_base64`, `size`,
+`diagnostics`.
+
+**`zosasm_goffedit`** converts GOFF to editable JSON, or JSON back to GOFF
+with `reverse: true`. Arguments: `path` or `object_base64` for forward mode,
+`json` for reverse mode, `compact`. Result: `json` or `object_base64`, plus
+`diagnostics`.
+
 **`zosasm_disasm`** turns a GOFF object back into source (`-disasm`).
 Arguments: `path` or `object_base64`, `generic` (`-generic`),
 `strict_registers`. Result: `source`, `diagnostics`.
@@ -3242,3 +3251,58 @@ qemu-s390x ./cblock-linux
 
 The reference for the pragmas, types, error codes and current limits is
 `docs/CBLOCK.md`. The design record is `CBLOCK-DESIGN.md`.
+
+---
+
+## 23. Converting old OBJ and XOBJ objects: `obj2goff`
+
+`obj2goff` reads fixed 80-byte object modules with the `X'02'` record prefix
+and writes GOFF. It accepts ordinary OBJ modules and extended object modules
+(XOBJ), including the XSD records that an XOBJ subfile uses.
+
+```text
+obj2goff [-o FILE] [-no-sym] [-dwarf] FILE.obj
+```
+
+`obj2goff old.obj` writes `old.obj.goff.o`. `-dwarf` also writes
+`old.obj.goff.o.dbg` and appends the GOFF link module that names it.
+
+The converter maps sections, elements, labels, external references, parts,
+text, relocations, IDR, deferred lengths and END records. An XOBJ file with
+several subfiles becomes several GOFF modules in one output file.
+
+SYM records have no GOFF equivalent. The converter preserves their raw payload
+in the unloaded class `C_OBJSYM`. With `-dwarf`, it also reads the ESD labels
+and the symbol names and addresses it can recover from SYM and writes a
+best-effort DWARF `.dbg` file. It does not create source line rows, and it
+cannot recover XPLINK or other attributes that OBJ cannot express.
+
+The complete mapping and limits are in `docs/OBJ2GOFF.md`.
+
+---
+
+## 24. Editing GOFF through JSON: `goffedit`
+
+`goffedit` converts GOFF to JSON. `goffedit -r` converts the JSON back to GOFF.
+
+```text
+goffedit [-r] [-o FILE] [--compact] [--check] FILE
+```
+
+The JSON stores names, bytes and symbolic ESD keys. It does not store record
+byte counts or numeric ESDIDs. The reverse converter derives name lengths,
+text lengths, ED and PR lengths, END record counts and final ESDIDs.
+
+Use it to inspect a GOFF object, edit text or names, and rebuild it:
+
+```sh
+goffedit -o old.json old.goff.o
+# edit old.json
+goffedit -r -o old.new.o old.json
+```
+
+Text is a sequence of hex segments. The forward converter splits text at
+referenced offsets and emits anchors. A label, relocation or entry point uses
+the anchor, so inserting bytes before it moves the location. `length: "auto"`
+makes an element length follow its text. See `docs/GOFFEDIT.md` for the schema,
+editing rules and current caveats.

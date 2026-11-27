@@ -17,13 +17,27 @@ Three workflows are supported:
 ## Quick start: convert HLASM to a GOFF object
 
 ```sh
-make                              # build zosasm,hlasm2za,zafmt,zosasm-mcp
+make                              # build all tools
 
 build/hlasm2za old.asm            # HLASM source -> old.za (zosasm source)
 build/zosasm -o old.o old.za      # assemble old.za -> GOFF object
+build/obj2goff -o old.goff.o old.obj  # OBJ/XOBJ -> GOFF
+build/goffedit -o old.json old.goff.o  # GOFF -> editable JSON
+build/goffedit -r -o old.goff.o old.json  # JSON -> GOFF
 build/zosasm -dump old.o          # print GOFF HDR/ESD/TXT/RLD/LEN/END, IDRL
 build/zosasm -disasm old.o -o back.za   # GOFF object -> zosasm source
 ```
+
+### goffedit caveats
+
+`goffedit` is a semantic editor, not a byte-for-byte recorder. ESDIDs and
+physical record order are regenerated, and a no-edit round trip preserves the
+object semantics rather than the original byte stream. Offset anchors have a
+numeric fallback. Unknown reserved fields, RLD extension data, IDR format 2
+and an explicit END record count are not yet fully preserved. The JSON reader
+and writer hold the complete document in memory, and text is stored as hex.
+See `docs/GOFFEDIT.md` and `docs/GOFFEDIT-DESIGN.md` for the full caveats and
+future-work list.
 
 ## Building
 
@@ -212,6 +226,8 @@ AI agents can generate z/OS object files (GOFF, or ELF64 s390x for Linux on Z) f
 * assemble zosasm (`.za`) source into a GOFF object (`zosasm_assemble`),
 * preprocess source (`zosasm_preprocess`),
 * dump the structure of a GOFF object (`zosasm_dump`),
+* convert older OBJ/XOBJ objects to GOFF (`zosasm_obj2goff`),
+* convert GOFF to editable JSON and back (`zosasm_goffedit`),
 * turn a GOFF object back into source (`zosasm_disasm`),
 * convert existing HLASM source (`.asm`) to zosasm source (`zosasm_convert_hlasm`),
 * read the user's guide (`zosasm_guide`, `zosasm://guide` resource).
@@ -270,6 +286,8 @@ the object and writes no `.dbg` file.
 * `DESIGN.md` - design, source syntax, GOFF mapping, instruction table
   (section 5), diagnostics, tests.
 * `docs/CBLOCK.md` - inline C blocks (`#pragma cblock`), experimental.
+* `docs/OBJ2GOFF.md` - convert older OBJ and XOBJ objects to GOFF.
+* `docs/GOFFEDIT.md` - edit GOFF through semantic JSON.
 * `PLAN.md` - status and open work.
 * `CBLOCK-DESIGN.md` - original CBLOCK design plan.
 

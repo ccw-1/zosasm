@@ -1612,6 +1612,110 @@ done:
     tmp_close(&t);
 }
 
+static void tool_obj2goff(const J *args, Buf *out) {
+    Tmp t;
+    const char *msg = NULL;
+    char *f = NULL, *of = NULL, *prog = NULL;
+    ArgVec a = {0};
+    Run r;
+    unsigned char *obj = NULL;
+    size_t n = 0;
+    memset(&r, 0, sizeof r);
+    if (!tmp_open(&t)) { tool_fail(out, "cannot create a temporary directory"); goto done; }
+    f = object_file(&t, args, &msg);
+    if (!f) { tool_fail(out, msg); goto done; }
+    of = (char *)tmp_path(&t, "converted.goff.o");
+    add_arg(&a, "-o"); add_arg(&a, of);
+    if (jbool(args, "no_sym", 0)) add_arg(&a, "-no-sym");
+    add_arg(&a, f);
+    prog = tool_path("obj2goff");
+    run_prog(&t, prog, a.v, a.n, &r);
+    if (r.status == 0) obj = read_binary(of, &n);
+    {
+        Buf text = {0}, st = {0};
+        int first = 1;
+        scrub(&r.err, &t);
+        buf_printf(&text, "obj2goff %s (exit status %d)\n", r.status == 0 ? "succeeded" : "failed", r.status);
+        diag_text(&text, "diagnostics (stderr)", &r.err);
+        buf_putc(&st, '{');
+        w_key(&st, &first, "success"); buf_puts(&st, r.status == 0 && obj ? "true" : "false");
+        if (obj) {
+            Buf b64 = {0};
+            b64_encode(&b64, obj, n);
+            w_key(&st, &first, "object_base64"); w_str(&st, b64.p, b64.len);
+            w_key(&st, &first, "size"); buf_printf(&st, "%lu", (unsigned long)n);
+            free(b64.p);
+        }
+        w_key(&st, &first, "diagnostics");
+        { Buf ecap={0}; text_cap(&ecap, r.err.p ? r.err.p : "", r.err.len); w_str(&st, ecap.p ? ecap.p : "", ecap.len); free(ecap.p); }
+        buf_putc(&st, '}');
+        tool_result(out, buf_cstr(&text), text.len, buf_cstr(&st), r.status != 0 || !obj);
+        free(text.p); free(st.p);
+    }
+done:
+    free(f); free(prog); free_args(&a); free(obj);
+    free(r.out.p); free(r.err.p); tmp_close(&t);
+}
+
+static void tool_goffedit(const J *args, Buf *out) {
+    Tmp t;
+    const char *msg = NULL;
+    char *f = NULL, *of = NULL, *prog = NULL, *jf = NULL;
+    ArgVec a = {0};
+    Run r;
+    unsigned char *obj = NULL, *json = NULL;
+    size_t n = 0;
+    int rev = jbool(args, "reverse", 0);
+    memset(&r, 0, sizeof r);
+    if (!tmp_open(&t)) { tool_fail(out, "cannot create a temporary directory"); goto done; }
+    if (rev) {
+        J *j = jget(args, "json");
+        if (!j || j->t != J_STR) { tool_fail(out, "reverse needs 'json' as a string"); goto done; }
+        jf = (char *)tmp_path(&t, "input.json");
+        if (!write_whole(jf, j->s, j->n)) { tool_fail(out, "cannot write temporary JSON"); goto done; }
+        of = (char *)tmp_path(&t, "converted.goff.o");
+    } else {
+        f = object_file(&t, args, &msg);
+        if (!f) { tool_fail(out, msg); goto done; }
+        of = (char *)tmp_path(&t, "output.json");
+    }
+    add_arg(&a, "-o"); add_arg(&a, of);
+    if (jbool(args, "compact", 0)) add_arg(&a, "--compact");
+    if (rev) { add_arg(&a, "-r"); add_arg(&a, jf); }
+    else add_arg(&a, f);
+    prog = tool_path("goffedit");
+    run_prog(&t, prog, a.v, a.n, &r);
+    if (r.status == 0) {
+        if (rev) obj = read_binary(of, &n);
+        else json = read_binary(of, &n);
+    }
+    {
+        Buf text = {0}, st = {0};
+        int first = 1;
+        scrub(&r.err, &t);
+        buf_printf(&text, "goffedit %s (exit status %d)\n", r.status == 0 ? "succeeded" : "failed", r.status);
+        diag_text(&text, "diagnostics (stderr)", &r.err);
+        buf_putc(&st, '{');
+        w_key(&st, &first, "success"); buf_puts(&st, r.status == 0 && (rev ? obj : json) ? "true" : "false");
+        if (rev && obj) {
+            Buf b64 = {0}; b64_encode(&b64, obj, n);
+            w_key(&st, &first, "object_base64"); w_str(&st, b64.p, b64.len);
+            w_key(&st, &first, "size"); buf_printf(&st, "%lu", (unsigned long)n);
+            free(b64.p);
+        } else if (!rev && json) {
+            w_key(&st, &first, "json"); w_str(&st, (const char *)json, n);
+        }
+        w_key(&st, &first, "diagnostics");
+        { Buf ecap={0}; text_cap(&ecap, r.err.p ? r.err.p : "", r.err.len); w_str(&st, ecap.p ? ecap.p : "", ecap.len); free(ecap.p); }
+        buf_putc(&st, '}');
+        tool_result(out, buf_cstr(&text), text.len, buf_cstr(&st), r.status != 0 || (!obj && !json));
+        free(text.p); free(st.p);
+    }
+done:
+    free(f); free(prog); free_args(&a); free(obj); free(json);
+    free(r.out.p); free(r.err.p); tmp_close(&t);
+}
+
 static void tool_disasm(const J *args, Buf *out) {
     Tmp t;
     const char *msg = NULL;
@@ -1935,6 +2039,31 @@ static const char *tools_json(void) {
         "'object_base64'.\"},"
         "\"object_base64\":{\"type\":\"string\",\"description\":\"The object, base64 encoded.\"}}},"
         "\"annotations\":{\"readOnlyHint\":true,\"openWorldHint\":false}},");
+    /* zosasm_obj2goff */
+    buf_puts(&b,
+        "{\"name\":\"zosasm_obj2goff\",\"title\":\"Convert OBJ/XOBJ to GOFF\","
+        "\"description\":\"Convert an older z/OS object module (OBJ) or extended object module (XOBJ) "
+        "to GOFF (obj2goff). INPUT: exactly one of 'path' (an object file) or 'object_base64'. "
+        "OUTPUT: 'object_base64' (the GOFF object), 'size' and 'diagnostics'. Guide chapter 23 (@GUIDE@).\","
+        "\"inputSchema\":{\"type\":\"object\",\"properties\":{"
+        "\"path\":{\"type\":\"string\",\"description\":\"OBJ/XOBJ file name. Give either 'path' or "
+        "'object_base64'.\"},"
+        "\"object_base64\":{\"type\":\"string\",\"description\":\"The OBJ/XOBJ bytes, base64 encoded.\"},"
+        "\"no_sym\":{\"type\":\"boolean\",\"description\":\"Do not preserve SYM records (-no-sym).\"}}},"
+        "\"annotations\":{\"readOnlyHint\":true,\"openWorldHint\":false}},");
+    /* zosasm_goffedit */
+    buf_puts(&b,
+        "{\"name\":\"zosasm_goffedit\",\"title\":\"Convert GOFF to or from JSON\","
+        "\"description\":\"Edit a GOFF object through JSON. Forward: give 'path' or 'object_base64' "
+        "and get 'json'. Reverse: set 'reverse' true and give 'json'; get 'object_base64'. "
+        "Guide chapter 24 (@GUIDE@).\","
+        "\"inputSchema\":{\"type\":\"object\",\"properties\":{"
+        "\"reverse\":{\"type\":\"boolean\",\"description\":\"Read JSON and write GOFF.\"},"
+        "\"json\":{\"type\":\"string\",\"description\":\"JSON text for reverse mode.\"},"
+        "\"path\":{\"type\":\"string\",\"description\":\"GOFF file name for forward mode.\"},"
+        "\"object_base64\":{\"type\":\"string\",\"description\":\"GOFF bytes for forward mode.\"},"
+        "\"compact\":{\"type\":\"boolean\",\"description\":\"Write compact JSON.\"}}},"
+        "\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":false}},");
     /* zosasm_disasm */
     buf_puts(&b,
         "{\"name\":\"zosasm_disasm\",\"title\":\"Convert a GOFF object back to source\","
@@ -2039,6 +2168,10 @@ static void tool_call(const char *name, const J *args, Buf *out) {
         tool_preprocess(args, out);
     else if (!strcmp(name, "zosasm_dump"))
         tool_dump(args, out);
+    else if (!strcmp(name, "zosasm_obj2goff"))
+        tool_obj2goff(args, out);
+    else if (!strcmp(name, "zosasm_goffedit"))
+        tool_goffedit(args, out);
     else if (!strcmp(name, "zosasm_disasm"))
         tool_disasm(args, out);
     else if (!strcmp(name, "zosasm_convert_hlasm"))
@@ -2324,7 +2457,8 @@ static void dispatch(const J *msg, Buf *r) {
         }
         if (!strcmp(name, "zosasm_assemble") || !strcmp(name, "zosasm_preprocess") ||
             !strcmp(name, "zosasm_dump") || !strcmp(name, "zosasm_disasm") ||
-            !strcmp(name, "zosasm_convert_hlasm") || !strcmp(name, "zosasm_guide")) {
+            !strcmp(name, "zosasm_convert_hlasm") || !strcmp(name, "zosasm_guide") ||
+            !strcmp(name, "zosasm_obj2goff") || !strcmp(name, "zosasm_goffedit")) {
             /* Each field is capped at MAX_TEXT while it is built; do not
              * throw the whole result away when their sum is larger. */
             tool_call(name, args, r);
