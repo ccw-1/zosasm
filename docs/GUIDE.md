@@ -3016,7 +3016,8 @@ Random numbers use the `PRNO` instruction. `__trng_available()` checks
 message-security-assist extension 5 and then the PRNO feature bitmap. It
 returns 1 when PRNO function code 114 is installed, and `__rng_bytes()`
 fills a caller buffer with conditioned entropy. The facility check reads
-location 200 in GOFF output and uses `STFLE` in ELF output. The CBLOCK
+byte 207 of the location 200 facility list in GOFF output and uses `STFLE`
+in ELF output. The CBLOCK
 reserves the fixed PRNO registers in `cscratch`:
 
 ```c

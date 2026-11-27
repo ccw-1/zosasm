@@ -4751,11 +4751,10 @@ static int emit_msa5_check(Cg *cg, int line, const char *absent, int *tmpout) {
         asm_line(b, line, "LA %%r1,%ld(%%r%d)", slot_off(b, tmp), b->temp_reg);
         asm_line(b, line, "LGHI %%r0,3");
         asm_line(b, line, "STFLE 0(%%r1)");
-        asm_line(b, line, "LG %%r0,0(%%r1)");
+        asm_line(b, line, "TM 7(%%r1),64");
     } else {
-        asm_line(b, line, "LG %%r0,200(%%r0)");
+        asm_line(b, line, "TM 207,64");
     }
-    asm_line(b, line, "NILF %%r0,64");
     asm_line(b, line, "BRC 8,%s", absent);
     if (tmpout) *tmpout = tmp;
     return 1;
