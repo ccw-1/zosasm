@@ -991,6 +991,45 @@ static CBExpr *parse_primary(Parser *p) {
             }
             return e;
         }
+        if (!strcmp(name, "__cu12") || !strcmp(name, "__cu14") ||
+            !strcmp(name, "__cu21") || !strcmp(name, "__cu24") ||
+            !strcmp(name, "__cu41") || !strcmp(name, "__cu42")) {
+            CBExpr *e;
+            CBExpr *args[6] = {0, 0, 0, 0, 0, 0};
+            int has_mask = strcmp(name, "__cu41") && strcmp(name, "__cu42");
+            int has_bad = strcmp(name, "__cu21") && strcmp(name, "__cu24");
+            int argc = has_mask && has_bad ? 6 : 5;
+            e = mk_expr(E_CALL, type_of(32, 0), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, argc)) { cblock_expr_free(e); p->err = 1; return NULL; }
+            e->a = args[0]; e->b = args[1]; e->c = args[2]; e->d = args[3];
+            if (has_bad) e->arg5 = args[4];
+            if (has_mask) {
+                int mi = has_bad ? 5 : 4;
+                e->num = args[mi]->num;
+                cblock_expr_free(args[mi]);
+            }
+            {
+                int bad = !e->a->type.ptr || e->b->type.ptr || !e->c->type.ptr || e->d->type.ptr;
+                if (has_bad && (!e->arg5->type.ptr || e->arg5->type.flt)) bad = 1;
+                if (has_mask && (e->num < 0 || e->num > 15)) bad = 1;
+                if (bad) {
+                    cb_error(p->b, line, col, "ZA5003",
+                             "%s needs two pointers, two lengths%s%s", e->name,
+                             has_bad ? " and an invalid-character pointer" : "",
+                             has_mask ? " and a constant mask 0..15" : "");
+                    p->err = 1;
+                }
+            }
+            return e;
+        }
         if (!strcmp(name, "__clcle") || !strcmp(name, "__clclu") ||
             !strcmp(name, "__mvcle") || !strcmp(name, "__mvclu")) {
             CBExpr *e;
@@ -5122,7 +5161,58 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             *slotp = res;
             return 1;
         }
-            if (!strcmp(e->name, "__clcle") || !strcmp(e->name, "__clclu") ||
+            if (!strcmp(e->name, "__cu12") || !strcmp(e->name, "__cu14") ||
+            !strcmp(e->name, "__cu21") || !strcmp(e->name, "__cu24") ||
+            !strcmp(e->name, "__cu41") || !strcmp(e->name, "__cu42")) {
+            int p1, s1, p2, s2, rbad, has_bad, has_mask;
+            const char *ins = NULL;
+            char *skip = NULL, *store = NULL;
+            has_bad = strcmp(e->name, "__cu21") && strcmp(e->name, "__cu24");
+            has_mask = strcmp(e->name, "__cu41") && strcmp(e->name, "__cu42");
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sl) ||
+                !eval(cg, e->c, &sp) || !eval(cg, e->d, &sd) ||
+                (has_bad && !eval(cg, e->arg5, &sc))) return 0;
+            p1 = pick_pair(b, 0, 0, &s1);
+            p2 = pick_pair(b, p1, s1, &s2);
+            rbad = pick_addr4(b, p1, s1, p2, s2);
+            if (p1 < 0 || p2 < 0 || rbad < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs two even-odd cscratch pairs and a scratch register", e->name);
+                return 0;
+            }
+            load_slot(b, e->line, sa, type_ptr(), p1);
+            load_slot(b, e->line, sl, e->b->type, s1);
+            load_slot(b, e->line, sp, type_ptr(), p2);
+            load_slot(b, e->line, sd, e->d->type, s2);
+            if (!strcmp(e->name, "__cu12")) ins = "CU12";
+            else if (!strcmp(e->name, "__cu14")) ins = "CU14";
+            else if (!strcmp(e->name, "__cu21")) ins = "CU21";
+            else if (!strcmp(e->name, "__cu24")) ins = "CU24";
+            else if (!strcmp(e->name, "__cu41")) ins = "CU41";
+            else ins = "CU42";
+            if (has_mask) asm_line(b, e->line, "%s %%r%d,%%r%d,%d", ins, p1, p2, (int)e->num);
+            else asm_line(b, e->line, "%s %%r%d,%%r%d", ins, p1, p2);
+            asm_line(b, e->line, "BRC 3,*-4");
+            if (has_bad) {
+                load_slot(b, e->line, sc, type_ptr(), rbad);
+                store = new_label(b);
+                skip = new_label(b);
+                asm_line(b, e->line, "BRC 2,%s", store);
+                asm_line(b, e->line, "BRCL 15,%s", skip);
+                emit_label(b, e->line, store);
+                asm_line(b, e->line, "STG %%r%d,0(%%r%d)", p2, rbad);
+                emit_label(b, e->line, skip);
+                free(store);
+                free(skip);
+            }
+            asm_line(b, e->line, "IPM %%r0");
+            asm_line(b, e->line, "SRL %%r0,28");
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__clcle") || !strcmp(e->name, "__clclu") ||
             !strcmp(e->name, "__mvcle") || !strcmp(e->name, "__mvclu")) {
             int p1, s1, p2, s2, rpad, rval, tmp;
             int wide = !strcmp(e->name, "__clclu") || !strcmp(e->name, "__mvclu");
