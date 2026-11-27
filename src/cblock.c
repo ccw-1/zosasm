@@ -1253,6 +1253,34 @@ static CBExpr *parse_primary(Parser *p) {
             }
             return e;
         }
+        if (!strcmp(name, "__vec_doublee") || !strcmp(name, "__vec_floate")) {
+            CBExpr *e;
+            CBExpr *arg;
+            CType rt = !strcmp(name, "__vec_doublee") ? type_vec(64, 0, 1, 0) :
+                                                      type_vec(32, 0, 1, 0);
+            e = mk_expr(E_CALL, rt, line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            arg = parse_assignment(p);
+            if (!arg || !tok_is(l, ')')) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            e->a = arg;
+            if (!arg->type.vec || !arg->type.vfloat ||
+                (!strcmp(e->name, "__vec_doublee") ? arg->type.vbits != 32 : arg->type.vbits != 64)) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s has the wrong vector type", e->name);
+                p->err = 1;
+            }
+            return e;
+        }
         if (!strcmp(name, "__vec_fp_test_data_class")) {
             CBExpr *e;
             CBExpr *args[3] = {0, 0, 0};
@@ -5168,6 +5196,26 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
                    e->type.vbits == 32 ? 2 : 3;
             asm_line(b, e->line, "VREP %%v%d,%%v%d,%lld,%d", vr, va,
                      (long long)idx, elem);
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_doublee") || !strcmp(e->name, "__vec_floate")) {
+            int vr, va;
+            if (!eval(cg, e->a, &sa)) return 0;
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            if (vr < 0 || va < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs two cscratch vector registers", e->name);
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            if (!strcmp(e->name, "__vec_doublee"))
+                asm_line(b, e->line, "VFLLS %%v%d,%%v%d", vr, va);
+            else
+                asm_line(b, e->line, "VFLRD %%v%d,%%v%d,0,0", vr, va);
             res = alloc_slots(cg, 2);
             store_vec_slot(b, e->line, res, vr);
             *slotp = res;

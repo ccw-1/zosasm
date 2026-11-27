@@ -347,6 +347,20 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VREP %v4,%v6,1,2");
+    expect("vector float/double conversion",
+           "#pragma cblock a\n"
+           "#pragma cin __vector float a=%v0\n"
+           "#pragma cin __vector double d=%v2\n"
+           "#pragma cout __vector double c=%v4\n"
+           "#pragma cout __vector float e=%v6\n"
+           "#pragma cscratch %r2, %r3, %v8, %v10\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_doublee(a);\n"
+           "e = __vec_floate(d);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VFLLS %v8,%v10");
     expect("vector FP test data class",
            "#pragma cblock a\n"
            "#pragma cin __vector double a=%v0\n"
