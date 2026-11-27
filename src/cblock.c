@@ -1150,11 +1150,12 @@ static CBExpr *parse_primary(Parser *p) {
             if (!e->a->type.vec || !e->b->type.vec || !e->c->type.vec ||
                 e->a->type.vbits != e->b->type.vbits ||
                 (e->a->type.vbits != 8 && e->a->type.vbits != 16 &&
-                 e->a->type.vbits != 32)) {
+                 e->a->type.vbits != 32 && e->a->type.vbits != 64)) {
                 cb_error(p->b, line, col, "ZA5003",
                          "__vec_gfmsum_accum needs two equal-width vectors and an accumulator");
                 p->err = 1;
-            } else e->type = type_vec(e->a->type.vbits * 2, 1, 0, 0);
+            } else e->type = type_vec(e->a->type.vbits == 64 ? 8 : e->a->type.vbits * 2,
+                                      1, 0, 0);
             return e;
         }
         if (!strcmp(name, "__vec_genmask") || !strcmp(name, "__vec_genmasks_8") ||
@@ -1259,11 +1260,12 @@ static CBExpr *parse_primary(Parser *p) {
             if (!e->a->type.vec || !e->b->type.vec ||
                 e->a->type.vbits != e->b->type.vbits ||
                 (e->a->type.vbits != 8 && e->a->type.vbits != 16 &&
-                 e->a->type.vbits != 32)) {
+                 e->a->type.vbits != 32 && e->a->type.vbits != 64)) {
                 cb_error(p->b, line, col, "ZA5003",
-                         "__vec_gfmsum needs two equal-width byte, halfword or word vectors");
+                         "__vec_gfmsum needs two equal-width byte, halfword, word or doubleword vectors");
                 p->err = 1;
-            } else e->type = type_vec(e->a->type.vbits * 2, 1, 0, 0);
+            } else e->type = type_vec(e->a->type.vbits == 64 ? 8 : e->a->type.vbits * 2,
+                                      1, 0, 0);
             return e;
         }
         if (!strcmp(name, "__vec_load_pair_s8") || !strcmp(name, "__vec_load_pair_u8")) {
@@ -4914,8 +4916,12 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             load_vec_slot(b, e->line, sa, va);
             load_vec_slot(b, e->line, sp, vb);
             load_vec_slot(b, e->line, sc, vacc);
-            asm_line(b, e->line, "VGFMA %%v%d,%%v%d,%%v%d,%%v%d,%d",
-                     vr, va, vb, vacc, m4);
+            if (e->a->type.vbits == 64)
+                asm_line(b, e->line, "VGFMAG %%v%d,%%v%d,%%v%d,%%v%d",
+                         vr, va, vb, vacc);
+            else
+                asm_line(b, e->line, "VGFMA %%v%d,%%v%d,%%v%d,%%v%d,%d",
+                         vr, va, vb, vacc, m4);
             res = alloc_slots(cg, 2);
             store_vec_slot(b, e->line, res, vr);
             *slotp = res;
@@ -5032,7 +5038,10 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             }
             load_vec_slot(b, e->line, sa, va);
             load_vec_slot(b, e->line, sp, vb);
-            asm_line(b, e->line, "VGFM %%v%d,%%v%d,%%v%d,%d", vr, va, vb, m4);
+            if (e->a->type.vbits == 64)
+                asm_line(b, e->line, "VGFMG %%v%d,%%v%d,%%v%d", vr, va, vb);
+            else
+                asm_line(b, e->line, "VGFM %%v%d,%%v%d,%%v%d,%d", vr, va, vb, m4);
             res = alloc_slots(cg, 2);
             store_vec_slot(b, e->line, res, vr);
             *slotp = res;

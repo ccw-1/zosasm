@@ -352,6 +352,18 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "AGR %r4,%r5");
+    expect("vector GF 128-bit forms",
+           "#pragma cblock a\n"
+           "#pragma cin __vector unsigned long long a=%v0, __vector unsigned long long b=%v2, __vector unsigned char c0=%v4\n"
+           "#pragma cout __vector unsigned char c=%v6\n"
+           "#pragma cscratch %r2, %r3, %v8, %v10, %v12, %v14\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_gfmsum(a, b);\n"
+           "c = __vec_gfmsum_accum(a, b, c0);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VGFMG %v8,%v10,%v12");
     expect("vector 128-bit sum",
            "#pragma cblock a\n"
            "#pragma cin __vector unsigned int a=%v0, __vector unsigned int b=%v2\n"
