@@ -1932,6 +1932,30 @@ static CBExpr *parse_primary(Parser *p) {
             } else e->type = e->a->type;
             return e;
         }
+        if (!strcmp(name, "__vec_srdb")) {
+            CBExpr *e;
+            CBExpr *args[3] = {0, 0, 0};
+            e = mk_expr(E_CALL, type_of(128, 1), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, 3)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1]; e->c = args[2];
+            if (!e->a->type.vec || !e->b->type.vec ||
+                e->c->type.ptr || e->c->type.flt || e->c->type.vec) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "__vec_srdb needs two vectors and a byte count");
+                p->err = 1;
+            } else e->type = e->a->type;
+            return e;
+        }
         if (!strcmp(name, "__vec_sldw")) {
             CBExpr *e;
             CBExpr *args[3] = {0, 0, 0};
@@ -6313,6 +6337,32 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             else if (!strcmp(e->name, "__vec_orc")) op = "VOC";
             else op = "VNX";
             asm_line(b, e->line, "%s %%v%d,%%v%d,%%v%d", op, vr, va, vb);
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_srdb")) {
+            int vr, va, vb;
+            int64_t imm;
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+            if (!const_eval(e->c, &imm) || imm < 0 || imm > 15) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "__vec_srdb needs a constant byte count 0 to 15");
+                return 0;
+            }
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            vb = pick_vr4(b, vr, va, -1, -1);
+            if (vr < 0 || va < 0 || vb < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "__vec_srdb needs three cscratch vector registers");
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            load_vec_slot(b, e->line, sp, vb);
+            asm_line(b, e->line, "VSRD %%v%d,%%v%d,%%v%d,%lld", vr, va, vb,
+                     (long long)imm * 8);
             res = alloc_slots(cg, 2);
             store_vec_slot(b, e->line, res, vr);
             *slotp = res;
