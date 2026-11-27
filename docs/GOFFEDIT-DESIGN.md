@@ -428,6 +428,26 @@ The test suite should cover:
 The comparison should use the semantic object, not byte identity. Physical
 record order and ESDID numbering are not promises of the editor.
 
+## Current caveats and future work
+
+The current implementation follows the semantic model, with these limits:
+
+- ESDIDs and physical record order are regenerated. Byte identity is not a
+  promise.
+- Anchor references include a numeric fallback. The fallback preserves an
+  unanchored or unusual offset, but a user edit must choose an anchor when the
+  location should move.
+- Unknown ESD behavior bits, RLD extension bytes and other reserved fields do
+  not yet have full raw round-trip support.
+- IDR format 2 and unknown IDR formats are not structured yet.
+- An explicit END record count is replaced by the writer count.
+- HDR properties are limited to the HDR record capacity.
+- JSON is held in memory. Streaming and packed text are future work.
+
+The next implementation steps are a byte-preserving mode, complete raw fields,
+IDR format 2, explicit END count support, streaming JSON, and anchor groups
+for editing related locations together.
+
 ## Non-goals
 
 `goffedit` does not assemble or disassemble text. It does not turn GOFF into

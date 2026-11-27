@@ -177,6 +177,37 @@ The reverse converter rejects:
 - invalid anchors
 - malformed headers
 
+## Caveats and future work
+
+`goffedit` is a semantic editor, not a byte-for-byte GOFF recorder.
+
+- ESDIDs are regenerated, physical record order can change, and continuation
+  records are rebuilt. A no-edit round trip preserves the object semantics,
+  not necessarily the original byte stream.
+- Text anchors cover references into text. Forward conversion emits an anchor
+  reference together with a numeric fallback. The fallback keeps a first round
+  trip exact when an anchor cannot be attached to a text piece.
+- A numeric offset does not move when text changes. Use an anchor reference
+  when the location must move.
+- The JSON model preserves the common ESD, TXT and RLD fields. Unknown
+  reserved bits and unmodelled extended RLD data are not yet round tripped.
+- IDR format 1 and format 3 are generated from structured fields. Format 2
+  and future formats still need a raw representation.
+- `record_count` is recomputed by the GOFF writer. An explicit input count is
+  not yet preserved.
+- HDR module properties are limited to the 20 bytes that fit in the HDR
+  record.
+- The JSON reader and writer load the whole document in memory. Streaming is
+  future work for very large objects.
+- GOFF text is represented as hex. There is no packed or compressed JSON
+  representation yet.
+- The editor does not recover source files, DWARF, or disassembly. It edits
+  the GOFF structure only.
+
+Future work includes a byte-preserving mode, complete raw-field preservation,
+IDR format 2, explicit END counts, streaming JSON, and richer anchor tools
+that can move a group of related offsets together.
+
 ## Tests
 
 `tests/test_goffedit.c` checks GOFF to JSON to GOFF with a writer-built module.
