@@ -324,6 +324,21 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VSEL %v8,%v10,%v12,%v14");
+    expect("vector float comparisons",
+           "#pragma cblock a\n"
+           "#pragma cin __vector float a=%v0, __vector float b=%v2\n"
+           "#pragma cout __vector bool int c=%v4\n"
+           "#pragma cscratch %r2, %r3, %v6, %v8, %v10\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_cmpeq(a, b);\n"
+           "c = __vec_cmpge(a, b);\n"
+           "c = __vec_cmpgt(a, b);\n"
+           "c = __vec_cmple(a, b);\n"
+           "c = __vec_cmplt(a, b);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VFCE %v6,%v8,%v10,2,0,0");
     expect("vector square root",
            "#pragma cblock a\n"
            "#pragma cin __vector double a=%v0\n"

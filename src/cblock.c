@@ -1388,10 +1388,10 @@ static CBExpr *parse_primary(Parser *p) {
                 cblock_expr_free(e); p->err = 1; return NULL;
             }
             e->a = args[0]; e->b = args[1];
-            if (!e->a->type.vec || !e->b->type.vec || e->a->type.vfloat ||
-                e->a->type.vbool) {
+            if (!e->a->type.vec || !e->b->type.vec || e->a->type.vbool ||
+                (e->a->type.vfloat && e->a->type.vbits != 32 && e->a->type.vbits != 64)) {
                 cb_error(p->b, line, col, "ZA5003",
-                         "%s needs two integer vector arguments", e->name);
+                         "%s needs two compatible vector arguments", e->name);
                 p->err = 1;
             } else {
                 e->type = type_vec(e->a->type.vbits, 0, 0, 1);
@@ -1414,10 +1414,10 @@ static CBExpr *parse_primary(Parser *p) {
                 cblock_expr_free(e); p->err = 1; return NULL;
             }
             e->a = args[0]; e->b = args[1];
-            if (!e->a->type.vec || !e->b->type.vec || e->a->type.vfloat ||
-                e->a->type.vbool) {
+            if (!e->a->type.vec || !e->b->type.vec || e->a->type.vbool ||
+                (e->a->type.vfloat && e->a->type.vbits != 32 && e->a->type.vbits != 64)) {
                 cb_error(p->b, line, col, "ZA5003",
-                         "%s needs two integer vector arguments", e->name);
+                         "%s needs two compatible vector arguments", e->name);
                 p->err = 1;
             } else {
                 e->type = type_vec(e->a->type.vbits, 0, 0, 1);
@@ -4961,26 +4961,37 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             vr = pick_vr4(b, -1, -1, -1, -1);
             va = pick_vr4(b, vr, -1, -1, -1);
             vb = pick_vr4(b, vr, va, -1, -1);
-            vzero = pick_vr4(b, vr, va, vb, -1);
-            if (vr < 0 || va < 0 || vb < 0 || vzero < 0) {
+            vzero = e->a->type.vfloat ? -1 : pick_vr4(b, vr, va, vb, -1);
+            if (vr < 0 || va < 0 || vb < 0 || (!e->a->type.vfloat && vzero < 0)) {
                 cb_error(b, e->line, e->col, "ZA5005",
-                         "%s needs four cscratch vector registers", e->name);
+                         "%s needs three or four cscratch vector registers", e->name);
                 return 0;
             }
             load_vec_slot(b, e->line, sa, va);
             load_vec_slot(b, e->line, sp, vb);
-            elem = e->a->type.vbits == 8 ? 0 : e->a->type.vbits == 16 ? 1 :
-                   e->a->type.vbits == 32 ? 2 : 3;
-            invert = !strcmp(e->name, "__vec_cmpge") || !strcmp(e->name, "__vec_cmpge_8") ||
-                     !strcmp(e->name, "__vec_cmple") || !strcmp(e->name, "__vec_cmple_8");
             swap = !strcmp(e->name, "__vec_cmplt") || !strcmp(e->name, "__vec_cmplt_8") ||
-                   !strcmp(e->name, "__vec_cmpge") || !strcmp(e->name, "__vec_cmpge_8");
-            asm_line(b, e->line, "%s %%v%d,%%v%d,%%v%d,%d,0",
-                     e->a->type.vunsig ? "VCHL" : "VCH", vr,
-                     swap ? vb : va, swap ? va : vb, elem);
-            if (invert) {
-                asm_line(b, e->line, "VGBM %%v%d,0", vzero);
-                asm_line(b, e->line, "VNO %%v%d,%%v%d,%%v%d", vr, vr, vzero);
+                   !strcmp(e->name, "__vec_cmple") || !strcmp(e->name, "__vec_cmple_8");
+            if (e->a->type.vfloat) {
+                int isge = !strcmp(e->name, "__vec_cmpge") ||
+                           !strcmp(e->name, "__vec_cmpge_8") ||
+                           !strcmp(e->name, "__vec_cmple") ||
+                           !strcmp(e->name, "__vec_cmple_8");
+                asm_line(b, e->line, "%s %%v%d,%%v%d,%%v%d,%d,0,0",
+                         isge ? "VFCHE" : "VFCH", vr,
+                         swap ? vb : va, swap ? va : vb,
+                         e->a->type.vbits == 32 ? 2 : 3);
+            } else {
+                elem = e->a->type.vbits == 8 ? 0 : e->a->type.vbits == 16 ? 1 :
+                       e->a->type.vbits == 32 ? 2 : 3;
+                invert = !strcmp(e->name, "__vec_cmpge") || !strcmp(e->name, "__vec_cmpge_8") ||
+                         !strcmp(e->name, "__vec_cmple") || !strcmp(e->name, "__vec_cmple_8");
+                asm_line(b, e->line, "%s %%v%d,%%v%d,%%v%d,%d,0",
+                         e->a->type.vunsig ? "VCHL" : "VCH", vr,
+                         swap ? vb : va, swap ? va : vb, elem);
+                if (invert) {
+                    asm_line(b, e->line, "VGBM %%v%d,0", vzero);
+                    asm_line(b, e->line, "VNO %%v%d,%%v%d,%%v%d", vr, vr, vzero);
+                }
             }
             res = alloc_slots(cg, 2);
             store_vec_slot(b, e->line, res, vr);
@@ -5001,9 +5012,14 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             }
             load_vec_slot(b, e->line, sa, va);
             load_vec_slot(b, e->line, sp, vb);
-            elem = e->a->type.vbits == 8 ? 0 : e->a->type.vbits == 16 ? 1 :
-                   e->a->type.vbits == 32 ? 2 : 3;
-            asm_line(b, e->line, "VCEQ %%v%d,%%v%d,%%v%d,%d,0", vr, va, vb, elem);
+            if (e->a->type.vfloat)
+                asm_line(b, e->line, "VFCE %%v%d,%%v%d,%%v%d,%d,0,0", vr, va, vb,
+                         e->a->type.vbits == 32 ? 2 : 3);
+            else {
+                elem = e->a->type.vbits == 8 ? 0 : e->a->type.vbits == 16 ? 1 :
+                       e->a->type.vbits == 32 ? 2 : 3;
+                asm_line(b, e->line, "VCEQ %%v%d,%%v%d,%%v%d,%d,0", vr, va, vb, elem);
+            }
             res = alloc_slots(cg, 2);
             store_vec_slot(b, e->line, res, vr);
             *slotp = res;
