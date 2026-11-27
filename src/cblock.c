@@ -1157,6 +1157,46 @@ static CBExpr *parse_primary(Parser *p) {
             } else e->type = type_vec(e->a->type.vbits * 2, 1, 0, 0);
             return e;
         }
+        if (!strcmp(name, "__vec_xld2") || !strcmp(name, "__vec_xlw4") ||
+            !strcmp(name, "__vec_xstd2") || !strcmp(name, "__vec_xstw4")) {
+            CBExpr *e;
+            CBExpr *args[3] = {0, 0, 0};
+            int load = !strcmp(name, "__vec_xld2") || !strcmp(name, "__vec_xlw4");
+            CType rt = type_ptr();
+            int argc = load ? 2 : 3;
+            if (!load) rt = type_of(32, 0);
+            e = mk_expr(E_CALL, rt, line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, argc)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1]; e->c = args[2];
+            if (load) {
+                if (e->a->type.ptr || e->a->type.flt || !e->b->type.ptr) {
+                    cb_error(p->b, line, col, "ZA5003",
+                             "%s needs an integer offset and a pointer", e->name);
+                    p->err = 1;
+                } else {
+                    e->type = type_vec(e->b->type.elem_bits ? e->b->type.elem_bits : 8,
+                                       e->b->type.elem_unsig, e->b->type.elem_flt, 0);
+                }
+            } else {
+                if (!e->a->type.vec || e->b->type.ptr || e->b->type.flt ||
+                    !e->c->type.ptr) {
+                    cb_error(p->b, line, col, "ZA5003",
+                             "%s needs a vector, an integer offset and a pointer", e->name);
+                    p->err = 1;
+                }
+            }
+            return e;
+        }
         if (!strcmp(name, "__vec_gfmsum")) {
             CBExpr *e;
             CBExpr *args[2] = {0, 0};
@@ -4835,6 +4875,49 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
                      vr, va, vb, vacc, m4);
             res = alloc_slots(cg, 2);
             store_vec_slot(b, e->line, res, vr);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_xld2") || !strcmp(e->name, "__vec_xlw4") ||
+            !strcmp(e->name, "__vec_xstd2") || !strcmp(e->name, "__vec_xstw4")) {
+            int vr, addr, off;
+            int load = !strcmp(e->name, "__vec_xld2") || !strcmp(e->name, "__vec_xlw4");
+            if (load) {
+                if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+                vr = pick_vr4(b, -1, -1, -1, -1);
+                addr = pick_addr(b, 0, 0);
+                off = pick_addr(b, addr, 0);
+                if (vr < 0 || addr < 0 || off < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "%s needs a vector and two address registers", e->name);
+                    return 0;
+                }
+                load_slot(b, e->line, sp, type_ptr(), addr);
+                load_slot(b, e->line, sa, e->a->type, off);
+                asm_line(b, e->line, "AGR %%r%d,%%r%d", addr, off);
+                asm_line(b, e->line, "VL %%v%d,0(%%r%d)", vr, addr);
+                res = alloc_slots(cg, 2);
+                store_vec_slot(b, e->line, res, vr);
+            } else {
+                if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp) || !eval(cg, e->c, &sc))
+                    return 0;
+                vr = pick_vr4(b, -1, -1, -1, -1);
+                addr = pick_addr(b, 0, 0);
+                off = pick_addr(b, addr, 0);
+                if (vr < 0 || addr < 0 || off < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "%s needs a vector and two address registers", e->name);
+                    return 0;
+                }
+                load_slot(b, e->line, sc, type_ptr(), addr);
+                load_slot(b, e->line, sp, e->b->type, off);
+                load_vec_slot(b, e->line, sa, vr);
+                asm_line(b, e->line, "AGR %%r%d,%%r%d", addr, off);
+                asm_line(b, e->line, "VST %%v%d,0(%%r%d)", vr, addr);
+                res = alloc_slot(cg);
+                asm_line(b, e->line, "LGHI %%r0,0");
+                store_slot(b, e->line, res, type_of(32, 0), 0);
+            }
             *slotp = res;
             return 1;
         }
