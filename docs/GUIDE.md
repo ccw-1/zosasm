@@ -3012,6 +3012,30 @@ floating-point groups are not implemented in CBLOCK yet. `__lpd*` requires
 both registers of an even-odd pair in `cscratch`; decimal lengths must be
 compile-time constants.
 
+Random numbers use the `PRNO` instruction. `__trng_available()` returns 1
+when PRNO function code 114 is installed, and `__rng_bytes()` fills a caller
+buffer with conditioned entropy. The CBLOCK reserves the fixed PRNO
+registers in `cscratch`:
+
+```c
+#pragma cblock rng
+#pragma cin char *buf=%r4, uint64_t len=%r5
+#pragma cout int32_t status=%r7
+#pragma cscratch %r0, %r1, %r2, %r3, %r8, %r9
+#pragma ctemp %r12, 256, down
+#pragma cbegin
+    if (__trng_available()) {
+        status = __rng_bytes(buf, len);
+    } else {
+        status = -1;
+    }
+#pragma cend
+```
+
+`__prno_query(features)` stores the 16-byte capability bitmap, and
+`__prno(fc, parm, op1, op1len, op2, op2len)` exposes the general PRNO
+operation. `docs/CBLOCK.md` has the full API, aliases and status values.
+
 The first example uses a loop, `switch`, byte pointers, and every memory and
 scan intrinsic. It only assembles; the comments give the expected values.
 

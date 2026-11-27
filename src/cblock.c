@@ -49,6 +49,7 @@ typedef enum { E_NUM, E_STR, E_VAR, E_UN, E_BIN, E_CAST, E_COND, E_INC, E_CALL, 
 
 typedef struct CBExpr CBExpr;
 static void cblock_expr_free(CBExpr *e);
+static int const_eval(CBExpr *e, int64_t *out);
 struct CBExpr {
     CBEKind kind;
     CType type;
@@ -56,7 +57,7 @@ struct CBExpr {
     int64_t num;
     double fnum;
     CBVar *var;
-    CBExpr *a, *b, *c, *d, *arg5;
+    CBExpr *a, *b, *c, *d, *arg5, *arg6;
     char *name; /* E_CALL intrinsic */
     char *str;  /* E_STR bytes, not necessarily NUL terminated */
     size_t slen; /* E_STR length */
@@ -874,6 +875,11 @@ static int parse_call_args(Parser *p, CBExpr **args, int nargs) {
     return 1;
 }
 
+static int is_zero_expr(CBExpr *e) {
+    int64_t v;
+    return e && e->kind == E_NUM && !e->type.flt && const_eval(e, &v) && v == 0;
+}
+
 static CBExpr *parse_primary(Parser *p) {
     Lex *l = &p->l;
     CBExpr *e;
@@ -1064,6 +1070,52 @@ static CBExpr *parse_primary(Parser *p) {
                 cb_error(p->b, line, col, "ZA5003",
                          "%s needs a pointer, length, pad, pointer and length", e->name);
                 p->err = 1;
+            }
+            return e;
+        }
+        if (!strcmp(name, "__prno_query") || !strcmp(name, "__prno_trng") ||
+            !strcmp(name, "__rng_bytes") || !strcmp(name, "__trng_available") ||
+            !strcmp(name, "__rng_available") || !strcmp(name, "__prno")) {
+            CBExpr *e;
+            CBExpr *args[6] = {0, 0, 0, 0, 0, 0};
+            int is_generic = !strcmp(name, "__prno");
+            int is_query = !strcmp(name, "__prno_query");
+            int is_trng = !strcmp(name, "__prno_trng") || !strcmp(name, "__rng_bytes");
+            int is_avail = !strcmp(name, "__trng_available") || !strcmp(name, "__rng_available");
+            int argc = is_generic ? 6 : is_avail ? 0 : is_query ? 1 : 2;
+            e = mk_expr(E_CALL, type_of(32, 0), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, argc)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1]; e->c = args[2]; e->d = args[3];
+            e->arg5 = args[4]; e->arg6 = args[5];
+            {
+                int bad = 0;
+                if (is_query && (!e->a->type.ptr)) bad = 1;
+                if (is_trng && (!e->a->type.ptr || e->b->type.ptr || e->b->type.flt)) bad = 1;
+                if (is_generic) {
+                    if (e->a->type.ptr || e->a->type.flt ||
+                        (!e->b->type.ptr && !is_zero_expr(e->b)) ||
+                        (!e->c->type.ptr && !is_zero_expr(e->c)) ||
+                        e->d->type.ptr || e->d->type.flt ||
+                        (!e->arg5->type.ptr && !is_zero_expr(e->arg5)) ||
+                        e->arg6->type.ptr || e->arg6->type.flt) bad = 1;
+                }
+                if (bad) {
+                    cb_error(p->b, line, col, "ZA5003",
+                             is_generic ? "__prno needs a function code, parameter pointer, "
+                                          "two operand pointers and two lengths"
+                                        : "%s has an argument of the wrong type", e->name);
+                    p->err = 1;
+                }
             }
             return e;
         }
@@ -4261,6 +4313,7 @@ static void cblock_expr_free(CBExpr *e) {
     cblock_expr_free(e->c);
     cblock_expr_free(e->d);
     cblock_expr_free(e->arg5);
+    cblock_expr_free(e->arg6);
     free(e->name);
     free(e->str);
     free(e->sym);
@@ -5499,6 +5552,109 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             else if (!strcmp(e->name, "__clclu")) asm_line(b, e->line, "CLCLU %%r%d,%%r%d,0(%%r%d)", p1, p2, rpad);
             else if (!strcmp(e->name, "__mvcle")) asm_line(b, e->line, "MVCLE %%r%d,%%r%d,0(%%r%d)", p1, p2, rpad);
             else asm_line(b, e->line, "MVCLU %%r%d,%%r%d,0(%%r%d)", p1, p2, rpad);
+            asm_line(b, e->line, "IPM %%r0");
+            asm_line(b, e->line, "SRL %%r0,28");
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__trng_available") || !strcmp(e->name, "__rng_available")) {
+            int tmp, res, i, ok = 1;
+            for (i = 0; i < 3; i++) {
+                int j, hit = 0;
+                for (j = 0; j < b->nscratch; j++) if (b->scratch[j] == i) hit = 1;
+                if (!hit) ok = 0;
+            }
+            if (!ok) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs %%r0, %%r1 and %%r2 in cscratch", e->name);
+                return 0;
+            }
+            tmp = alloc_slots(cg, 2);
+            asm_line(b, e->line, "LA %%r1,%ld(%%r%d)", slot_off(b, tmp), b->temp_reg);
+            asm_line(b, e->line, "LGHI %%r0,0");
+            asm_line(b, e->line, "PRNO %%r2,%%r2");
+            asm_line(b, e->line, "LLGC %%r0,14(%%r1)");
+            asm_line(b, e->line, "NILF %%r0,32");
+            asm_line(b, e->line, "SRL %%r0,5");
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__prno_query")) {
+            int i, ok = 1;
+            for (i = 0; i < 2; i++) {
+                int j, hit = 0;
+                for (j = 0; j < b->nscratch; j++) if (b->scratch[j] == i) hit = 1;
+                if (!hit) ok = 0;
+            }
+            if (!ok) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs %%r0 and %%r1 in cscratch", e->name);
+                return 0;
+            }
+            if (!eval(cg, e->a, &sa)) return 0;
+            load_slot(b, e->line, sa, type_ptr(), 1);
+            asm_line(b, e->line, "LGHI %%r0,0");
+            asm_line(b, e->line, "PRNO %%r2,%%r2");
+            asm_line(b, e->line, "IPM %%r0");
+            asm_line(b, e->line, "SRL %%r0,28");
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__prno_trng") || !strcmp(e->name, "__rng_bytes")) {
+            int need[5] = {0, 2, 3, 8, 9}, i;
+            for (i = 0; i < 5; i++) {
+                int j, hit = 0;
+                for (j = 0; j < b->nscratch; j++) if (b->scratch[j] == need[i]) hit = 1;
+                if (!hit) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "%s needs %%r0, %%r2, %%r3, %%r8 and %%r9 in cscratch", e->name);
+                    return 0;
+                }
+            }
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+            load_slot(b, e->line, sa, type_ptr(), 2);
+            load_slot(b, e->line, sp, e->b->type, 3);
+            asm_line(b, e->line, "LGHI %%r8,0");
+            asm_line(b, e->line, "LGHI %%r9,0");
+            asm_line(b, e->line, "LGHI %%r0,114");
+            asm_line(b, e->line, "PRNO %%r8,%%r2");
+            asm_line(b, e->line, "BRC 3,*-4");
+            asm_line(b, e->line, "IPM %%r0");
+            asm_line(b, e->line, "SRL %%r0,28");
+            res = alloc_slot(cg);
+            store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__prno")) {
+            int need[6] = {0, 1, 2, 3, 8, 9}, i;
+            int ss[6];
+            for (i = 0; i < 6; i++) {
+                int j, hit = 0;
+                for (j = 0; j < b->nscratch; j++) if (b->scratch[j] == need[i]) hit = 1;
+                if (!hit) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "%s needs %%r0, %%r1, %%r2, %%r3, %%r8 and %%r9 in cscratch", e->name);
+                    return 0;
+                }
+            }
+            if (!eval(cg, e->a, &ss[0]) || !eval(cg, e->b, &ss[1]) ||
+                !eval(cg, e->c, &ss[2]) || !eval(cg, e->d, &ss[3]) ||
+                !eval(cg, e->arg5, &ss[4]) || !eval(cg, e->arg6, &ss[5])) return 0;
+            load_slot(b, e->line, ss[0], e->a->type, 0);
+            load_slot(b, e->line, ss[1], e->b->type, 1);
+            load_slot(b, e->line, ss[2], e->c->type, 2);
+            load_slot(b, e->line, ss[3], e->d->type, 3);
+            load_slot(b, e->line, ss[4], e->arg5->type, 8);
+            load_slot(b, e->line, ss[5], e->arg6->type, 9);
+            asm_line(b, e->line, "PRNO %%r2,%%r8");
+            asm_line(b, e->line, "BRC 3,*-4");
             asm_line(b, e->line, "IPM %%r0");
             asm_line(b, e->line, "SRL %%r0,28");
             res = alloc_slot(cg);
