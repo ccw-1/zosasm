@@ -324,6 +324,20 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VSEL %v8,%v10,%v12,%v14");
+    expect("vector element extract, insert and promote",
+           "#pragma cblock a\n"
+           "#pragma cin __vector signed int a=%v0, int32_t x=%r2\n"
+           "#pragma cout __vector signed int c=%v4, int32_t y=%r3\n"
+           "#pragma cscratch %r4, %r5, %v6, %v8, %v10\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_insert_s4(x, a, 1);\n"
+           "c = __vec_promote_s4(x, 2);\n"
+           "y = __vec_extract_s4(a, 3);\n"
+           "c = __vec_insert_and_zero_s4((int32_t *)0);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VLEF %v6,0(%r4),1");
     expect("vector max, min and average",
            "#pragma cblock a\n"
            "#pragma cin __vector signed int a=%v0, __vector signed int b=%v2\n"

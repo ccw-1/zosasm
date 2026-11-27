@@ -219,6 +219,18 @@ static int vec_suffix_type(const char *suffix, CType *t) {
     return 1;
 }
 
+static CType vec_scalar_type(const char *suffix) {
+    if (!strcmp(suffix, "s1") || !strcmp(suffix, "s2") || !strcmp(suffix, "s4"))
+        return type_of(32, 0);
+    if (!strcmp(suffix, "u1") || !strcmp(suffix, "u2") || !strcmp(suffix, "u4"))
+        return type_of(32, 1);
+    if (!strcmp(suffix, "s8")) return type_of(64, 0);
+    if (!strcmp(suffix, "u8")) return type_of(64, 1);
+    if (!strcmp(suffix, "f4")) return type_fp(32);
+    if (!strcmp(suffix, "f8")) return type_fp(64);
+    return type_of(32, 0);
+}
+
 static int vec_suffix_code(const char *suffix) {
     if (!strcmp(suffix, "s1") || !strcmp(suffix, "u1")) return 0;
     if (!strcmp(suffix, "s2") || !strcmp(suffix, "u2")) return 1;
@@ -1035,6 +1047,66 @@ static CBExpr *parse_primary(Parser *p) {
             if (!strcmp(e->name, "__strlen")) e->type = type_of(64, 1);
             else if (is_memchr || is_strcpy) e->type = type_ptr();
             else e->type = type_of(32, 0);
+            return e;
+        }
+        if (!strncmp(name, "__vec_extract_", 14) ||
+            !strncmp(name, "__vec_insert_and_zero_", 22) ||
+            !strncmp(name, "__vec_insert_", 13) ||
+            !strncmp(name, "__vec_promote_", 14)) {
+            CBExpr *e;
+            CBExpr *args[3] = {0, 0, 0};
+            const char *suffix;
+            CType vt;
+            int kind; /* 0 extract, 1 insert, 2 promote, 3 insert_and_zero */
+            int argc;
+            if (!strncmp(name, "__vec_extract_", 14)) {
+                kind = 0; suffix = name + 14; argc = 2;
+            } else if (!strncmp(name, "__vec_insert_and_zero_", 22)) {
+                kind = 3; suffix = name + 22; argc = 1;
+            } else if (!strncmp(name, "__vec_insert_", 13)) {
+                kind = 1; suffix = name + 13; argc = 3;
+            } else {
+                kind = 2; suffix = name + 14; argc = 2;
+            }
+            if (!vec_suffix_type(suffix, &vt)) {
+                cb_error(p->b, line, col, "ZA5002", "unsupported vector element suffix");
+                p->err = 1; free(name); return NULL;
+            }
+            e = mk_expr(E_CALL, kind == 0 ? vec_scalar_type(suffix) : vt, line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, argc)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1]; e->c = args[2];
+            if (kind == 0) {
+                if (!e->a->type.vec || e->b->type.ptr || e->b->type.vec || e->b->type.flt) {
+                    cb_error(p->b, line, col, "ZA5003", "__vec_extract needs a vector and an index");
+                    p->err = 1;
+                }
+            } else if (kind == 1) {
+                if (e->a->type.vec || !e->b->type.vec || e->c->type.vec ||
+                    e->c->type.ptr || e->c->type.flt) {
+                    cb_error(p->b, line, col, "ZA5003",
+                             "__vec_insert needs a scalar, a vector and an index");
+                    p->err = 1;
+                }
+            } else if (kind == 2) {
+                if (e->a->type.vec || e->b->type.vec || e->b->type.ptr || e->b->type.flt) {
+                    cb_error(p->b, line, col, "ZA5003",
+                             "__vec_promote needs a scalar and an index");
+                    p->err = 1;
+                }
+            } else if (!e->a->type.ptr) {
+                cb_error(p->b, line, col, "ZA5003", "__vec_insert_and_zero needs a pointer");
+                p->err = 1;
+            }
             return e;
         }
         if (!strcmp(name, "__vec_max") || !strcmp(name, "__vec_max_8") ||
@@ -4252,6 +4324,114 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             res = alloc_slot(cg);
             asm_line(b, e->line, "LGHI %%r0,0");
             store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strncmp(e->name, "__vec_extract_", 14) ||
+            !strncmp(e->name, "__vec_insert_and_zero_", 22) ||
+            !strncmp(e->name, "__vec_insert_", 13) ||
+            !strncmp(e->name, "__vec_promote_", 14)) {
+            const char *suffix;
+            int kind, vr, addr, elem;
+            int64_t idx = 0;
+            if (!strncmp(e->name, "__vec_extract_", 14)) {
+                kind = 0; suffix = e->name + 14;
+            } else if (!strncmp(e->name, "__vec_insert_and_zero_", 22)) {
+                kind = 3; suffix = e->name + 22;
+            } else if (!strncmp(e->name, "__vec_insert_", 13)) {
+                kind = 1; suffix = e->name + 13;
+            } else {
+                kind = 2; suffix = e->name + 14;
+            }
+            elem = vec_suffix_code(suffix);
+            if (kind == 3) {
+                if (!eval(cg, e->a, &sa)) return 0;
+                vr = pick_vr4(b, -1, -1, -1, -1);
+                addr = pick_addr(b, 0, 0);
+                if (vr < 0 || addr < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "%s needs a vector and an address register", e->name);
+                    return 0;
+                }
+                load_slot(b, e->line, sa, type_ptr(), addr);
+                asm_line(b, e->line, "VLLEZ %%v%d,0(%%r%d),%d", vr, addr, elem);
+                res = alloc_slots(cg, 2);
+                store_vec_slot(b, e->line, res, vr);
+                *slotp = res;
+                return 1;
+            }
+            if (kind == 0) {
+                const char *op = elem == 0 ? "VSTEB" : elem == 1 ? "VSTEH" :
+                                 elem == 2 ? "VSTEF" : "VSTEG";
+                if (!const_eval(e->b, &idx) || idx < 0 || idx > 15) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "__vec_extract needs a constant index 0 to 15");
+                    return 0;
+                }
+                if (!eval(cg, e->a, &sa)) return 0;
+                vr = pick_vr4(b, -1, -1, -1, -1);
+                addr = pick_addr(b, 0, 0);
+                res = alloc_slot(cg);
+                if (vr < 0 || addr < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "__vec_extract needs a vector and an address register");
+                    return 0;
+                }
+                load_vec_slot(b, e->line, sa, vr);
+                asm_line(b, e->line, "LA %%r%d,%ld(%%r%d)", addr, slot_off(b, res), b->temp_reg);
+                asm_line(b, e->line, "%s %%v%d,0(%%r%d),%lld", op, vr, addr, (long long)idx);
+                if (e->type.flt) {
+                    asm_line(b, e->line, e->type.bits == 32 ? "LE %%f0,%ld(%%r%d)" : "LD %%f0,%ld(%%r%d)",
+                             slot_off(b, res), b->temp_reg);
+                    store_fp_slot(b, e->line, res, e->type, 0);
+                } else if (e->type.bits == 64) {
+                    asm_line(b, e->line, "LG %%r0,%ld(%%r%d)", slot_off(b, res), b->temp_reg);
+                    store_slot(b, e->line, res, e->type, 0);
+                } else {
+                    asm_line(b, e->line, elem == 0 ? "LGB %%r0,%ld(%%r%d)" :
+                             elem == 1 ? "LGH %%r0,%ld(%%r%d)" : "LGF %%r0,%ld(%%r%d)",
+                             slot_off(b, res), b->temp_reg);
+                    store_slot(b, e->line, res, e->type, 0);
+                }
+                *slotp = res;
+                return 1;
+            }
+            if (!const_eval(kind == 1 ? e->c : e->b, &idx) || idx < 0 || idx > 15) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs a constant index 0 to 15", e->name);
+                return 0;
+            }
+            if (kind == 1) {
+                if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+                vr = pick_vr4(b, -1, -1, -1, -1);
+                addr = pick_addr(b, 0, 0);
+                if (vr < 0 || addr < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "__vec_insert needs a vector and an address register");
+                    return 0;
+                }
+                load_vec_slot(b, e->line, sp, vr);
+                asm_line(b, e->line, "LA %%r%d,%ld(%%r%d)", addr, slot_off(b, sa), b->temp_reg);
+                asm_line(b, e->line, "VLE%s %%v%d,0(%%r%d),%lld",
+                         elem == 0 ? "B" : elem == 1 ? "H" : elem == 2 ? "F" : "G",
+                         vr, addr, (long long)idx);
+            } else {
+                if (!eval(cg, e->a, &sa)) return 0;
+                vr = pick_vr4(b, -1, -1, -1, -1);
+                addr = pick_addr(b, 0, 0);
+                if (vr < 0 || addr < 0) {
+                    cb_error(b, e->line, e->col, "ZA5005",
+                             "__vec_promote needs a vector and an address register");
+                    return 0;
+                }
+                asm_line(b, e->line, "VGBM %%v%d,0", vr);
+                asm_line(b, e->line, "LA %%r%d,%ld(%%r%d)", addr, slot_off(b, sa), b->temp_reg);
+                asm_line(b, e->line, "VLE%s %%v%d,0(%%r%d),%lld",
+                         elem == 0 ? "B" : elem == 1 ? "H" : elem == 2 ? "F" : "G",
+                         vr, addr, (long long)idx);
+            }
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
             *slotp = res;
             return 1;
         }
