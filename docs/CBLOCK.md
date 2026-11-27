@@ -536,6 +536,7 @@ v = __vec_roundz(a);                /* VFI, toward zero */
 v = __vec_trunc(a);                 /* VFI, toward zero */
 v = __vec_ceil(a);                  /* VFI, toward +infinity */
 v = __vec_floor(a);                 /* VFI, toward -infinity */
+v = __vec_bperm(a, b);              /* VBPERM, byte vectors to u64 vector */
 ```
 
 The element types are `char`, `short`, `int`, `long long`, `float` and
@@ -544,7 +545,7 @@ builtin suffixes. Vector select, permute, permute-doubleword-immediate, integer
 ordered/equal compares, max, min, average, scalar element
 extract/insert/promote, pack/unpack, merge, checksum, bit counts, the main shift forms, rotations and double
 shifts, the boolean logic forms, floating-point square root, floating
-comparisons and rounding are implemented. Vector arithmetic and the remaining
+comparisons, rounding and bit permutation are implemented. Vector arithmetic and the remaining
 `__vec_*` builtins are not implemented yet. `__vec_load_bndry_*` accepts the boundary argument
 but uses an unaligned `VL`, which is correct and only loses an alignment
 optimization.

@@ -324,6 +324,17 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VSEL %v8,%v10,%v12,%v14");
+    expect("vector bit permute",
+           "#pragma cblock a\n"
+           "#pragma cin __vector unsigned char a=%v0, __vector unsigned char b=%v2\n"
+           "#pragma cout __vector unsigned long long c=%v4\n"
+           "#pragma cscratch %r2, %r3, %v6, %v8, %v10\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_bperm(a, b);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VBPERM %v6,%v8,%v10");
     expect("vector floating-point rounding",
            "#pragma cblock a\n"
            "#pragma cin __vector double a=%v0\n"
