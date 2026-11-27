@@ -176,8 +176,17 @@ static const char *emit_class(GoffWriter *w, const Module *m, Section *s, Class 
     pr.name_space = GOFF_NS_PARTS3;
     pr.length = (uint32_t)c->len;
     pr.offset = (uint32_t)c->base;
-    pr.attr.amode = c->attr.cattr ? 0 : s->amode;
-    pr.attr.rmode = rmode;
+    /* HLASM: a CATTR part reference carries the implied AMODE and no RMODE.
+     * RMODE(31)/RMODE(ANY) implies AMODE(31), RMODE(64) implies AMODE(64),
+     * and RMODE(24) leaves AMODE unspecified. */
+    if (c->attr.cattr) {
+        pr.attr.amode = rmode == GOFF_RMODE_31 ? GOFF_AMODE_31 :
+                        rmode == GOFF_RMODE_64 ? GOFF_AMODE_64 : 0;
+        pr.attr.rmode = 0;
+    } else {
+        pr.attr.amode = s->amode;
+        pr.attr.rmode = rmode;
+    }
     pr.attr.bind_algorithm = bind;
     pr.attr.tasking = (uint8_t)c->attr.tasking;
     pr.attr.read_only = c->attr.readonly;

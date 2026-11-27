@@ -157,7 +157,7 @@ static const char *const programs[] = {
     "ONE      XATTR SCOPE(LIBRARY)\n"
     "D_DATA   CATTR ALIGN(2),NOTEXECUTABLE,FILL(0),RENT\n"
     "VAL      DC    F'1',A(ONE)\n"
-    "C_PART   CATTR PART(PRT),PRIORITY(7),ALIGN(4),MERGE,READONLY\n"
+    "C_PART   CATTR PART(PRT),PRIORITY(7),ALIGN(4),MERGE,READONLY,RMODE(31)\n"
     "         DC    CL16'part data'\n"
     "PRT      XATTR SCOPE(MODULE),LINKAGE(XPLINK)\n"
     "E_X      CATTR NOLOAD,RMODE(64),REUS\n"

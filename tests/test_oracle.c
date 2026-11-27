@@ -326,7 +326,8 @@ static void test_object_rules(void) {
     /* CATTR classes: ALIGN(3), RMODE(24), NONREUS, AMODE none; PART = merge, no PR fill */
     g = emit_src("S CSECT\nS AMODE 31\nS RMODE 31\n DC F'1'\n"
                  "C1 CATTR\n DC F'2'\n"
-                 "C2 CATTR PART(PP),FILL(0),REMOVABLE,NOTEXECUTABLE\n DC F'3'\n END\n");
+                 "C2 CATTR PART(PP),FILL(0),REMOVABLE,NOTEXECUTABLE\n DC F'3'\n"
+                 "C3 CATTR PART(PP3),RMODE(31)\n DC F'4'\n END\n");
     if (g) {
         e = find_esd(g, GOFF_ED, "C1");
         CHECK(e && e->attr.amode == 0 && e->attr.rmode == GOFF_RMODE_24 && e->attr.alignment == 3 &&
@@ -334,8 +335,12 @@ static void test_object_rules(void) {
         e = find_esd(g, GOFF_ED, "C2");
         CHECK(e && e->has_fill && e->removable && e->attr.bind_algorithm == GOFF_BIND_MERGE);
         pr = find_esd(g, GOFF_PR, "PP");
-        CHECK(pr && !pr->has_fill && pr->attr.amode == 0 && pr->attr.rmode == GOFF_RMODE_24 &&
+        CHECK(pr && !pr->has_fill && pr->attr.amode == 0 && pr->attr.rmode == 0 &&
               pr->attr.bind_algorithm == GOFF_BIND_MERGE);
+        e = find_esd(g, GOFF_ED, "C3");
+        pr = find_esd(g, GOFF_PR, "PP3");
+        CHECK(e && e->attr.rmode == GOFF_RMODE_31 && e->attr.amode == 0);
+        CHECK(pr && pr->attr.amode == GOFF_AMODE_31 && pr->attr.rmode == 0);
         e = find_esd(g, GOFF_ED, "B_TEXT");
         CHECK(e && e->attr.amode == GOFF_AMODE_31 && e->attr.rmode == GOFF_RMODE_31);
     }

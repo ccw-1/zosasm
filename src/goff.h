@@ -150,12 +150,29 @@ typedef struct {
     size_t len;
 } GoffText;
 
+/* A Language-Translator Identification Record (IDR) from a structured
+ * B_IDRL text record. strings are decoded from EBCDIC and trimmed. */
+typedef struct {
+    uint32_t esdid;
+    int format;       /* 1, 2 or 3 */
+    int length;       /* declared IDR data length */
+    char translator[11];
+    char version[3];
+    char release[3];
+    char date[8];     /* YYDDD for format 1, YYYYDDD for format 3 */
+    char time[10];    /* HHMMSSTTT for format 3 */
+} GoffIdr;
+
 typedef struct {
     uint32_t arch_level;
+    uint8_t hdr_version;  /* PTV version byte of the HDR record */
+    uint16_t props_len;
+    uint8_t props[20];
     Vec(GoffESD *) esds;
     Vec(GoffText) texts;
     Vec(GoffReloc) relocs;
     Vec(GoffDeferredLen) lens;
+    Vec(GoffIdr) idrs;
     GoffEnd end;
     uint32_t end_count; /* record count stored in END */
     int logical;        /* logical records seen */
