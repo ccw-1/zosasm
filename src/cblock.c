@@ -1078,6 +1078,33 @@ static CBExpr *parse_primary(Parser *p) {
             } else e->type = arg->type;
             return e;
         }
+        if (!strcmp(name, "__vec_sum2") || !strcmp(name, "__vec_sum4")) {
+            CBExpr *e;
+            CBExpr *args[2] = {0, 0};
+            e = mk_expr(E_CALL, type_vec(32, 1, 0, 0), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, 2)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1];
+            if (!e->a->type.vec || !e->b->type.vec ||
+                e->a->type.vbits != e->b->type.vbits || e->a->type.vfloat ||
+                (!strcmp(e->name, "__vec_sum2")
+                     ? (e->a->type.vbits != 16 && e->a->type.vbits != 32)
+                     : (e->a->type.vbits != 8 && e->a->type.vbits != 16))) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s has unsupported vector arguments", e->name);
+                p->err = 1;
+            } else e->type = type_vec(!strcmp(e->name, "__vec_sum2") ? 64 : 32, 1, 0, 0);
+            return e;
+        }
         if (!strcmp(name, "__vec_gfmsum_accum")) {
             CBExpr *e;
             CBExpr *args[3] = {0, 0, 0};
@@ -4710,6 +4737,32 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             else mode = 5;
             asm_line(b, e->line, "VFI %%v%d,%%v%d,%d,0,%d", vr, va,
                      e->a->type.vbits == 32 ? 2 : 3, mode);
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_sum2") || !strcmp(e->name, "__vec_sum4")) {
+            int vr, va, vb;
+            int m4;
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            vb = pick_vr4(b, vr, va, -1, -1);
+            if (vr < 0 || va < 0 || vb < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs three cscratch vector registers", e->name);
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            load_vec_slot(b, e->line, sp, vb);
+            if (!strcmp(e->name, "__vec_sum2")) {
+                m4 = e->a->type.vbits == 16 ? 1 : 2;
+                asm_line(b, e->line, "VSUMG %%v%d,%%v%d,%%v%d,%d", vr, va, vb, m4);
+            } else {
+                m4 = e->a->type.vbits == 8 ? 0 : 1;
+                asm_line(b, e->line, "VSUM %%v%d,%%v%d,%%v%d,%d", vr, va, vb, m4);
+            }
             res = alloc_slots(cg, 2);
             store_vec_slot(b, e->line, res, vr);
             *slotp = res;
