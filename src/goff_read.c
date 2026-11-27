@@ -101,6 +101,11 @@ static const char *decode(GoffModule *m, Logical *l) {
     switch (l->typ) {
     case GOFF_T_HDR:
         m->arch_level = get32(f + 48);
+        m->hdr_version = f[2];
+        m->props_len = (uint16_t)get16(f + 52);
+        if (m->props_len > sizeof m->props)
+            return fail("HDR properties length %d exceeds the record", (int)m->props_len, 0);
+        if (m->props_len) memcpy(m->props, f + 60, m->props_len);
         break;
     case GOFF_T_ESD: {
         GoffESD *e = xcalloc(sizeof *e);
@@ -200,6 +205,61 @@ static const char *decode(GoffModule *m, Logical *l) {
     return NULL;
 }
 
+static void copy_trim(char *dst, size_t dstsz, const uint8_t *src, size_t n) {
+    char *q;
+    size_t k = 0;
+    if (dstsz == 0) return;
+    q = ebcdic_decode(src, n);
+    if (q) {
+        while (q[k] && k + 1 < dstsz) { dst[k] = q[k]; k++; }
+        free(q);
+    }
+    dst[k] = 0;
+    while (k > 0 && dst[k - 1] == ' ') dst[--k] = 0;
+}
+
+/* Collect the IDR records of a B_IDRL structured text item. Malformed
+ * entries are skipped: an object is still readable even if a translator
+ * wrote an IDR form this reader does not know. */
+static void decode_idrl(GoffModule *m) {
+    size_t ti;
+    for (ti = 0; ti < m->texts.n; ti++) {
+        const GoffText *t = &m->texts.v[ti];
+        const GoffESD *e = goff_module_esd(m, t->esdid);
+        char *nm;
+        size_t p = 0;
+        if (!e || t->style != GOFF_STYLE_STRUCTURED || !t->data) continue;
+        nm = ebcdic_decode(e->name, e->name_len);
+        if (!nm || strcmp(nm, "B_IDRL")) { free(nm); continue; }
+        free(nm);
+        while (p + 4 <= t->len) {
+            int fmt = t->data[p + 1];
+            size_t n = get16(t->data + p + 2);
+            const uint8_t *d = t->data + p + 4;
+            GoffIdr idr;
+            if (!n || n > t->len - p - 4) break;
+            memset(&idr, 0, sizeof idr);
+            idr.esdid = t->esdid;
+            idr.format = fmt;
+            idr.length = (int)n;
+            if (fmt == 1 && n >= 19) {
+                copy_trim(idr.translator, sizeof idr.translator, d, 10);
+                copy_trim(idr.version, sizeof idr.version, d + 10, 2);
+                copy_trim(idr.release, sizeof idr.release, d + 12, 2);
+                copy_trim(idr.date, sizeof idr.date, d + 14, 5);
+            } else if (fmt == 3 && n >= 30) {
+                copy_trim(idr.translator, sizeof idr.translator, d, 10);
+                copy_trim(idr.version, sizeof idr.version, d + 10, 2);
+                copy_trim(idr.release, sizeof idr.release, d + 12, 2);
+                copy_trim(idr.date, sizeof idr.date, d + 14, 7);
+                copy_trim(idr.time, sizeof idr.time, d + 21, 9);
+            }
+            vec_push(&m->idrs, idr);
+            p += 4 + n;
+        }
+    }
+}
+
 static int esd_cmp(const void *a, const void *b) {
     const GoffESD *x = *(const GoffESD *const *)a, *y = *(const GoffESD *const *)b;
     return x->id < y->id ? -1 : x->id > y->id;
@@ -268,6 +328,7 @@ GoffModule *goff_parse(const uint8_t *b, size_t len, const char **err) {
             return NULL;
         }
     }
+    decode_idrl(m);
     m->logical = (int)recs.n;
     if (recs.n == 0 || recs.v[recs.n - 1]->typ != GOFF_T_END) {
         *err = "goff: last record is not END";
@@ -281,19 +342,33 @@ const GoffESD *goff_module_esd(const GoffModule *m, uint32_t id) {
     return m->esds.v[id - 1];
 }
 
+static const char *module_props_name(const GoffModule *m) {
+    if (m->props_len == 4 && get32(m->props) == 0x00008000u) return "SYSTEM_LE";
+    return NULL;
+}
+
 void goff_dump(const GoffModule *m, FILE *w) {
     size_t i, k;
-    fprintf(w, "HDR arch=%u\n", (unsigned)m->arch_level);
+    const char *pn = module_props_name(m);
+    fprintf(w, "HDR arch=%u version=%u props_len=%u props=", (unsigned)m->arch_level,
+            (unsigned)m->hdr_version, (unsigned)m->props_len);
+    for (i = 0; i < m->props_len; i++) fprintf(w, "%02X", m->props[i]);
+    if (pn) fprintf(w, " property=%s", pn);
+    fputc('\n', w);
     for (i = 0; i < m->esds.n; i++) {
         const GoffESD *e = m->esds.v[i];
         char *nm = ebcdic_decode(e->name, e->name_len);
         uint8_t ba[10];
         goff_behavior_pack(&e->attr, ba);
         fprintf(w, "ESD %-2d id=%u parent=%u off=%u len=%d ns=%d amode=%d rmode=%d scope=%d exec=%d align=%d "
+                   "style=%d bind=%d task=%d ro=%d dup=%d strength=%d load=%d common=%d indirect=%d linkage=%d "
                    "ba=%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X fill=%d,%u fl=%d%d%d q=%u pri=%u ada=%u ext=%u,%u \"%s\"\n",
                 (int)e->type, (unsigned)e->id, (unsigned)e->parent, (unsigned)e->offset, (int)(int32_t)e->length,
                 e->name_space, e->attr.amode, e->attr.rmode, e->attr.scope, e->attr.executable,
-                e->attr.alignment, ba[0], ba[1], ba[2], ba[3], ba[4], ba[5], ba[6], ba[7], ba[8], ba[9],
+                e->attr.alignment, e->attr.text_style, e->attr.bind_algorithm, e->attr.tasking,
+                e->attr.read_only, e->attr.dup_severity, e->attr.bind_strength, e->attr.loading,
+                e->attr.common, e->attr.indirect, e->attr.linkage,
+                ba[0], ba[1], ba[2], ba[3], ba[4], ba[5], ba[6], ba[7], ba[8], ba[9],
                 e->has_fill, (unsigned)e->fill, e->mangled, e->renameable, e->removable,
                 (unsigned)e->reserved_qwords, (unsigned)e->priority, (unsigned)e->ada_id,
                 (unsigned)e->ext_attr_id, (unsigned)e->ext_attr_off, nm);
@@ -309,12 +384,22 @@ void goff_dump(const GoffModule *m, FILE *w) {
         if (!adata) /* symbolic information is shown by -dump as ZSYM */
             for (k = 0; k < t->len; k++) fprintf(w, " %02X", t->data[k]);
         fputc('\n', w);
+        fprintf(w, "TXTATTR esd=%u style=%u encoding=%u true_len=%u\n", (unsigned)t->esdid,
+                (unsigned)t->style, (unsigned)t->encoding, (unsigned)t->true_len);
+    }
+    for (i = 0; i < m->idrs.n; i++) {
+        const GoffIdr *d = &m->idrs.v[i];
+        fprintf(w, "IDRL esd=%u format=%d len=%d translator=\"%s\" version=\"%s\" release=\"%s\" date=\"%s\" time=\"%s\"\n",
+                (unsigned)d->esdid, d->format, d->length, d->translator, d->version,
+                d->release, d->date, d->time);
     }
     for (i = 0; i < m->relocs.n; i++) {
         const GoffReloc *r = &m->relocs.v[i];
-        fprintf(w, "RLD r=%u p=%u off=%u ref=%d referent=%d act=%d store=%s len=%d\n", (unsigned)r->rid,
+        fprintf(w, "RLD r=%u p=%u off=%u ref=%d referent=%d act=%d store=%s len=%d "
+                   "bitlen=%d bitoff=%d cond=%d amode=%d\n", (unsigned)r->rid,
                 (unsigned)r->pid, (unsigned)r->offset, r->reference, r->referent, r->action,
-                r->store ? "true" : "false", r->length);
+                r->store ? "true" : "false", r->length, r->bit_length, r->bit_offset,
+                r->cond_seq, r->amode_sens);
     }
     for (i = 0; i < m->lens.n; i++)
         fprintf(w, "LEN esd=%u length=%u\n", (unsigned)m->lens.v[i].esdid, (unsigned)m->lens.v[i].length);
@@ -339,6 +424,33 @@ static const char *esd_kind(int t) {
     default: return "?";
     }
 }
+
+static const char *amode_name(int v) {
+    switch (v) { case 0: return "none"; case 1: return "24"; case 2: return "31";
+                 case 3: return "ANY"; case 4: return "64"; default: return "?"; }
+}
+static const char *rmode_name2(int v) {
+    switch (v) { case 0: return "none"; case 1: return "24"; case 3: return "31";
+                 case 4: return "64"; default: return "?"; }
+}
+static const char *style_name(int v) {
+    switch (v) { case 0: return "byte"; case 1: return "structured";
+                 case 2: return "unstructured"; default: return "?"; }
+}
+static const char *bind_name(int v) { return v == GOFF_BIND_MERGE ? "merge" : v == GOFF_BIND_CAT ? "cat" : "?"; }
+static const char *task_name(int v) {
+    switch (v) { case 0: return "unspec"; case 1: return "nonreus"; case 2: return "reus";
+                 case 3: return "rent"; default: return "?"; }
+}
+static const char *exec_name(int v) { return v == 2 ? "code" : v == 1 ? "data" : "unspec"; }
+static const char *load_name(int v) {
+    return v == 2 ? "noload" : v == 1 ? "deferred" : v == 0 ? "now" : "?";
+}
+static const char *scope_name(int v) {
+    switch (v) { case 0: return "unspec"; case 1: return "section"; case 2: return "module";
+                 case 3: return "library"; case 4: return "import/export"; default: return "?"; }
+}
+static const char *linkage_name(int v) { return v == 1 ? "XPLINK" : "OS"; }
 
 static char reg_name(unsigned flags) {
     char c = (flags & F_FPR) ? 'f' : (flags & F_AR) ? 'a' : (flags & F_CR) ? 'c' :
@@ -479,7 +591,11 @@ static void dump_text(FILE *w, const GoffModule *m, const GoffText *t, int insn)
 void goff_dump_readable(const GoffModule *m, FILE *w, int insn) {
     size_t i;
     fprintf(w, "GOFF module\n");
-    fprintf(w, "  header: architecture level %u\n", (unsigned)m->arch_level);
+    fprintf(w, "  header: architecture level %u, version %u, properties ", (unsigned)m->arch_level,
+            (unsigned)m->hdr_version);
+    for (i = 0; i < m->props_len; i++) fprintf(w, "%02X", m->props[i]);
+    if (module_props_name(m)) fprintf(w, " (%s)", module_props_name(m));
+    fputc('\n', w);
     fprintf(w, "  ESD items: %lu, text records: %lu, relocations: %lu\n",
             (unsigned long)m->esds.n, (unsigned long)m->texts.n,
             (unsigned long)m->relocs.n);
@@ -490,9 +606,19 @@ void goff_dump_readable(const GoffModule *m, FILE *w, int insn) {
         fprintf(w, "  %-5s %4u  parent=%-4u off=0x%08x len=%-8d %s\n",
                 esd_kind(e->type), (unsigned)e->id, (unsigned)e->parent,
                 (unsigned)e->offset, (int)(int32_t)e->length, nm);
-        fprintf(w, "         amode=%d rmode=%d align=%d exec=%d scope=%d ns=%d renameable=%s\n",
-                e->attr.amode, e->attr.rmode, e->attr.alignment, e->attr.executable,
-                e->attr.scope, e->name_space, e->renameable ? "yes" : "no");
+        fprintf(w, "         amode=%s rmode=%s align=%d exec=%s scope=%s ns=%d renameable=%s\n",
+                amode_name(e->attr.amode), rmode_name2(e->attr.rmode), e->attr.alignment,
+                exec_name(e->attr.executable), scope_name(e->attr.scope), e->name_space,
+                e->renameable ? "yes" : "no");
+        fprintf(w, "         style=%s bind=%s tasking=%s ro=%d dup=%d strength=%d load=%s "
+                   "common=%d indirect=%d linkage=%s fill=%d,%u flags=%d%d%d q=%u pri=%u ada=%u ext=%u,%u\n",
+                style_name(e->attr.text_style), bind_name(e->attr.bind_algorithm),
+                task_name(e->attr.tasking), e->attr.read_only, e->attr.dup_severity,
+                e->attr.bind_strength, load_name(e->attr.loading), e->attr.common,
+                e->attr.indirect, linkage_name(e->attr.linkage), e->has_fill,
+                (unsigned)e->fill, e->mangled, e->renameable, e->removable,
+                (unsigned)e->reserved_qwords, (unsigned)e->priority, (unsigned)e->ada_id,
+                (unsigned)e->ext_attr_id, (unsigned)e->ext_attr_off);
         free(nm);
     }
     fprintf(w, "\nText\n");
@@ -501,12 +627,29 @@ void goff_dump_readable(const GoffModule *m, FILE *w, int insn) {
         const GoffESD *e = goff_module_esd(m, t->esdid);
         char *nm = e ? ebcdic_decode(e->name, e->name_len) : NULL;
         fprintf(w, "  ESD %u %s\n", (unsigned)t->esdid, nm ? nm : "?");
+        fprintf(w, "    style=%s encoding=%u true_len=%u\n", style_name(t->style),
+                (unsigned)t->encoding, (unsigned)t->true_len);
         if (nm && !strncmp(nm, "C_ADATA", 7)) {
             fprintf(w, "    ADATA: %u bytes (not disassembled)\n", (unsigned)t->len);
         } else {
             dump_text(w, m, t, insn);
         }
         free(nm);
+    }
+    if (m->idrs.n) {
+        fprintf(w, "\nTranslator IDs\n");
+        for (i = 0; i < m->idrs.n; i++) {
+            const GoffIdr *d = &m->idrs.v[i];
+            fprintf(w, "  ESD %u format=%d translator=\"%s\" version=\"%s\" release=\"%s\" "
+                       "date=\"%s\" time=\"%s\"\n", (unsigned)d->esdid, d->format,
+                    d->translator, d->version, d->release, d->date, d->time);
+        }
+    }
+    if (m->lens.n) {
+        fprintf(w, "\nDeferred lengths\n");
+        for (i = 0; i < m->lens.n; i++)
+            fprintf(w, "  ESD %u length=%u\n", (unsigned)m->lens.v[i].esdid,
+                    (unsigned)m->lens.v[i].length);
     }
     fprintf(w, "\nRelocations\n");
     if (!m->relocs.n) fprintf(w, "  none\n");

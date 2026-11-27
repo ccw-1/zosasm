@@ -8,6 +8,12 @@ Versions follow semantic versioning (`src/version.h`); releases are git tags
 
 * `XATTR RENAME(YES|NO)` sets the GOFF ESD renameable flag (bit 41.2).
   `-disasm` writes it back and `-dump-readable` shows it.
+* `-dump` reads HDR module properties, structured `B_IDRL` translator
+  identification records, text style/encoding/true length and all ESD
+  behavioral attributes. It prints `TXTATTR`, `IDRL` and complete `RLD`
+  fields. `-dump-readable` shows the same information in readable form.
+* `CATTR PART(name)` now puts the RMODE-implied AMODE on the part reference
+  and leaves the RMODE on the class ED, matching IBM HLASM.
 * `-dump-readable FILE` prints a grouped GOFF listing with section, text and
   relocation headings. Without `-insn`, text uses an xxd-style layout with
   EBCDIC and ASCII columns. `-insn` (with `-dump` or `-dump-readable`)

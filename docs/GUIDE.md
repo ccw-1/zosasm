@@ -449,9 +449,11 @@ How the source maps to the object:
 `MOVABLE` (no effect on the object), `REMOVABLE`, `PART(name)`. A class made by
 `CATTR` has the defaults of IBM's assembler: `ALIGN(3)`, `RMODE(24)`,
 `NONREUS`, no AMODE (it does not take the AMODE of the section); `PART`
-classes are merged. Two zosasm extensions state "not specified" for objects
-of other tools (the disassembler writes them): `RMODE(NONE)` and
-`TASKING(NONE)`.
+classes are merged. The part reference carries the AMODE implied by
+`RMODE`: 31/ANY gives AMODE(31), 64 gives AMODE(64), and 24 leaves AMODE
+unspecified. It carries no RMODE; the class ED carries the RMODE. Two
+zosasm extensions state "not specified" for objects of other tools (the
+disassembler writes them): `RMODE(NONE)` and `TASKING(NONE)`.
 
 `XATTR` attributes: `LINKAGE(OS|XPLINK)`, `SCOPE(SECTION|MODULE|LIBRARY|EXPORT|IMPORT)`,
 `REFERENCE(CODE|DATA[,DIRECT|INDIRECT])`, `PSECT(name)`, `ATTRIBUTES(label)`,
@@ -1301,13 +1303,17 @@ no relocation dictionary), and no program should read it.
 
 ### 12.1 `-dump`
 
-`zosasm -dump file.o` prints the machine-readable GOFF records: `ESD`
-items (section, class, part, label, external reference), `TXT` (the bytes),
-`RLD` (relocations), `END`. After that, if the object has it, the symbolic
+`zosasm -dump file.o` prints the machine-readable GOFF records: `HDR`
+(architecture level, version, module properties), `ESD` items (section,
+class, part, label, external reference with all behavioral attributes),
+`TXT` (the bytes), `TXTATTR` (text style, encoding and true length), `IDRL`
+(translator identification records), `RLD` (relocations), `LEN` (deferred
+lengths) and `END`. After that, if the object has it, the symbolic
 information (below).
 
 `zosasm -dump-readable file.o` (or `-dump -insn file.o`) prints a
-human-readable listing grouped by symbols, text and relocations. Without
+human-readable listing grouped by symbols, text, translator IDs, deferred
+lengths and relocations. Without
 `-insn`, text bytes use an xxd-style layout with EBCDIC and ASCII columns on
 the right. With `-insn`, instructions are decoded instead. The disassembler is
 best-effort: an undecodable byte range is shown as `DC`, and the reader tries a

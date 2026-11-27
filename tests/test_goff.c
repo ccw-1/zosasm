@@ -129,6 +129,77 @@ static void test_large_text(void) {
         CHECK(m->texts.n == 3 && m->texts.v[2].offset == 2 * GOFF_MAX_TEXT && m->texts.v[2].len == 17);
 }
 
+static char *dump_all(const GoffModule *m, size_t *len) {
+    FILE *f = tmpfile();
+    char *b;
+    long n;
+    if (!f) return NULL;
+    goff_dump(m, f);
+    fflush(f);
+    n = ftell(f);
+    if (n < 0) { fclose(f); return NULL; }
+    rewind(f);
+    b = xmalloc((size_t)n + 1);
+    if (fread(b, 1, (size_t)n, f) != (size_t)n) { free(b); fclose(f); return NULL; }
+    b[n] = 0;
+    fclose(f);
+    *len = (size_t)n;
+    return b;
+}
+
+static void test_hdr_idrl(void) {
+    GoffWriter *w = goff_writer_new(1);
+    GoffESD sd = mk(GOFF_SD, 0, "S"), ed;
+    GoffEnd end;
+    const uint8_t *out;
+    size_t len;
+    const char *err = NULL;
+    GoffModule *m;
+    static const uint8_t idr[] = {
+        0x00, 0x03, 0x00, 0x1E,
+        0xD3, 0xD3, 0xE5, 0xD4, 0x40, 0x40, 0xF1, 0xF4, 0xF0, 0xF0,
+        0xF1, 0xF4, 0xF0, 0xF0, 0xF2, 0xF0, 0xF2, 0xF5, 0xF0, 0xF9,
+        0xF0, 0xF0, 0xF3, 0xF2, 0xF1, 0xF1, 0xF1, 0xF0, 0xF0, 0xF0
+    };
+    goff_write_esd(w, &sd);
+    ed = mk(GOFF_ED, sd.id, "B_IDRL");
+    goff_write_esd(w, &ed);
+    goff_write_text(w, ed.id, 0, GOFF_STYLE_STRUCTURED, idr, sizeof idr);
+    memset(&end, 0, sizeof end);
+    goff_write_end(w, &end, &out, &len);
+    /* the writer emits a minimal HDR; add the SYSTEM_LE module property */
+    ((uint8_t *)out)[53] = 4;
+    ((uint8_t *)out)[62] = 0x80;
+    m = goff_parse(out, len, &err);
+    CHECK_MSG(m != NULL, "parse: %s", err ? err : "?");
+    if (m) {
+        char *d;
+        size_t dn;
+        CHECK(m->props_len == 4 && m->props[0] == 0 && m->props[1] == 0 &&
+              m->props[2] == 0x80 && m->props[3] == 0);
+        CHECK(m->idrs.n == 1);
+        if (m->idrs.n == 1) {
+            const GoffIdr *x = &m->idrs.v[0];
+            CHECK(x->format == 3 && x->length == 30);
+            CHECK_STR(x->translator, "LLVM  1400");
+            CHECK_STR(x->version, "14");
+            CHECK_STR(x->release, "00");
+            CHECK_STR(x->date, "2025090");
+            CHECK_STR(x->time, "032111000");
+        }
+        d = dump_all(m, &dn);
+        CHECK(d != NULL);
+        if (d) {
+            CHECK(strstr(d, "props=00008000 property=SYSTEM_LE") != NULL);
+            CHECK(strstr(d, "IDRL esd=2 format=3") != NULL);
+            CHECK(strstr(d, "translator=\"LLVM  1400\"") != NULL);
+            free(d);
+        }
+        goff_free(m);
+    }
+    goff_writer_free(w);
+}
+
 static void test_errors(void) {
     uint8_t zero[79] = {0};
     const uint8_t *out;
@@ -174,6 +245,7 @@ int main(void) {
     test_behavior();
     test_roundtrip();
     test_large_text();
+    test_hdr_idrl();
     test_errors();
     test_rld_sequencing();
     TEST_MAIN_END();
