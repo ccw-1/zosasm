@@ -324,6 +324,21 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VSEL %v8,%v10,%v12,%v14");
+    expect("vector merge, checksum and bit counts",
+           "#pragma cblock a\n"
+           "#pragma cin __vector unsigned int a=%v0, __vector unsigned int b=%v2\n"
+           "#pragma cout __vector unsigned int c=%v4\n"
+           "#pragma cscratch %r2, %r3, %v6, %v8, %v10\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_mergeh(a, b);\n"
+           "c = __vec_mergel(a, b);\n"
+           "c = __vec_checksum(a, b);\n"
+           "c = __vec_cntlz(a);\n"
+           "c = __vec_cnttz(a);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VCKSM %v6,%v8,%v10");
     expect("vector pack and unpack",
            "#pragma cblock a\n"
            "#pragma cin __vector signed short a=%v0, __vector signed short b=%v2\n"

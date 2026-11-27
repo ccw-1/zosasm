@@ -1049,6 +1049,46 @@ static CBExpr *parse_primary(Parser *p) {
             else e->type = type_of(32, 0);
             return e;
         }
+        if (!strcmp(name, "__vec_mergeh") || !strcmp(name, "__vec_mergeh_8") ||
+            !strcmp(name, "__vec_mergel") || !strcmp(name, "__vec_mergel_8") ||
+            !strcmp(name, "__vec_checksum") ||
+            !strcmp(name, "__vec_cntlz") || !strcmp(name, "__vec_cnttz")) {
+            CBExpr *e;
+            CBExpr *args[2] = {0, 0};
+            CType rt;
+            int argc = (!strcmp(name, "__vec_checksum")) ? 2 :
+                       (!strcmp(name, "__vec_cntlz") || !strcmp(name, "__vec_cnttz")) ? 1 : 2;
+            if (!strcmp(name, "__vec_checksum")) rt = type_vec(32, 1, 0, 0);
+            else rt = type_of(128, 1);
+            e = mk_expr(E_CALL, rt, line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, argc)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1];
+            if (!e->a->type.vec || (argc == 2 && !e->b->type.vec)) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s needs vector arguments", e->name);
+                p->err = 1;
+            } else if (!strcmp(e->name, "__vec_checksum")) {
+                e->type = type_vec(32, 1, 0, 0);
+                if (e->a->type.vbits != 32 || e->b->type.vbits != 32) {
+                    cb_error(p->b, line, col, "ZA5003",
+                             "__vec_checksum needs two 32-bit vectors");
+                    p->err = 1;
+                }
+            } else if (!strcmp(e->name, "__vec_cntlz") || !strcmp(e->name, "__vec_cnttz")) {
+                e->type = type_vec(e->a->type.vbits, 1, 0, 0);
+            } else e->type = e->a->type;
+            return e;
+        }
         if (!strcmp(name, "__vec_pack") || !strcmp(name, "__vec_pack_8") ||
             !strcmp(name, "__vec_packs") || !strcmp(name, "__vec_packs_8") ||
             !strcmp(name, "__vec_packs_cc") || !strcmp(name, "__vec_packsu") ||
@@ -4378,6 +4418,44 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             res = alloc_slot(cg);
             asm_line(b, e->line, "LGHI %%r0,0");
             store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_mergeh") || !strcmp(e->name, "__vec_mergeh_8") ||
+            !strcmp(e->name, "__vec_mergel") || !strcmp(e->name, "__vec_mergel_8") ||
+            !strcmp(e->name, "__vec_checksum") ||
+            !strcmp(e->name, "__vec_cntlz") || !strcmp(e->name, "__vec_cnttz")) {
+            int vr, va, vb;
+            if (!eval(cg, e->a, &sa) || (e->b && !eval(cg, e->b, &sp))) return 0;
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            vb = pick_vr4(b, vr, va, -1, -1);
+            if (vr < 0 || va < 0 || (e->b && vb < 0)) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs three cscratch vector registers", e->name);
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            if (!strcmp(e->name, "__vec_cntlz") || !strcmp(e->name, "__vec_cnttz")) {
+                int elem = e->a->type.vbits == 8 ? 0 : e->a->type.vbits == 16 ? 1 :
+                           e->a->type.vbits == 32 ? 2 : 3;
+                asm_line(b, e->line, !strcmp(e->name, "__vec_cntlz") ? "VCLZ %%v%d,%%v%d,%d" :
+                                                                 "VCTZ %%v%d,%%v%d,%d", vr, va, elem);
+            } else if (!strcmp(e->name, "__vec_checksum")) {
+                load_vec_slot(b, e->line, sp, vb);
+                asm_line(b, e->line, "VCKSM %%v%d,%%v%d,%%v%d", vr, va, vb);
+            } else {
+                int elem = e->a->type.vbits == 8 ? 0 : e->a->type.vbits == 16 ? 1 :
+                           e->a->type.vbits == 32 ? 2 : 3;
+                int isl = strstr(e->name, "mergel") != NULL;
+                load_vec_slot(b, e->line, sp, vb);
+                asm_line(b, e->line, e->a->type.vbits == 64 ?
+                         (isl ? "VMRLG %%v%d,%%v%d,%%v%d" : "VMRHG %%v%d,%%v%d,%%v%d") :
+                         (isl ? "VMRL %%v%d,%%v%d,%%v%d,%d" : "VMRH %%v%d,%%v%d,%%v%d,%d"),
+                         vr, va, vb, elem);
+            }
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
             *slotp = res;
             return 1;
         }

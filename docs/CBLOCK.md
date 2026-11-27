@@ -502,13 +502,19 @@ c = __vec_packs(a, b);               /* VPKS */
 c = __vec_packsu(a, b);              /* VPKLS */
 d = __vec_unpackh_s2(c);             /* VUPH */
 d = __vec_unpackl_u2(c);             /* VUPLL */
+v = __vec_mergeh(a, b);              /* VMRH/VMRHG */
+v = __vec_mergel(a, b);              /* VMRL/VMRLG */
+v = __vec_checksum(a, b);            /* VCKSM */
+v = __vec_cntlz(a);                  /* VCLZ */
+v = __vec_cnttz(a);                  /* VCTZ */
 ```
 
 The element types are `char`, `short`, `int`, `long long`, `float` and
 `double`, with `signed`, `unsigned`, `bool` and the `s1/u1/s2/u2/s4/u4/s8/u8/f4/f8`
 builtin suffixes. Vector select, permute, permute-doubleword-immediate, integer
 ordered/equal compares, max, min, average, scalar element
-extract/insert/promote, and pack/unpack are implemented. Vector arithmetic and the remaining
+extract/insert/promote, pack/unpack, merge, checksum and bit counts
+are implemented. Vector arithmetic and the remaining
 `__vec_*` builtins are not implemented yet. `__vec_load_bndry_*` accepts the boundary argument
 but uses an unaligned `VL`, which is correct and only loses an alignment
 optimization.
