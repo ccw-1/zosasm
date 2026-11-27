@@ -522,6 +522,7 @@ v = __vec_nand(a, b);               /* VNN */
 v = __vec_nor(a, b);                /* VNO */
 v = __vec_orc(a, b);                /* VOC */
 v = __vec_eqv(a, b);                /* VNX */
+v = __vec_sqrt(a);                  /* VFSQSB/VFSQDB */
 ```
 
 The element types are `char`, `short`, `int`, `long long`, `float` and
@@ -529,7 +530,8 @@ The element types are `char`, `short`, `int`, `long long`, `float` and
 builtin suffixes. Vector select, permute, permute-doubleword-immediate, integer
 ordered/equal compares, max, min, average, scalar element
 extract/insert/promote, pack/unpack, merge, checksum, bit counts, the main shift forms, rotations and double
-shifts and the boolean logic forms are implemented. Vector arithmetic and the remaining
+shifts, the boolean logic forms and floating-point square root are
+implemented. Vector arithmetic and the remaining
 `__vec_*` builtins are not implemented yet. `__vec_load_bndry_*` accepts the boundary argument
 but uses an unaligned `VL`, which is correct and only loses an alignment
 optimization.

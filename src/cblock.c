@@ -1049,6 +1049,31 @@ static CBExpr *parse_primary(Parser *p) {
             else e->type = type_of(32, 0);
             return e;
         }
+        if (!strcmp(name, "__vec_sqrt")) {
+            CBExpr *e;
+            CBExpr *arg = NULL;
+            e = mk_expr(E_CALL, type_of(128, 1), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            arg = parse_assignment(p);
+            if (!arg || !tok_is(l, ')')) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            e->a = arg;
+            if (!arg->type.vec || !arg->type.vfloat) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "__vec_sqrt needs a float or double vector");
+                p->err = 1;
+            } else e->type = arg->type;
+            return e;
+        }
         if (!strcmp(name, "__vec_andc") || !strcmp(name, "__vec_andc_8") ||
             !strcmp(name, "__vec_nand") || !strcmp(name, "__vec_nor") ||
             !strcmp(name, "__vec_nor_8") || !strcmp(name, "__vec_orc") ||
@@ -4532,6 +4557,24 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             res = alloc_slot(cg);
             asm_line(b, e->line, "LGHI %%r0,0");
             store_slot(b, e->line, res, type_of(32, 0), 0);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_sqrt")) {
+            int vr, va;
+            if (!eval(cg, e->a, &sa)) return 0;
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            if (vr < 0 || va < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "__vec_sqrt needs two cscratch vector registers");
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            asm_line(b, e->line, e->a->type.vbits == 32 ? "VFSQSB %%v%d,%%v%d" :
+                                                          "VFSQDB %%v%d,%%v%d", vr, va);
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
             *slotp = res;
             return 1;
         }
