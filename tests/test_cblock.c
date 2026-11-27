@@ -324,6 +324,18 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VSEL %v8,%v10,%v12,%v14");
+    expect("vector FP test data class",
+           "#pragma cblock a\n"
+           "#pragma cin __vector double a=%v0\n"
+           "#pragma cout __vector bool long long c=%v2, int32_t cc=%r2\n"
+           "#pragma cscratch %r3, %r4, %v4, %v6\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "int32_t cc0;\n"
+           "c = __vec_fp_test_data_class(a, 1, &cc0);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VFTCI %v4,%v6,1,3,0");
     expect("vector double shift by word",
            "#pragma cblock a\n"
            "#pragma cin __vector unsigned int a=%v0, __vector unsigned int b=%v2\n"
