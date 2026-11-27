@@ -1223,6 +1223,36 @@ static CBExpr *parse_primary(Parser *p) {
                                       1, 0, 0);
             return e;
         }
+        if (!strncmp(name, "__vec_splat__", 13)) {
+            CBExpr *e;
+            CBExpr *args[2] = {0, 0};
+            CType vt;
+            const char *suffix = name + 13;
+            if (!vec_element_type(suffix, &vt)) {
+                cb_error(p->b, line, col, "ZA5002", "unsupported splat suffix");
+                p->err = 1; free(name); return NULL;
+            }
+            e = mk_expr(E_CALL, vt, line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, 2)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1];
+            if (!e->a->type.vec || e->b->type.ptr || e->b->type.flt ||
+                e->b->type.vec) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s needs a vector and an integer index", e->name);
+                p->err = 1;
+            }
+            return e;
+        }
         if (!strcmp(name, "__vec_fp_test_data_class")) {
             CBExpr *e;
             CBExpr *args[3] = {0, 0, 0};
@@ -5107,6 +5137,37 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
             else
                 asm_line(b, e->line, "VGFMA %%v%d,%%v%d,%%v%d,%%v%d,%d",
                          vr, va, vb, vacc, m4);
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
+            *slotp = res;
+            return 1;
+        }
+        if (!strncmp(e->name, "__vec_splat__", 13)) {
+            int vr, va, elem;
+            int64_t idx;
+            const char *suffix = e->name + 13;
+            if (!vec_element_type(suffix, &e->type)) {
+                cb_error(b, e->line, e->col, "ZA5002", "unsupported splat suffix");
+                return 0;
+            }
+            if (!eval(cg, e->a, &sa)) return 0;
+            if (!const_eval(e->b, &idx) || idx < 0 || idx > 15) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs a constant index 0 to 15", e->name);
+                return 0;
+            }
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            if (vr < 0 || va < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs two cscratch vector registers", e->name);
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            elem = e->type.vbits == 8 ? 0 : e->type.vbits == 16 ? 1 :
+                   e->type.vbits == 32 ? 2 : 3;
+            asm_line(b, e->line, "VREP %%v%d,%%v%d,%lld,%d", vr, va,
+                     (long long)idx, elem);
             res = alloc_slots(cg, 2);
             store_vec_slot(b, e->line, res, vr);
             *slotp = res;

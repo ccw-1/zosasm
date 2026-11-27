@@ -336,6 +336,17 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VGEF %v6,0(%v8,%r3),0");
+    expect("vector splat element",
+           "#pragma cblock a\n"
+           "#pragma cin __vector unsigned int a=%v0\n"
+           "#pragma cout __vector unsigned int c=%v2\n"
+           "#pragma cscratch %r2, %r3, %v4, %v6\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_splat__u4(a, 1);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VREP %v4,%v6,1,2");
     expect("vector FP test data class",
            "#pragma cblock a\n"
            "#pragma cin __vector double a=%v0\n"
