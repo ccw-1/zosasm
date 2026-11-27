@@ -1606,6 +1606,38 @@ static CBExpr *parse_primary(Parser *p) {
             }
             return e;
         }
+        if (!strcmp(name, "__vec_mule") || !strcmp(name, "__vec_mulh") ||
+            !strcmp(name, "__vec_mulo")) {
+            CBExpr *e;
+            CBExpr *args[2] = {0, 0};
+            e = mk_expr(E_CALL, type_of(128, 1), line, col);
+            e->name = xstrdup(name);
+            free(name);
+            lex_next(l);
+            if (!tok_is(l, '(')) {
+                cb_error(p->b, l->tok.line, l->tok.col, "ZA5001", "expected '(' after builtin");
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            lex_next(l);
+            if (!parse_call_args(p, args, 2)) {
+                cblock_expr_free(e); p->err = 1; return NULL;
+            }
+            e->a = args[0]; e->b = args[1];
+            if (!e->a->type.vec || !e->b->type.vec ||
+                e->a->type.vbits != e->b->type.vbits ||
+                e->a->type.vfloat || e->a->type.vbool ||
+                (e->a->type.vbits != 8 && e->a->type.vbits != 16 &&
+                 e->a->type.vbits != 32)) {
+                cb_error(p->b, line, col, "ZA5003",
+                         "%s needs two equal-width integer vectors", e->name);
+                p->err = 1;
+            } else {
+                int out = !strcmp(e->name, "__vec_mulh") ? e->a->type.vbits :
+                          e->a->type.vbits * 2;
+                e->type = type_vec(out, e->a->type.vunsig, 0, 0);
+            }
+            return e;
+        }
         if (!strcmp(name, "__vec_addc") || !strcmp(name, "__vec_subc")) {
             CBExpr *e;
             CBExpr *args[2] = {0, 0};
@@ -5809,6 +5841,31 @@ static int eval(Cg *cg, CBExpr *e, int *slotp) {
                      !strcmp(e->name, "__vec_ctd") ? "VCDG" :
                      !strcmp(e->name, "__vec_ctsl") ? "VCGD" : "VCLGD",
                      vr, va, (long long)mode);
+            res = alloc_slots(cg, 2);
+            store_vec_slot(b, e->line, res, vr);
+            *slotp = res;
+            return 1;
+        }
+        if (!strcmp(e->name, "__vec_mule") || !strcmp(e->name, "__vec_mulh") ||
+            !strcmp(e->name, "__vec_mulo")) {
+            int vr, va, vb;
+            int m4 = e->a->type.vbits == 8 ? 0 : e->a->type.vbits == 16 ? 1 : 2;
+            if (!eval(cg, e->a, &sa) || !eval(cg, e->b, &sp)) return 0;
+            vr = pick_vr4(b, -1, -1, -1, -1);
+            va = pick_vr4(b, vr, -1, -1, -1);
+            vb = pick_vr4(b, vr, va, -1, -1);
+            if (vr < 0 || va < 0 || vb < 0) {
+                cb_error(b, e->line, e->col, "ZA5005",
+                         "%s needs three cscratch vector registers", e->name);
+                return 0;
+            }
+            load_vec_slot(b, e->line, sa, va);
+            load_vec_slot(b, e->line, sp, vb);
+            asm_line(b, e->line, "%s %%v%d,%%v%d,%%v%d,%d",
+                     !strcmp(e->name, "__vec_mule") ? (e->a->type.vunsig ? "VMLE" : "VME") :
+                     !strcmp(e->name, "__vec_mulh") ? (e->a->type.vunsig ? "VMLH" : "VMH") :
+                                                       (e->a->type.vunsig ? "VMLO" : "VMO"),
+                     vr, va, vb, m4);
             res = alloc_slots(cg, 2);
             store_vec_slot(b, e->line, res, vr);
             *slotp = res;

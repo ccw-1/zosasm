@@ -347,6 +347,19 @@ static void test_decimal_builtins(void) {
            "#pragma cend\n"
            " END\n",
            "", "VREP %v4,%v6,1,2");
+    expect("vector multiply even/high/odd",
+           "#pragma cblock a\n"
+           "#pragma cin __vector unsigned short a=%v0, __vector unsigned short b=%v2\n"
+           "#pragma cout __vector unsigned int c=%v4, __vector unsigned short h=%v6\n"
+           "#pragma cscratch %r2, %r3, %v8, %v10, %v12\n"
+           "#pragma ctemp %r12, 512, down\n"
+           "#pragma cbegin\n"
+           "c = __vec_mule(a, b);\n"
+           "c = __vec_mulo(a, b);\n"
+           "h = __vec_mulh(a, b);\n"
+           "#pragma cend\n"
+           " END\n",
+           "", "VMLE %v8,%v10,%v12,1");
     expect("vector all/any equality",
            "#pragma cblock a\n"
            "#pragma cin __vector unsigned int a=%v0, __vector unsigned int b=%v2\n"
